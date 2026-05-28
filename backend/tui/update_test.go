@@ -1520,3 +1520,96 @@ func TestUnreadCountNotIncreasedForOwnMessages(t *testing.T) {
 		}
 	}
 }
+
+func wsMsg(chatID, msgID string, fromMe bool, ts int64) wsEvtMsg {
+	wm := wireMsg{}
+	wm.Key.ID = msgID
+	wm.Key.RemoteJID = chatID
+	wm.Key.FromMe = fromMe
+	wm.MessageTimestamp = ts
+	b, _ := json.Marshal(wm)
+	return wsEvtMsg{ok: true, evt: env{Type: "message", Payload: b}}
+}
+
+func baseModel(chatID string) m {
+	return m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		whitelist:  map[string]string{"15551230001": "Allowed"},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		chats:      []chat{{ID: chatID}},
+	}
+}
+
+// #2: WS-first path — WS delivers real message before HTTP response.
+// Expected: only one message in the list (no duplicate).
+func TestOptimisticWSFirstNoDuplicate(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+	now := time.Now().Unix()
+	pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+
+	model := baseModel(chatID)
+	// Seed the optimistic placeholder.
+	placeholder := wireMsg{MessageTimestamp: now}
+	placeholder.Key.ID = pendingID
+	placeholder.Key.RemoteJID = chatID
+	placeholder.Key.FromMe = true
+	model.msgs[chatID] = []wireMsg{placeholder}
+
+	// Step 1: WS delivers the real message before HTTP response.
+	next, _ := model.Update(wsMsg(chatID, "real-id", true, now))
+	got := next.(m)
+
+	// Step 2: HTTP sentMsg arrives (placeholder no longer present).
+	realMsg := wireMsg{MessageTimestamp: now}
+	realMsg.Key.ID = "real-id"
+	realMsg.Key.RemoteJID = chatID
+	realMsg.Key.FromMe = true
+	next, _ = got.Update(sentMsg{chatID: chatID, pendingID: pendingID, msg: realMsg})
+	got = next.(m)
+
+	msgs := got.msgs[chatID]
+	if len(msgs) != 1 {
+		t.Fatalf("WS-first: got %d messages, want 1 (no duplicate)", len(msgs))
+	}
+	if msgs[0].Key.ID != "real-id" {
+		t.Fatalf("WS-first: message ID = %q, want real-id", msgs[0].Key.ID)
+	}
+}
+
+// #2: HTTP-first path (normal case) — must still work correctly after the fix.
+func TestOptimisticHTTPFirstStillWorks(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+	now := time.Now().Unix()
+	pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+
+	model := baseModel(chatID)
+	placeholder := wireMsg{MessageTimestamp: now}
+	placeholder.Key.ID = pendingID
+	placeholder.Key.RemoteJID = chatID
+	placeholder.Key.FromMe = true
+	model.msgs[chatID] = []wireMsg{placeholder}
+
+	// Step 1: HTTP sentMsg arrives first (replaces placeholder).
+	realMsg := wireMsg{MessageTimestamp: now}
+	realMsg.Key.ID = "real-id"
+	realMsg.Key.RemoteJID = chatID
+	realMsg.Key.FromMe = true
+	next, _ := model.Update(sentMsg{chatID: chatID, pendingID: pendingID, msg: realMsg})
+	got := next.(m)
+
+	// Step 2: WS delivers the same message (should be a no-op).
+	next, _ = got.Update(wsMsg(chatID, "real-id", true, now))
+	got = next.(m)
+
+	msgs := got.msgs[chatID]
+	if len(msgs) != 1 {
+		t.Fatalf("HTTP-first: got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].Key.ID != "real-id" {
+		t.Fatalf("HTTP-first: message ID = %q, want real-id", msgs[0].Key.ID)
+	}
+}

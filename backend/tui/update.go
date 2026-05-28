@@ -102,10 +102,28 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				notifyBody := ""
 				activeViewing := x.mode == "chat" && !x.sidebarFocused && !x.leftInputFocused && x.active == wm.Key.RemoteJID
 				exists := false
-				for _, existing := range x.msgs[wm.Key.RemoteJID] {
-					if wm.Key.ID != "" && existing.Key.ID == wm.Key.ID {
-						exists = true
-						break
+				// For our own outgoing messages, replace a local-* placeholder
+				// in-place to avoid the optimistic/WS race creating a duplicate.
+				if wm.Key.FromMe && wm.Key.ID != "" {
+					msgs := x.msgs[wm.Key.RemoteJID]
+					for i, existing := range msgs {
+						if strings.HasPrefix(existing.Key.ID, "local-") &&
+							existing.MessageTimestamp > 0 && wm.MessageTimestamp > 0 &&
+							wm.MessageTimestamp-existing.MessageTimestamp <= 10 &&
+							existing.MessageTimestamp-wm.MessageTimestamp <= 10 {
+							msgs[i] = wm
+							x.msgs[wm.Key.RemoteJID] = msgs
+							exists = true
+							break
+						}
+					}
+				}
+				if !exists {
+					for _, existing := range x.msgs[wm.Key.RemoteJID] {
+						if wm.Key.ID != "" && existing.Key.ID == wm.Key.ID {
+							exists = true
+							break
+						}
 					}
 				}
 				if !exists {
@@ -413,7 +431,32 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if !replaced {
-			x.msgs[v.chatID] = append(x.msgs[v.chatID], v.msg)
+			// WS may have already claimed the placeholder and delivered the real
+			// message. If the real ID is already present, just drop the stale
+			// local placeholder instead of appending a duplicate.
+			alreadyPresent := false
+			if v.msg.Key.ID != "" {
+				for _, existing := range x.msgs[v.chatID] {
+					if existing.Key.ID == v.msg.Key.ID {
+						alreadyPresent = true
+						break
+					}
+				}
+			}
+			if alreadyPresent {
+				if v.pendingID != "" {
+					msgs := x.msgs[v.chatID]
+					out := msgs[:0]
+					for _, m := range msgs {
+						if m.Key.ID != v.pendingID {
+							out = append(out, m)
+						}
+					}
+					x.msgs[v.chatID] = out
+				}
+			} else {
+				x.msgs[v.chatID] = append(x.msgs[v.chatID], v.msg)
+			}
 		}
 		x.mainCache.result = ""
 		x.scroll = 0

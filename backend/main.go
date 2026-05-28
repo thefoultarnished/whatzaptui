@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -128,6 +129,7 @@ type App struct {
 	needsBootstrapSync bool
 	historySyncing     bool
 	shuttingDown       bool
+	persistDirty       uint32 // atomic: 1 = needs persist
 	lidCacheMu sync.RWMutex
 	lidCache    map[string]string
 }
@@ -289,6 +291,7 @@ func NewApp() (*App, error) {
 		return nil, err
 	}
 	app.loadState()
+	app.startPersistWorker()
 	return app, nil
 }
 
@@ -385,6 +388,7 @@ func (a *App) initPersistentResources() error {
 
 	a.db = rawDB
 	a.storeContainer = container
+	a.backfillFTS()
 	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", "WARN", true))
 	a.bindEvents()
 	return nil
@@ -805,12 +809,15 @@ func (a *App) upsertMessageFTSTx(exec dbExecutor, chatID, msgID string, fromMe i
 }
 
 func (a *App) insertMessageToDB(chatID string, msg WireMessage) error {
-	return a.insertMessageToDBTx(a.db, chatID, msg)
+	_, err := a.insertMessageToDBTx(a.db, chatID, msg)
+	return err
 }
 
-func (a *App) insertMessageToDBTx(exec dbExecutor, chatID string, msg WireMessage) error {
+// insertMessageToDBTx writes msg to the DB and returns (isNew, error).
+// isNew is true only when the row did not previously exist (INSERT OR IGNORE affected a row).
+func (a *App) insertMessageToDBTx(exec dbExecutor, chatID string, msg WireMessage) (bool, error) {
 	if exec == nil {
-		return fmt.Errorf("no db executor")
+		return false, fmt.Errorf("no db executor")
 	}
 	id := msg.Key.ID
 	if id == "" {
@@ -822,16 +829,25 @@ func (a *App) insertMessageToDBTx(exec dbExecutor, chatID string, msg WireMessag
 	}
 	msgJSON, err := json.Marshal(msg.Message)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if _, err := exec.Exec(`
-		INSERT OR REPLACE INTO messages (id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto)
+	res, err := exec.Exec(`
+		INSERT OR IGNORE INTO messages (id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, chatID, fromMe, msg.Key.Participant, msg.MessageTimestamp, msg.PushName, msg.ReceiptStatus, string(msgJSON), msg.MediaProto); err != nil {
-		return err
+	`, id, chatID, fromMe, msg.Key.Participant, msg.MessageTimestamp, msg.PushName, msg.ReceiptStatus, string(msgJSON), msg.MediaProto)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	isNew := n > 0
+	if _, err := exec.Exec(`
+		UPDATE messages SET push_name = ?, message_json = ?, media_proto = ?
+		WHERE id = ? AND chat_id = ? AND from_me = ?
+	`, msg.PushName, string(msgJSON), msg.MediaProto, id, chatID, fromMe); err != nil {
+		return false, err
 	}
 	a.upsertMessageFTSTx(exec, chatID, id, fromMe, extractSearchableText(msg.Message))
-	return nil
+	return isNew, nil
 }
 
 func scanMessageRow(rows *sql.Rows) (WireMessage, error) {
@@ -922,19 +938,8 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 		msg.Key.Participant = a.canonicalizeChatID(msg.Key.Participant)
 	}
 
-	id := msg.Key.ID
-	if id == "" {
-		id = dedupeKey(msg)
-	}
-	fromMe := 0
-	if msg.Key.FromMe {
-		fromMe = 1
-	}
-	var existing int
-	_ = exec.QueryRow(`SELECT COUNT(*) FROM messages WHERE chat_id = ? AND id = ? AND from_me = ?`, chatID, id, fromMe).Scan(&existing)
-	isNew := existing == 0
-
-	if err := a.insertMessageToDBTx(exec, chatID, msg); err != nil {
+	isNew, err := a.insertMessageToDBTx(exec, chatID, msg)
+	if err != nil {
 		log.Printf("upsertMessage: db write: %v", err)
 	}
 
@@ -958,7 +963,7 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 		a.state.Contacts[chatID] = Contact{ID: chatID, Notify: msg.PushName}
 	}
 	if !a.historySyncing {
-		go a.persistState()
+		atomic.StoreUint32(&a.persistDirty, 1)
 	}
 	permName := msg.PushName
 	if msg.Key.FromMe {
@@ -1253,12 +1258,15 @@ func (a *App) broadcast(evt EventEnvelope) {
 	}
 	a.wsMu.Unlock()
 	for _, client := range clients {
-		if err := client.write(data); err != nil {
-			a.wsMu.Lock()
-			delete(a.wsClients, client.conn)
-			a.wsMu.Unlock()
-			_ = client.conn.Close()
-		}
+		client := client
+		go func() {
+			if err := client.write(data); err != nil {
+				a.wsMu.Lock()
+				delete(a.wsClients, client.conn)
+				a.wsMu.Unlock()
+				_ = client.conn.Close()
+			}
+		}()
 	}
 }
 
@@ -2262,11 +2270,29 @@ func (a *App) handleReact(w http.ResponseWriter, r *http.Request) {
 		senderJID, _ = types.ParseJID(a.canonicalizeChatID(req.Sender))
 	}
 	msg := a.client.BuildReaction(chatJID, senderJID, types.MessageID(req.MessageID), req.Reaction)
-	_, err = a.client.SendMessage(context.Background(), chatJID, msg)
+	resp, err := a.client.SendMessage(context.Background(), chatJID, msg)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	now := time.Now().Unix()
+	wireMsg := map[string]any{
+		"reactionMessage": map[string]any{
+			"emoji":       req.Reaction,
+			"targetMsgID": req.MessageID,
+		},
+	}
+	wire := WireMessage{
+		Key: WireKey{
+			ID:        resp.ID,
+			RemoteJID: req.ChatID,
+			FromMe:    true,
+		},
+		Message:          wireMsg,
+		MessageTimestamp: now,
+		ReceiptStatus:    "sent",
+	}
+	a.upsertMessage(req.ChatID, wire)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2665,29 +2691,14 @@ func messageFieldNames(msg *waE2E.Message) []string {
 	return fields
 }
 
+var dedupeSeq uint64
+
 func dedupeKey(m WireMessage) string {
 	if m.Key.ID != "" {
 		return "id:" + m.Key.ID
 	}
-	body := ""
-	if s, ok := m.Message["conversation"].(string); ok {
-		body = s
-	}
-	if body == "" {
-		if ext, ok := m.Message["extendedTextMessage"].(map[string]any); ok {
-			if txt, ok := ext["text"].(string); ok {
-				body = txt
-			}
-		}
-	}
-	if len(body) > 64 {
-		body = body[:64]
-	}
-	fromMe := "0"
-	if m.Key.FromMe {
-		fromMe = "1"
-	}
-	return m.Key.RemoteJID + "|" + m.Key.Participant + "|" + fromMe + "|" + strconv.FormatInt(m.MessageTimestamp, 10) + "|" + body
+	seq := atomic.AddUint64(&dedupeSeq, 1)
+	return "noid:" + strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(seq, 10)
 }
 
 // backfillFTS populates the messages_fts index from the messages table on
@@ -2818,8 +2829,6 @@ func (a *App) purgeOwnPushNameFromContacts() {
 }
 
 func (a *App) loadState() {
-	// One-time backfill: index all messages into FTS if it's empty but messages exist.
-	go a.backfillFTS()
 	// Defensive: clear any chat_permissions rows that have the local user's own
 	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
 	a.purgeOwnPushNameFromContacts()
@@ -2943,6 +2952,17 @@ func (a *App) safeFetchAppState(ctx context.Context, name appstate.WAPatchName) 
 	if err := a.client.FetchAppState(ctx, name, true, false); err != nil {
 		log.Printf("bootstrap: failed to fetch app state %s: %v", name, err)
 	}
+}
+
+func (a *App) startPersistWorker() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	go func() {
+		for range ticker.C {
+			if atomic.CompareAndSwapUint32(&a.persistDirty, 1, 0) {
+				a.persistState()
+			}
+		}
+	}()
 }
 
 func (a *App) persistState() {
@@ -3247,10 +3267,12 @@ func (a *App) upsertPermission(phone, name string) {
 	if shuttingDown || db == nil {
 		return
 	}
-	_, _ = db.Exec(
+	if _, err := db.Exec(
 		`INSERT OR IGNORE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, 0)`,
 		phone, name,
-	)
+	); err != nil {
+		log.Printf("upsertPermission %s: %v", phone, err)
+	}
 }
 
 func (a *App) permissionDB() (*sql.DB, bool) {

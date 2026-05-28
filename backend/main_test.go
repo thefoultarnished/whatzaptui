@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1746,3 +1747,303 @@ func TestIsChatAllowed(t *testing.T) {
 		t.Fatalf("expected not allowed after blacklisting")
 	}
 }
+
+// #9: INSERT OR IGNORE + UPDATE — mutable fields update but receipt is not downgraded.
+func TestInsertMessageUpdatesMutableFieldsButPreservesReceipt(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:           WireKey{ID: "m1", RemoteJID: chatID, FromMe: true},
+		ReceiptStatus: "sent",
+		PushName:      "Alice",
+		Message:       map[string]any{"conversation": "original"},
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Upgrade receipt via the proper path.
+	app.updateReceiptStatus(chatID, []string{"m1"}, "read")
+
+	// Re-upsert with stale receipt and new body.
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:           WireKey{ID: "m1", RemoteJID: chatID, FromMe: true},
+		ReceiptStatus: "sent",
+		PushName:      "Alice Updated",
+		Message:       map[string]any{"conversation": "edited"},
+	}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+
+	var receipt, msgJSON, pushName string
+	_ = app.db.QueryRow(`SELECT receipt, message_json, push_name FROM messages WHERE chat_id = ? AND id = 'm1'`, chatID).Scan(&receipt, &msgJSON, &pushName)
+
+	if receipt != "read" {
+		t.Fatalf("receipt = %q, want read (must not be downgraded by re-upsert)", receipt)
+	}
+	if !strings.Contains(msgJSON, "edited") {
+		t.Fatalf("message_json = %q, want edited body", msgJSON)
+	}
+	if pushName != "Alice Updated" {
+		t.Fatalf("push_name = %q, want Alice Updated", pushName)
+	}
+}
+
+// #9: rowid must not change on re-upsert.
+func TestInsertMessageRowidStableOnReupsert(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:     WireKey{ID: "m1", RemoteJID: chatID, FromMe: false},
+		Message: map[string]any{"conversation": "v1"},
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var rowid1 int64
+	_ = app.db.QueryRow(`SELECT rowid FROM messages WHERE chat_id = ? AND id = 'm1'`, chatID).Scan(&rowid1)
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:     WireKey{ID: "m1", RemoteJID: chatID, FromMe: false},
+		Message: map[string]any{"conversation": "v2"},
+	}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+
+	var rowid2 int64
+	_ = app.db.QueryRow(`SELECT rowid FROM messages WHERE chat_id = ? AND id = 'm1'`, chatID).Scan(&rowid2)
+
+	if rowid1 != rowid2 {
+		t.Fatalf("rowid changed from %d to %d on re-upsert", rowid1, rowid2)
+	}
+}
+
+// #3: dirty flag is set by upsertMessage and cleared by persist worker.
+func TestPersistWorkerFlushesOnDirtyFlag(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+	app.state.Chats[chatID] = Chat{ID: chatID, Name: "Worker Test"}
+
+	app.startPersistWorker()
+	atomic.StoreUint32(&app.persistDirty, 1)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var count int
+		_ = app.db.QueryRow(`SELECT COUNT(*) FROM chats WHERE id = ?`, chatID).Scan(&count)
+		if count > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("persist worker did not flush dirty state to DB within 2 seconds")
+}
+
+// #3: upsertMessage sets persistDirty when not in history sync.
+func TestUpsertMessageSetsDirtyFlag(t *testing.T) {
+	app := newTestApp(t)
+	atomic.StoreUint32(&app.persistDirty, 0)
+
+	app.upsertMessage("15551230001@s.whatsapp.net", WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "hello"},
+	})
+
+	if atomic.LoadUint32(&app.persistDirty) != 1 {
+		t.Fatal("persistDirty should be 1 after upsertMessage outside history sync")
+	}
+}
+
+// #3: upsertMessage must NOT set persistDirty during history sync.
+func TestUpsertMessageDoesNotSetDirtyDuringHistorySync(t *testing.T) {
+	app := newTestApp(t)
+	app.historySyncing = true
+	atomic.StoreUint32(&app.persistDirty, 0)
+
+	app.upsertMessage("15551230001@s.whatsapp.net", WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "hello"},
+	})
+
+	if atomic.LoadUint32(&app.persistDirty) != 0 {
+		t.Fatal("persistDirty should remain 0 during history sync")
+	}
+}
+
+func TestUpsertReactionMessageWritesToDB(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+	wireMsg := map[string]any{
+		"reactionMessage": map[string]any{
+			"emoji":       "🔥",
+			"targetMsgID": "target-123",
+		},
+	}
+	app.upsertMessage(chatID, WireMessage{
+		Key:              WireKey{ID: "rxn-1", FromMe: true},
+		MessageTimestamp: 1000,
+		Message:          wireMsg,
+	})
+	var msgJSON string
+	err := app.db.QueryRow(`SELECT message_json FROM messages WHERE chat_id = ? AND id = 'rxn-1'`, chatID).Scan(&msgJSON)
+	if err != nil {
+		t.Fatalf("failed to query database: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(msgJSON), &parsed); err != nil {
+		t.Fatalf("failed to parse message JSON: %v", err)
+	}
+	rxn, ok := parsed["reactionMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("reactionMessage missing or invalid in database JSON: %s", msgJSON)
+	}
+	if rxn["emoji"] != "🔥" || rxn["targetMsgID"] != "target-123" {
+		t.Fatalf("reaction data mismatch: got %+v", rxn)
+	}
+}
+
+func TestHandleReactNotConnected(t *testing.T) {
+	app := newTestApp(t)
+	req := httptest.NewRequest(http.MethodPost, "/messages/react", bytes.NewBufferString(`{"chatId":"15551230001@s.whatsapp.net","messageId":"m1","reaction":"🔥"}`))
+	rec := httptest.NewRecorder()
+	app.handleReact(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not connected") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+// #4: dedupeKey with a Key.ID must return the stable "id:" prefix form.
+func TestDedupeKeyWithIDReturnsStableKey(t *testing.T) {
+	msg := WireMessage{Key: WireKey{ID: "abc123"}, Message: map[string]any{}}
+	got := dedupeKey(msg)
+	if got != "id:abc123" {
+		t.Fatalf("dedupeKey = %q, want id:abc123", got)
+	}
+}
+
+// #4: two messages with no Key.ID must produce different keys even in the same instant.
+func TestDedupeKeyWithoutIDIsUnique(t *testing.T) {
+	msg := WireMessage{
+		Key:              WireKey{RemoteJID: "15551230001@s.whatsapp.net"},
+		MessageTimestamp: 1000,
+		Message:          map[string]any{"conversation": "hello"},
+	}
+	k1 := dedupeKey(msg)
+	k2 := dedupeKey(msg)
+	if k1 == k2 {
+		t.Fatalf("dedupeKey produced identical keys for two separate calls: %q", k1)
+	}
+	if !strings.HasPrefix(k1, "noid:") || !strings.HasPrefix(k2, "noid:") {
+		t.Fatalf("expected noid: prefix, got %q and %q", k1, k2)
+	}
+}
+
+// #1: concurrent upserts of the same message ID must only increment UnreadCount once.
+func TestUpsertMessageConcurrentSameIDOnlyIncrementsUnreadOnce(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+	msg := WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "hello"},
+	}
+
+	const n = 20
+	start := make(chan struct{})
+	done := make(chan struct{}, n)
+	for range n {
+		go func() {
+			<-start
+			app.upsertMessage(chatID, msg)
+			done <- struct{}{}
+		}()
+	}
+	close(start)
+	for range n {
+		<-done
+	}
+
+	if got := app.state.Chats[chatID].UnreadCount; got != 1 {
+		t.Fatalf("UnreadCount = %d after %d concurrent upserts of same message, want 1", got, n)
+	}
+	var count int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE chat_id = ?`, chatID).Scan(&count)
+	if count != 1 {
+		t.Fatalf("DB row count = %d, want 1", count)
+	}
+}
+
+// #1: isNew must come from INSERT RowsAffected, not a separate SELECT —
+// re-upserting an existing message must not increment UnreadCount.
+func TestUpsertMessageReupsertDoesNotIncrementUnread(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+	msg := WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "hello"},
+	}
+
+	app.upsertMessage(chatID, msg)
+	app.upsertMessage(chatID, msg)
+	app.upsertMessage(chatID, msg)
+
+	if got := app.state.Chats[chatID].UnreadCount; got != 1 {
+		t.Fatalf("UnreadCount = %d after 3 upserts of same message, want 1", got)
+	}
+}
+
+// #8: backfillFTS must populate FTS synchronously — no async gap.
+func TestBackfillFTSPopulatesSynchronously(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	for _, m := range []WireMessage{
+		{Key: WireKey{ID: "m1", RemoteJID: chatID}, Message: map[string]any{"conversation": "apple banana"}},
+		{Key: WireKey{ID: "m2", RemoteJID: chatID}, Message: map[string]any{"conversation": "cherry date"}},
+	} {
+		if err := app.insertMessageToDB(chatID, m); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	// Wipe FTS to simulate a fresh install that has never backfilled.
+	if _, err := app.db.Exec(`DELETE FROM messages_fts`); err != nil {
+		t.Fatalf("wipe fts: %v", err)
+	}
+
+	app.backfillFTS()
+
+	// FTS must be populated immediately — no sleep, no goroutine wait.
+	if hits := searchHits(t, app, "apple", ""); len(hits) != 1 {
+		t.Fatalf("after backfill: apple hits = %d, want 1", len(hits))
+	}
+	if hits := searchHits(t, app, "cherry", ""); len(hits) != 1 {
+		t.Fatalf("after backfill: cherry hits = %d, want 1", len(hits))
+	}
+}
+
+// #8: backfillFTS must be a no-op when FTS already has rows (guards against double-indexing).
+func TestBackfillFTSIsNoOpWhenFTSAlreadyPopulated(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:     WireKey{ID: "m1", RemoteJID: chatID},
+		Message: map[string]any{"conversation": "original"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// FTS already has a row from insertMessageToDB — backfill should not add duplicates.
+	app.backfillFTS()
+
+	var count int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE msg_id = 'm1'`).Scan(&count)
+	if count != 1 {
+		t.Fatalf("FTS row count for m1 = %d after backfill on populated table, want 1 (no duplicates)", count)
+	}
+}
+
