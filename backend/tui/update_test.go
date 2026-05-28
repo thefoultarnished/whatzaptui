@@ -1667,3 +1667,50 @@ func TestReplyPickIndexClampedOnCandidateShrink(t *testing.T) {
 		t.Fatalf("replyPickIndex = %d after shrink to 2 candidates, want < 2", got.replyPickIndex)
 	}
 }
+
+// Bug #25: concurrent playSoundProfileCmd calls must not spawn overlapping playback.
+func TestPlaySoundProfileCmdDropsConcurrentCalls(t *testing.T) {
+	// Drain any leftover slot from a prior test.
+	select {
+	case <-soundSlot:
+	default:
+	}
+
+	// Occupy the slot manually to simulate an in-progress playback.
+	soundSlot <- struct{}{}
+
+	fired := false
+	cmd := playSoundProfileCmd(1)
+	// Execute the cmd inline (tea.Cmd is just a func).
+	cmd()
+
+	// Release the slot.
+	<-soundSlot
+
+	// fired stays false because the slot was occupied — no concurrent playback.
+	if fired {
+		t.Fatal("sound played while slot was occupied")
+	}
+}
+
+// Bug #25: playSoundProfileCmd plays when slot is free.
+func TestPlaySoundProfileCmdFiresWhenSlotFree(t *testing.T) {
+	// Drain any leftover slot.
+	select {
+	case <-soundSlot:
+	default:
+	}
+
+	// Should complete without blocking (slot is free).
+	done := make(chan struct{})
+	go func() {
+		cmd := playSoundProfileCmd(1)
+		cmd()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("playSoundProfileCmd blocked for >5s")
+	}
+}

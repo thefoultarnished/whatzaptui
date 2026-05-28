@@ -32,9 +32,18 @@ func soundName(v int) string {
 	}
 }
 
+// soundSlot is a single-slot semaphore that prevents concurrent playback.
+var soundSlot = make(chan struct{}, 1)
+
 func playSoundProfileCmd(profile int) tea.Cmd {
 	return func() tea.Msg {
-		playSoundProfile(profile)
+		select {
+		case soundSlot <- struct{}{}:
+			playSoundProfile(profile)
+			<-soundSlot
+		default:
+			// playback already in progress — drop this notification
+		}
 		return nil
 	}
 }

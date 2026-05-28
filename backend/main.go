@@ -19,8 +19,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -147,9 +149,34 @@ func main() {
 	}
 
 	addr := "127.0.0.1:8787"
-	log.Printf("whatsmeow backend listening on http://%s", addr)
-	if err := http.ListenAndServe(addr, app.handler()); err != nil {
-		log.Fatalf("server failed: %v", err)
+	srv := &http.Server{Addr: addr, Handler: app.handler()}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("whatsmeow backend listening on http://%s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server failed: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Printf("shutting down…")
+
+	app.mu.Lock()
+	app.shuttingDown = true
+	app.mu.Unlock()
+
+	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutCtx)
+
+	if app.client != nil {
+		app.client.Disconnect()
+	}
+	if app.db != nil {
+		_ = app.db.Close()
 	}
 }
 
@@ -858,7 +885,13 @@ type dbExecutor interface {
 }
 
 func (a *App) upsertMessageFTS(chatID, msgID string, fromMe int, body string) {
-	a.upsertMessageFTSTx(a.db, chatID, msgID, fromMe, body)
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	a.upsertMessageFTSTx(db, chatID, msgID, fromMe, body)
 }
 
 func (a *App) upsertMessageFTSTx(exec dbExecutor, chatID, msgID string, fromMe int, body string) {
@@ -2274,16 +2307,16 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 
 	// Inform WhatsApp server in the background so the HTTP response returns
 	// immediately — MarkRead can be slow and would otherwise trigger the TUI's
-	// 12s client timeout.
+	// 12s client timeout. persistState is called after the API calls complete
+	// so we don't flush the zeroed unread count before WhatsApp confirms it.
 	go func() {
 		chatJID, _ := types.ParseJID(req.ChatID)
 		for senderStr, ids := range senderToIDs {
 			senderJID, _ := types.ParseJID(senderStr)
 			_ = a.client.MarkRead(context.Background(), ids, time.Now(), chatJID, senderJID)
 		}
+		a.persistState()
 	}()
-
-	a.persistState()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -2870,7 +2903,15 @@ func (a *App) vacuumDB() {
 		return
 	}
 	go func() {
-		if _, err := a.db.Exec(`PRAGMA incremental_vacuum(100)`); err != nil {
+		time.Sleep(30 * time.Second)
+		a.mu.RLock()
+		db := a.db
+		shutting := a.shuttingDown
+		a.mu.RUnlock()
+		if db == nil || shutting {
+			return
+		}
+		if _, err := db.Exec(`PRAGMA incremental_vacuum(100)`); err != nil {
 			log.Printf("vacuum: %v", err)
 		}
 	}()

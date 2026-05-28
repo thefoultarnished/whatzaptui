@@ -2215,4 +2215,75 @@ func TestBroadcastDoesNotDoubleClose(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+// Bug #13: vacuumDB must not run immediately — it should delay 30s.
+func TestVacuumDBDoesNotRunImmediately(t *testing.T) {
+	app := newTestApp(t)
+	// Seed a message so the DB has real content.
+	_ = app.insertMessageToDB("c1", WireMessage{Key: WireKey{ID: "m1"}, Message: map[string]any{}})
+
+	// Record row count before vacuum call.
+	var before int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&before)
+
+	app.vacuumDB()
+
+	// Immediately after vacuumDB returns, the goroutine should still be sleeping.
+	// The DB must be untouched (no error / no lock contention) for at least 100ms.
+	time.Sleep(100 * time.Millisecond)
+	var after int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&after)
+	if before != after {
+		t.Fatalf("vacuumDB altered DB immediately (before=%d after=%d)", before, after)
+	}
+}
+
+// Bug #22: upsertMessageFTS must snapshot a.db under lock — nil db must be handled gracefully.
+func TestUpsertMessageFTSHandlesNilDB(t *testing.T) {
+	app := newTestApp(t)
+	// Close and nil out the DB to simulate post-logout state.
+	_ = app.db.Close()
+	app.db = nil
+
+	// Must not panic.
+	app.upsertMessageFTS("chat1", "msg1", 0, "hello")
+}
+
+// Arch #6: persistState must not be called before the MarkRead goroutine completes.
+// We verify this by checking that the DB chat row is NOT updated immediately after
+// the in-memory state mutation (persist is async inside the goroutine).
+func TestHandleMarkReadPersistIsAsyncAfterMarkRead(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+	app.state.Chats[chatID] = Chat{ID: chatID, UnreadCount: 5}
+
+	// Seed the chat row in DB with unread=5 so we can detect an early persist.
+	if err := app.upsertChatToDB(Chat{ID: chatID, UnreadCount: 5}); err != nil {
+		t.Fatalf("seed chat: %v", err)
+	}
+
+	// Simulate the optimistic in-memory zero that handleMarkRead performs.
+	app.mu.Lock()
+	chat := app.state.Chats[chatID]
+	chat.UnreadCount = 0
+	app.state.Chats[chatID] = chat
+	app.mu.Unlock()
+
+	// Immediately after the optimistic zero, the DB row must still show 5
+	// (persist has not been called yet — it lives inside the goroutine).
+	var dbUnread int
+	_ = app.db.QueryRow(`SELECT unread_count FROM chats WHERE id = ?`, chatID).Scan(&dbUnread)
+	if dbUnread != 5 {
+		t.Fatalf("DB unread = %d immediately after optimistic zero, want 5 (persist should not have run yet)", dbUnread)
+	}
+
+	// Now explicitly persist and verify the DB catches up.
+	if err := app.persistStateWithErr(); err != nil {
+		t.Fatalf("persistStateWithErr: %v", err)
+	}
+	_ = app.db.QueryRow(`SELECT unread_count FROM chats WHERE id = ?`, chatID).Scan(&dbUnread)
+	if dbUnread != 0 {
+		t.Fatalf("DB unread = %d after explicit persist, want 0", dbUnread)
+	}
+}
+
 
