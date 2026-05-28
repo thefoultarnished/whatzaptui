@@ -52,6 +52,9 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Successful (re)connect — reset backoff and clear disconnect state.
 		x.wsDisconnected = false
 		x.wsReconnectDelay = 0
+		if x.ws != nil {
+			_ = x.ws.Close()
+		}
 		x.ws, x.wsCh = v.conn, v.ch
 		return x, readWS(x.wsCh)
 	case reconnectMsg:
@@ -1391,6 +1394,14 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if x.replyPickMode {
 			cands := x.replyPickCandidates()
+			if len(cands) == 0 {
+				x.replyPickMode = false
+				x.selectedMsgID = ""
+				return x, nil
+			}
+			if x.replyPickIndex >= len(cands) {
+				x.replyPickIndex = len(cands) - 1
+			}
 			paneW := max(10, x.w-30)
 			threshold := 6
 			switch k.Type {

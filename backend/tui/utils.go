@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -95,8 +96,14 @@ func resolveConfigPath() string {
 
 func saveConfig() {
 	path := resolveConfigPath()
-	data, _ := json.Marshal(currentConfig)
-	_ = os.WriteFile(path, data, 0644)
+	data, err := json.Marshal(currentConfig)
+	if err != nil {
+		log.Printf("saveConfig: marshal: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		log.Printf("saveConfig: write %s: %v", path, err)
+	}
 }
 
 func loadConfig() {
@@ -109,7 +116,9 @@ func loadConfig() {
 	path := resolveConfigPath()
 	data, err := os.ReadFile(path)
 	if err == nil {
-		_ = json.Unmarshal(data, &currentConfig)
+		if err := json.Unmarshal(data, &currentConfig); err != nil {
+			log.Printf("loadConfig: parse %s: %v", path, err)
+		}
 	}
 	currentConfig.SoundProfile = normalizeSoundProfile(currentConfig.SoundProfile)
 	if currentConfig.PointerIcon != "" {

@@ -1613,3 +1613,57 @@ func TestOptimisticHTTPFirstStillWorks(t *testing.T) {
 		t.Fatalf("HTTP-first: message ID = %q, want real-id", msgs[0].Key.ID)
 	}
 }
+
+// Bug Audit #4: replyPickMode must exit cleanly if candidates list becomes empty.
+func TestReplyPickModeExitsWhenCandidatesEmpty(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+	model := m{
+		status:         "ready",
+		mode:           "chat",
+		active:         chatID,
+		whitelist:      map[string]string{"15551230001": "Allowed"},
+		msgs:           map[string][]wireMsg{chatID: {}},
+		flashUntil:     map[string]time.Time{},
+		mainCache:      &renderCache{},
+		replyPickMode:  true,
+		replyPickIndex: 5,
+	}
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	got := next.(m)
+	if got.replyPickMode {
+		t.Fatal("replyPickMode should be false when no candidates exist")
+	}
+}
+
+// Bug Audit #4: replyPickIndex must be clamped when candidates shrink between events.
+func TestReplyPickIndexClampedOnCandidateShrink(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+	msgs := make([]wireMsg, 5)
+	for i := range msgs {
+		msgs[i].Key.ID = fmt.Sprintf("m%d", i)
+		msgs[i].Key.RemoteJID = chatID
+		msgs[i].Message = map[string]any{"conversation": fmt.Sprintf("msg %d", i)}
+		msgs[i].MessageTimestamp = int64(i + 1)
+	}
+	model := m{
+		status:         "ready",
+		mode:           "chat",
+		active:         chatID,
+		whitelist:      map[string]string{"15551230001": "Allowed"},
+		msgs:           map[string][]wireMsg{chatID: msgs},
+		flashUntil:     map[string]time.Time{},
+		mainCache:      &renderCache{},
+		replyPickMode:  true,
+		replyPickIndex: 4,
+	}
+
+	// Simulate candidates shrinking before the next key event.
+	model.msgs[chatID] = msgs[:2]
+
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got := next.(m)
+	if got.replyPickIndex >= 2 {
+		t.Fatalf("replyPickIndex = %d after shrink to 2 candidates, want < 2", got.replyPickIndex)
+	}
+}

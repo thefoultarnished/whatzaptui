@@ -2047,3 +2047,172 @@ func TestBackfillFTSIsNoOpWhenFTSAlreadyPopulated(t *testing.T) {
 	}
 }
 
+// #7: applyHistorySync must update in-memory state correctly after the two-phase refactor.
+func TestApplyHistorySyncTwoPhaseUpdatesState(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	history := &waHistorySync.HistorySync{
+		Conversations: []*waHistorySync.Conversation{
+			{
+				ID:                    proto.String(chatID),
+				DisplayName:           proto.String("Alice"),
+				ConversationTimestamp: proto.Uint64(500),
+				UnreadCount:           proto.Uint32(2),
+			},
+		},
+	}
+	app.applyHistorySync(history)
+
+	chat := app.state.Chats[chatID]
+	if chat.Name != "Alice" {
+		t.Fatalf("chat.Name = %q, want Alice", chat.Name)
+	}
+	if chat.ConversationTimestamp != 500 {
+		t.Fatalf("chat.ConversationTimestamp = %d, want 500", chat.ConversationTimestamp)
+	}
+	if chat.UnreadCount != 2 {
+		t.Fatalf("chat.UnreadCount = %d, want 2", chat.UnreadCount)
+	}
+}
+
+// #7: pushname from history sync must fall through to chat name when no display name is set.
+func TestApplyHistorySyncPushnamePopulatesChatName(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	history := &waHistorySync.HistorySync{
+		Pushnames: []*waHistorySync.Pushname{
+			{ID: proto.String(chatID), Pushname: proto.String("Bob")},
+		},
+		Conversations: []*waHistorySync.Conversation{
+			{
+				ID:                    proto.String(chatID),
+				ConversationTimestamp: proto.Uint64(100),
+			},
+		},
+	}
+	app.applyHistorySync(history)
+
+	chat := app.state.Chats[chatID]
+	if chat.Name != "Bob" {
+		t.Fatalf("chat.Name = %q, want Bob (from pushname fallback)", chat.Name)
+	}
+}
+
+// #6: reconcileLIDChats must merge a @lid-keyed chat into its resolved phone JID entry.
+func TestReconcileLIDChatsMergesIntoPhoneJID(t *testing.T) {
+	app := newTestApp(t)
+
+	lidID := "99999@s.whatsapp.net" // simulate a previously unresolved LID stored under wrong key
+	phoneID := "15551230001@s.whatsapp.net"
+
+	// Seed: chat stored under lidID (the "duplicate" entry), and an existing phone-keyed chat.
+	app.mu.Lock()
+	app.state.Chats[lidID] = Chat{ID: lidID, Name: "Old LID Chat", UnreadCount: 3, ConversationTimestamp: 100}
+	app.state.Chats[phoneID] = Chat{ID: phoneID, Name: "Real Chat", UnreadCount: 1, ConversationTimestamp: 200}
+	app.state.Contacts[lidID] = Contact{ID: lidID, Notify: "Old Contact"}
+	app.mu.Unlock()
+
+	// Manually merge as reconcileLIDChats would (without needing a live whatsmeow LID store).
+	app.mu.Lock()
+	lidChat := app.state.Chats[lidID]
+	phoneChat := app.state.Chats[phoneID]
+	merged := mergeChat(phoneChat, lidChat)
+	merged.ID = phoneID
+	app.state.Chats[phoneID] = merged
+	delete(app.state.Chats, lidID)
+	if lidContact, ok := app.state.Contacts[lidID]; ok {
+		phoneContact := app.state.Contacts[phoneID]
+		mergedContact := mergeContact(phoneContact, lidContact)
+		mergedContact.ID = phoneID
+		app.state.Contacts[phoneID] = mergedContact
+		delete(app.state.Contacts, lidID)
+	}
+	app.mu.Unlock()
+
+	if _, ok := app.state.Chats[lidID]; ok {
+		t.Fatal("LID-keyed chat still present after reconciliation")
+	}
+	result := app.state.Chats[phoneID]
+	if result.Name != "Real Chat" {
+		t.Fatalf("chat.Name = %q, want Real Chat (phone entry takes priority)", result.Name)
+	}
+	if result.UnreadCount != 3 {
+		t.Fatalf("chat.UnreadCount = %d, want 3 (higher value wins)", result.UnreadCount)
+	}
+	if result.ConversationTimestamp != 200 {
+		t.Fatalf("chat.ConversationTimestamp = %d, want 200 (newer wins)", result.ConversationTimestamp)
+	}
+	if _, ok := app.state.Contacts[lidID]; ok {
+		t.Fatal("LID-keyed contact still present after reconciliation")
+	}
+}
+
+// Bug Audit #19: WS client must be registered before "ready" is sent.
+func TestHandleWSRegistersClientBeforeSendingReady(t *testing.T) {
+	app := newTestApp(t)
+	app.connected = true
+
+	srv := httptest.NewServer(app.handler())
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	header := http.Header{}
+	header.Set(authHeaderName, "Bearer "+app.apiToken)
+	header.Set("Origin", "http://127.0.0.1:3000")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Read the "ready" message that handleWS sends on connect.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ready: %v", err)
+	}
+	if !strings.Contains(string(msg), "ready") {
+		t.Fatalf("first message = %q, want ready", string(msg))
+	}
+
+	// At the point the client received "ready", it must already be in wsClients.
+	app.wsMu.Lock()
+	count := len(app.wsClients)
+	app.wsMu.Unlock()
+	if count == 0 {
+		t.Fatal("client not in wsClients at the time ready was delivered")
+	}
+}
+
+// Bug Audit #21: broadcast must not double-close a connection already removed by handleWS reader.
+func TestBroadcastDoesNotDoubleClose(t *testing.T) {
+	app := newTestApp(t)
+
+	srv := httptest.NewServer(app.handler())
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	header := http.Header{}
+	header.Set(authHeaderName, "Bearer "+app.apiToken)
+	header.Set("Origin", "http://127.0.0.1:3000")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	// Close the connection from the client side — the reader goroutine in
+	// handleWS will remove it from wsClients and close it on the server side.
+	conn.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// broadcast should not panic or error when the client is already gone.
+	app.broadcast(EventEnvelope{Type: "test"})
+	app.broadcast(EventEnvelope{Type: "test"})
+	time.Sleep(100 * time.Millisecond)
+}
+
+

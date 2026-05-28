@@ -618,42 +618,69 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 
 	changedChats := false
 
-	a.mu.Lock()
+	// Phase 1: pre-compute all updates without holding a.mu.
+	// canonicalizeChatID uses a.lidCacheMu (its own lock), not a.mu, so this is safe.
+	type pushnameUpdate struct {
+		id   string
+		name string
+	}
+	var pushnameUpdates []pushnameUpdate
 	for _, p := range data.GetPushnames() {
 		id := a.canonicalizeChatID(strings.TrimSpace(p.GetID()))
 		if id == "" {
 			continue
 		}
-		contact := a.state.Contacts[id]
-		contact.ID = id
 		if name := strings.TrimSpace(p.GetPushname()); name != "" {
-			contact.Notify = name
-		}
-		a.state.Contacts[id] = contact
-		if contact.Notify != "" {
-			chat := a.state.Chats[id]
-			chat.ID = id
-			if chat.Name == "" {
-				chat.Name = contact.Notify
-			}
-			a.state.Chats[id] = chat
+			pushnameUpdates = append(pushnameUpdates, pushnameUpdate{id, name})
 		}
 	}
 
+	type convMetadata struct {
+		chatID string
+		name   string
+		ts     int64
+		uc     int
+	}
+	var convMeta []convMetadata
 	for _, conv := range data.GetConversations() {
 		chatID := a.historyConversationChatID(conv)
 		if chatID == "" || chatID == "status@broadcast" {
 			continue
 		}
-		chat := a.state.Chats[chatID]
-		chat.ID = chatID
-		if name := strings.TrimSpace(conv.GetDisplayName()); name != "" {
-			chat.Name = name
-		} else if name := strings.TrimSpace(conv.GetName()); name != "" {
-			chat.Name = name
+		name := strings.TrimSpace(conv.GetDisplayName())
+		if name == "" {
+			name = strings.TrimSpace(conv.GetName())
+		}
+		ts := int64(conv.GetConversationTimestamp())
+		if ts == 0 {
+			ts = int64(conv.GetLastMsgTimestamp())
+		}
+		convMeta = append(convMeta, convMetadata{chatID, name, ts, int(conv.GetUnreadCount())})
+		changedChats = true
+	}
+
+	// Phase 2: apply pre-computed updates under one short lock.
+	a.mu.Lock()
+	for _, u := range pushnameUpdates {
+		contact := a.state.Contacts[u.id]
+		contact.ID = u.id
+		contact.Notify = u.name
+		a.state.Contacts[u.id] = contact
+		chat := a.state.Chats[u.id]
+		chat.ID = u.id
+		if chat.Name == "" {
+			chat.Name = u.name
+		}
+		a.state.Chats[u.id] = chat
+	}
+	for _, c := range convMeta {
+		chat := a.state.Chats[c.chatID]
+		chat.ID = c.chatID
+		if c.name != "" {
+			chat.Name = c.name
 		}
 		if chat.Name == "" {
-			if ct, ok := a.state.Contacts[chatID]; ok {
+			if ct, ok := a.state.Contacts[c.chatID]; ok {
 				if n := strings.TrimSpace(ct.Notify); n != "" {
 					chat.Name = n
 				} else if n := strings.TrimSpace(ct.Name); n != "" {
@@ -661,19 +688,13 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 				}
 			}
 		}
-		if ts := int64(conv.GetConversationTimestamp()); ts > chat.ConversationTimestamp {
-			chat.ConversationTimestamp = ts
+		if c.ts > chat.ConversationTimestamp {
+			chat.ConversationTimestamp = c.ts
 		}
-		if chat.ConversationTimestamp == 0 {
-			if ts := int64(conv.GetLastMsgTimestamp()); ts > 0 {
-				chat.ConversationTimestamp = ts
-			}
+		if c.uc > chat.UnreadCount {
+			chat.UnreadCount = c.uc
 		}
-		if uc := int(conv.GetUnreadCount()); uc > chat.UnreadCount {
-			chat.UnreadCount = uc
-		}
-		a.state.Chats[chatID] = chat
-		changedChats = true
+		a.state.Chats[c.chatID] = chat
 	}
 	a.mu.Unlock()
 
@@ -730,10 +751,58 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		}
 	}
 
+	a.reconcileLIDChats()
+
 	if changedChats {
 		a.persistState()
 		a.broadcast(EventEnvelope{Type: "chats:loaded"})
 		a.broadcast(EventEnvelope{Type: "contacts:updated"})
+	}
+}
+
+// reconcileLIDChats merges any in-memory chat/contact entries stored under a
+// raw @lid JID into their resolved phone-number JID equivalents. It runs after
+// history sync when the LID cache is warmest. DB rows are not re-keyed — only
+// the in-memory sidebar state is fixed.
+func (a *App) reconcileLIDChats() {
+	if a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
+		return
+	}
+
+	a.mu.RLock()
+	var lidIDs []string
+	for id := range a.state.Chats {
+		if strings.HasSuffix(id, "@lid") {
+			lidIDs = append(lidIDs, id)
+		}
+	}
+	a.mu.RUnlock()
+
+	for _, lidID := range lidIDs {
+		resolved := a.canonicalizeChatID(lidID)
+		if resolved == "" || resolved == lidID {
+			continue
+		}
+		a.mu.Lock()
+		lidChat, ok := a.state.Chats[lidID]
+		if !ok {
+			a.mu.Unlock()
+			continue
+		}
+		phoneChat := a.state.Chats[resolved]
+		merged := mergeChat(phoneChat, lidChat)
+		merged.ID = resolved
+		a.state.Chats[resolved] = merged
+		delete(a.state.Chats, lidID)
+		if lidContact, ok := a.state.Contacts[lidID]; ok {
+			phoneContact := a.state.Contacts[resolved]
+			mergedContact := mergeContact(phoneContact, lidContact)
+			mergedContact.ID = resolved
+			a.state.Contacts[resolved] = mergedContact
+			delete(a.state.Contacts, lidID)
+		}
+		a.mu.Unlock()
+		log.Printf("reconcileLIDChats: merged %s → %s", lidID, resolved)
 	}
 }
 
@@ -1210,26 +1279,32 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := &wsClient{conn: conn}
+	a.wsMu.Lock()
+	a.wsClients[conn] = client
+	a.wsMu.Unlock()
 	a.mu.RLock()
 	connected := a.connected
 	a.mu.RUnlock()
 	if connected {
 		if data, err := json.Marshal(EventEnvelope{Type: "ready"}); err == nil {
 			if err := client.write(data); err != nil {
+				a.wsMu.Lock()
+				delete(a.wsClients, conn)
+				a.wsMu.Unlock()
 				_ = conn.Close()
 				return
 			}
 		}
 		if data, err := json.Marshal(EventEnvelope{Type: "chats:loaded"}); err == nil {
 			if err := client.write(data); err != nil {
+				a.wsMu.Lock()
+				delete(a.wsClients, conn)
+				a.wsMu.Unlock()
 				_ = conn.Close()
 				return
 			}
 		}
 	}
-	a.wsMu.Lock()
-	a.wsClients[conn] = client
-	a.wsMu.Unlock()
 
 	go func() {
 		defer func() {
@@ -1258,13 +1333,17 @@ func (a *App) broadcast(evt EventEnvelope) {
 	}
 	a.wsMu.Unlock()
 	for _, client := range clients {
-		client := client
 		go func() {
 			if err := client.write(data); err != nil {
 				a.wsMu.Lock()
-				delete(a.wsClients, client.conn)
+				_, stillPresent := a.wsClients[client.conn]
+				if stillPresent {
+					delete(a.wsClients, client.conn)
+				}
 				a.wsMu.Unlock()
-				_ = client.conn.Close()
+				if stillPresent {
+					_ = client.conn.Close()
+				}
 			}
 		}()
 	}
@@ -2084,11 +2163,18 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(req.Path)
+	f, err := os.Open(req.Path)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	data := make([]byte, info.Size())
+	if _, err := io.ReadFull(f, data); err != nil {
+		_ = f.Close()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = f.Close()
 	upload, err := a.client.Upload(context.Background(), data, mediaType)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
