@@ -175,7 +175,7 @@ func (x m) View() string {
 	} else if x.pointerPicker.open {
 		main = x.pointerPicker.Render(rightW, mainH)
 	} else if x.helpPicker.open {
-		main = x.helpPicker.Render(rightW, mainH)
+		main = x.helpPicker.RenderHelp(rightW, mainH)
 	} else if x.fileBrowserOpen {
 		main = x.renderFileBrowser(rightW, mainH)
 	} else if x.emojiPickerOpen {

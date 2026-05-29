@@ -2292,16 +2292,16 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 
 	senderToIDs := make(map[string][]types.MessageID)
-	if unreadToMark > 0 {
-		limitToMark := unreadToMark
-		if limitToMark > 100 {
-			limitToMark = 100
+	{
+		limit := 100
+		if unreadToMark > 0 && unreadToMark < limit {
+			limit = unreadToMark
 		}
 		rows, err := a.db.Query(`
 			SELECT id, participant, chat_id FROM messages
 			WHERE chat_id = ? AND from_me = 0 AND id != ''
 			ORDER BY ts DESC LIMIT ?
-		`, req.ChatID, limitToMark)
+		`, req.ChatID, limit)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {

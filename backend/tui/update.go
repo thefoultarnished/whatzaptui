@@ -1139,7 +1139,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x, nil
 	}
 	if x.helpPicker.open {
-		_, done := x.helpPicker.Handle(k)
+		_, done := x.helpPicker.HandleHelp(k)
 		if done {
 			x.helpPicker.Close(false)
 			x.mainCache.result = ""
@@ -1580,20 +1580,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.mainCache.result = ""
 				}
 				// Clear local unread count immediately.
-				hadUnread := false
 				for i := range x.chats {
 					if x.chats[i].ID == x.active {
-						hadUnread = x.chats[i].UnreadCount > 0
 						x.chats[i].UnreadCount = 0
 						break
 					}
 				}
-				// Reload most-recent page and mark chat as read.
-				cmds := []tea.Cmd{getMsgs(x.client, x.baseURL, x.active, 120)}
-				if hadUnread {
-					cmds = append(cmds, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
-				}
-				return x, tea.Batch(cmds...)
+				// Reload most-recent page and always mark chat as read so the
+				// phone's unread badge clears even when local count was stale.
+				return x, tea.Batch(
+					getMsgs(x.client, x.baseURL, x.active, 120),
+					postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }),
+				)
 			}
 		case tea.KeyEsc:
 			if x.inputAllSelected {
@@ -2517,10 +2515,8 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 	}
 
 	// Clear the unread dot right away.
-	hadUnread := false
 	for i := range x.chats {
 		if x.chats[i].ID == x.active {
-			hadUnread = x.chats[i].UnreadCount > 0
 			x.chats[i].UnreadCount = 0
 			break
 		}
@@ -2533,9 +2529,10 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 		return x, nil
 	}
 
-	batch := []tea.Cmd{getMsgs(x.client, x.baseURL, x.active, 120)}
-	if hadUnread {
-		batch = append(batch, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
+	// Always mark read so the phone badge clears even when local count was stale.
+	batch := []tea.Cmd{
+		getMsgs(x.client, x.baseURL, x.active, 120),
+		postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }),
 	}
 	if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 		batch = append(batch, titleCmd)
