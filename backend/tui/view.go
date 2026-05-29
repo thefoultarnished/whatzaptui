@@ -171,7 +171,7 @@ func (x m) View() string {
 	}
 	var main string
 	if x.themePicker.open {
-		main = x.themePicker.Render(rightW, mainH)
+		main = x.themePicker.RenderTheme(rightW, mainH)
 	} else if x.pointerPicker.open {
 		main = x.pointerPicker.Render(rightW, mainH)
 	} else if x.helpPicker.open {

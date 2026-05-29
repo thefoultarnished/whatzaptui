@@ -1110,7 +1110,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x, nil
 	}
 	if x.themePicker.open {
-		action, done := x.themePicker.Handle(k)
+		action, done := x.themePicker.HandleTheme(k)
 		if !done {
 			applyThemeByName(x.themePicker.SelectedKey())
 			x.mainCache.result = ""
