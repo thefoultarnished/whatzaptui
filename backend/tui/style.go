@@ -74,7 +74,7 @@ var (
 
 func init() {
 	cmds := []string{
-		"/synccontacts", "/syncgroups", "/whitelist", "/whitelistall", "/blacklist", "/blacklistall", "/rename", "/logout", "/restart", "/exit",
+		"/synccontacts", "/syncgroups", "/whitelist", "/whitelistall", "/blacklist", "/blacklistall", "/block", "/rename", "/logout", "/restart", "/exit",
 		"/theme", "/pointer", "/help",
 	}
 	for i, t := range themeList {

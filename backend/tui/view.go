@@ -1543,7 +1543,12 @@ func (x *m) setTopBar(msg string) tea.Cmd {
 	x.topBarMsg = msg
 	x.topBarShown = 0
 	ver := x.topBarVer
-	return tea.Batch(nextTopBarTypeTick(ver), clearTopBarAfter(ver, 2200*time.Millisecond))
+	d := 2200 * time.Millisecond
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "fail") || strings.Contains(lower, "err") || strings.Contains(lower, "invalid") || strings.Contains(lower, "not") {
+		d = 10000 * time.Millisecond
+	}
+	return tea.Batch(nextTopBarTypeTick(ver), clearTopBarAfter(ver, d))
 }
 func nextTopBarTypeTick(ver int) tea.Cmd {
 	return tea.Tick(28*time.Millisecond, func(time.Time) tea.Msg { return topBarTypeMsg{ver: ver} })

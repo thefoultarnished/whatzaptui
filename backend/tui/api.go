@@ -659,3 +659,26 @@ func syncGroups(c *http.Client, base string) tea.Cmd {
 		return syncGroupsDoneMsg{msg: fmt.Sprintf("Groups synced: %d/%d updated", out.Updated, out.Total)}
 	})
 }
+
+type blockMsg struct {
+	err error
+}
+
+func blockContact(c *http.Client, base, chatID string) tea.Cmd {
+	return func() tea.Msg {
+		b, _ := json.Marshal(map[string]string{"chatId": chatID})
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/block", bytes.NewReader(b))
+		req.Header.Set("content-type", "application/json")
+		attachAuthHeader(req, apiTokenFromURL(base))
+		res, err := c.Do(req)
+		if err != nil {
+			return blockMsg{err: err}
+		}
+		defer res.Body.Close()
+		if res.StatusCode/100 != 2 {
+			raw, _ := io.ReadAll(res.Body)
+			return blockMsg{err: fmt.Errorf("%s %s", res.Status, strings.TrimSpace(string(raw)))}
+		}
+		return blockMsg{}
+	}
+}

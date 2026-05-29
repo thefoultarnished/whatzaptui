@@ -881,6 +881,11 @@ func TestHandlersRequiringWhatsAppConnectionReturnConflictWhenDisconnected(t *te
 			req:  httptest.NewRequest(http.MethodGet, "/media/download?chatId=15551230001@s.whatsapp.net&msgId=m1", nil),
 			run:  app.handleMediaDownload,
 		},
+		{
+			name: "block",
+			req:  httptest.NewRequest(http.MethodPost, "/block", bytes.NewBufferString(`{"chatId":"15551230001@s.whatsapp.net"}`)),
+			run:  app.handleBlock,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2215,6 +2220,112 @@ func TestBroadcastDoesNotDoubleClose(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+// Bug #9: withPermissionDB must hold lock for the entire query duration.
+func TestWithPermissionDBHoldsLockDuringQuery(t *testing.T) {
+	app := newTestApp(t)
+
+	// Insert a permission row to query.
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Test', 1)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var queriedAllowed int
+	err := app.withPermissionDB(func(db *sql.DB) error {
+		return db.QueryRow(`SELECT allowed FROM chat_permissions WHERE phone = '15551230001'`).Scan(&queriedAllowed)
+	})
+	if err != nil {
+		t.Fatalf("withPermissionDB: %v", err)
+	}
+	if queriedAllowed != 1 {
+		t.Fatalf("allowed = %d, want 1", queriedAllowed)
+	}
+}
+
+// Bug #9: withPermissionDB must return error when db is nil (post-logout).
+func TestWithPermissionDBReturnsErrorWhenDBNil(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.db.Close()
+	app.db = nil
+
+	err := app.withPermissionDB(func(db *sql.DB) error {
+		t.Fatal("callback must not be called when db is nil")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error when db is nil, got nil")
+	}
+}
+
+// Bug #9: isChatAllowed must use withPermissionDB — verify it works correctly.
+func TestIsChatAllowedUsesWithPermissionDB(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Test', 1)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	allowed, err := app.isChatAllowed("15551230001@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("isChatAllowed: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected allowed=true")
+	}
+}
+
+// Bug #3: upsertMessage must wrap DB ops in a transaction so message row and FTS are in sync.
+func TestUpsertMessageWritesMessageAndFTSAtomically(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	app.upsertMessage(chatID, WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "hello atomic"},
+	})
+
+	var msgCount, ftsCount int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE chat_id = ? AND id = 'm1'`, chatID).Scan(&msgCount)
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE chat_id = ? AND msg_id = 'm1'`, chatID).Scan(&ftsCount)
+
+	if msgCount != 1 {
+		t.Fatalf("messages row count = %d, want 1", msgCount)
+	}
+	if ftsCount != 1 {
+		t.Fatalf("messages_fts row count = %d, want 1 (FTS must be written in same tx)", ftsCount)
+	}
+}
+
+// Bug #3: re-upserting a message must keep message and FTS in sync.
+func TestUpsertMessageReupsertKeepsFTSInSync(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	app.upsertMessage(chatID, WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "original text"},
+	})
+	app.upsertMessage(chatID, WireMessage{
+		Key:     WireKey{ID: "m1", FromMe: false},
+		Message: map[string]any{"conversation": "updated text"},
+	})
+
+	// Only one FTS row should exist.
+	var ftsCount int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE chat_id = ? AND msg_id = 'm1'`, chatID).Scan(&ftsCount)
+	if ftsCount != 1 {
+		t.Fatalf("messages_fts count = %d after re-upsert, want 1", ftsCount)
+	}
+
+	// FTS body must reflect the updated text.
+	hits := searchHits(t, app, "updated", "")
+	if len(hits) != 1 {
+		t.Fatalf("search 'updated' hits = %d, want 1", len(hits))
+	}
+	hits = searchHits(t, app, "original", "")
+	if len(hits) != 0 {
+		t.Fatalf("search 'original' hits = %d after update, want 0", len(hits))
+	}
+}
+
 // Bug #13: vacuumDB must not run immediately — it should delay 30s.
 func TestVacuumDBDoesNotRunImmediately(t *testing.T) {
 	app := newTestApp(t)
@@ -2283,6 +2394,17 @@ func TestHandleMarkReadPersistIsAsyncAfterMarkRead(t *testing.T) {
 	_ = app.db.QueryRow(`SELECT unread_count FROM chats WHERE id = ?`, chatID).Scan(&dbUnread)
 	if dbUnread != 0 {
 		t.Fatalf("DB unread = %d after explicit persist, want 0", dbUnread)
+	}
+}
+
+func TestHandleBlockValidation(t *testing.T) {
+	app := newTestApp(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/block", nil)
+	app.handleBlock(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected StatusMethodNotAllowed, got %d", rec.Code)
 	}
 }
 

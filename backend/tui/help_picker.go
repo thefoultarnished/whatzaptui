@@ -13,6 +13,7 @@ var helpCommands = []struct {
 	{"/whitelistall", "Allow all contacts"},
 	{"/blacklist", "Block a contact"},
 	{"/blacklistall", "Block all contacts"},
+	{"/block", "Block contact on WhatsApp"},
 	{"/synccontacts", "Sync contacts from WhatsApp"},
 	{"/syncgroups", "Sync groups from WhatsApp"},
 	{"/mouseon", "Enable mouse support"},

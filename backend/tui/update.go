@@ -478,6 +478,11 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
+	case blockMsg:
+		if v.err != nil {
+			return x, x.setTopBar("Block failed: " + v.err.Error())
+		}
+		return x, x.setTopBar("Contact blocked successfully")
 	case logoutMsg:
 		if v.err != nil {
 			x.err = v.err.Error()
@@ -2000,6 +2005,24 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 			return x.setTopBar(msg), true
 		}
 		return tea.Batch(setWhitelistEntry(x.client, x.baseURL, n, "", 0), x.setTopBar(msg)), true
+	case txt == "/block":
+		if includeGlobal && x.active == "" {
+			return x.setTopBar("No active chat"), true
+		}
+		n := num(x.active)
+		delete(x.whitelist, n)
+		x.markIdentityChanged()
+		if x.active != "" && num(x.active) == n {
+			x.clearChatComposer()
+		}
+		if x.demoMode {
+			return x.setTopBar("Demo mode: block disabled"), true
+		}
+		return tea.Batch(
+			x.setTopBar("Blocking contact..."),
+			blockContact(x.client, x.baseURL, x.active),
+			setWhitelistEntry(x.client, x.baseURL, n, "", 0),
+		), true
 	case strings.HasPrefix(txt, "/rename "):
 		name := strings.TrimSpace(strings.TrimPrefix(txt, "/rename "))
 		if name == "" {

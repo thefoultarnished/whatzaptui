@@ -416,7 +416,7 @@ func (a *App) initPersistentResources() error {
 	a.db = rawDB
 	a.storeContainer = container
 	a.backfillFTS()
-	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", "WARN", true))
+	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", "DEBUG", true))
 	a.bindEvents()
 	return nil
 }
@@ -462,6 +462,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/messages/react", a.handleReact)
 	mux.HandleFunc("/messages/delete", a.handleDeleteMessage)
 	mux.HandleFunc("/search", a.handleSearch)
+	mux.HandleFunc("/block", a.handleBlock)
 	return withCORS(a.withAuth(mux))
 }
 
@@ -1024,7 +1025,23 @@ func (a *App) loadContactsFromDB() (map[string]Contact, error) {
 }
 
 func (a *App) upsertMessage(chatID string, msg WireMessage) {
-	a.upsertMessageTx(a.db, chatID, msg)
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("upsertMessage: begin tx: %v", err)
+		a.upsertMessageTx(db, chatID, msg)
+		return
+	}
+	a.upsertMessageTx(tx, chatID, msg)
+	if err := tx.Commit(); err != nil {
+		log.Printf("upsertMessage: commit: %v", err)
+		_ = tx.Rollback()
+	}
 }
 
 func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
@@ -2015,12 +2032,11 @@ func (a *App) requireConnectedClient(w http.ResponseWriter) bool {
 }
 
 func (a *App) isChatAllowed(chatID string) (bool, error) {
-	if a.db == nil {
-		return false, fmt.Errorf("db unavailable")
-	}
 	phone := phoneFromJID(chatID)
 	var allowed int
-	err := a.db.QueryRow(`SELECT allowed FROM chat_permissions WHERE phone = ?`, phone).Scan(&allowed)
+	err := a.withPermissionDB(func(db *sql.DB) error {
+		return db.QueryRow(`SELECT allowed FROM chat_permissions WHERE phone = ?`, phone).Scan(&allowed)
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -3402,44 +3418,51 @@ func (a *App) upsertPermission(phone, name string) {
 	}
 }
 
-func (a *App) permissionDB() (*sql.DB, bool) {
+// withPermissionDB holds a.mu.RLock() for the entire duration of fn so that
+// logout cannot close a.db while the caller is still using it.
+func (a *App) withPermissionDB(fn func(*sql.DB) error) error {
 	if a == nil {
-		return nil, false
+		return fmt.Errorf("permission store unavailable")
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.shuttingDown || a.db == nil {
-		return nil, false
+		return fmt.Errorf("permission store unavailable")
 	}
-	return a.db, true
+	return fn(a.db)
 }
 
 func (a *App) handleGetWhitelist(w http.ResponseWriter, r *http.Request) {
-	db, ok := a.permissionDB()
-	if !ok {
-		writeErr(w, http.StatusConflict, "permission store unavailable")
-		return
-	}
-	rows, err := db.Query(`SELECT phone, name, allowed FROM chat_permissions ORDER BY phone`)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer rows.Close()
 	type entry struct {
 		Phone   string `json:"phone"`
 		Name    string `json:"name"`
 		Allowed int    `json:"allowed"`
 	}
-	result := []entry{}
-	for rows.Next() {
-		var e entry
-		if err := rows.Scan(&e.Phone, &e.Name, &e.Allowed); err == nil {
-			result = append(result, e)
+	var result []entry
+	err := a.withPermissionDB(func(db *sql.DB) error {
+		rows, err := db.Query(`SELECT phone, name, allowed FROM chat_permissions ORDER BY phone`)
+		if err != nil {
+			return err
 		}
+		defer rows.Close()
+		for rows.Next() {
+			var e entry
+			if err := rows.Scan(&e.Phone, &e.Name, &e.Allowed); err == nil {
+				result = append(result, e)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		if err.Error() == "permission store unavailable" {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
 	}
-	if err := rows.Err(); err != nil {
-		log.Printf("handleGetWhitelist rows err: %v", err)
+	if result == nil {
+		result = []entry{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": result})
 }
@@ -3447,11 +3470,6 @@ func (a *App) handleGetWhitelist(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	db, ok := a.permissionDB()
-	if !ok {
-		writeErr(w, http.StatusConflict, "permission store unavailable")
 		return
 	}
 	var req struct {
@@ -3467,12 +3485,19 @@ func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "phone is required")
 		return
 	}
-	_, err := db.Exec(
-		`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`,
-		req.Phone, req.Name, req.Allowed,
-	)
+	err := a.withPermissionDB(func(db *sql.DB) error {
+		_, err := db.Exec(
+			`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`,
+			req.Phone, req.Name, req.Allowed,
+		)
+		return err
+	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		if err.Error() == "permission store unavailable" {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -3481,11 +3506,6 @@ func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleSetName(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	db, ok := a.permissionDB()
-	if !ok {
-		writeErr(w, http.StatusConflict, "permission store unavailable")
 		return
 	}
 	var req struct {
@@ -3501,13 +3521,20 @@ func (a *App) handleSetName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// create row if not exists (allowed stays 0), then only update name
-	_, err := db.Exec(
-		`INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, 0)
-		 ON CONFLICT(phone) DO UPDATE SET name=excluded.name`,
-		req.Phone, req.Name,
-	)
+	err := a.withPermissionDB(func(db *sql.DB) error {
+		_, err := db.Exec(
+			`INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, 0)
+			 ON CONFLICT(phone) DO UPDATE SET name=excluded.name`,
+			req.Phone, req.Name,
+		)
+		return err
+	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		if err.Error() == "permission store unavailable" {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -3794,6 +3821,62 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !a.requireConnectedClient(w) {
+		return
+	}
+	var req struct {
+		ChatID string `json:"chatId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	rawChatID := strings.TrimSpace(req.ChatID)
+	req.ChatID = a.canonicalizeChatID(rawChatID)
+	if req.ChatID == "" {
+		writeErr(w, http.StatusBadRequest, "chatId is required")
+		return
+	}
+	if strings.HasSuffix(req.ChatID, "@g.us") || req.ChatID == "status@broadcast" {
+		writeErr(w, http.StatusBadRequest, "cannot block group or status chats")
+		return
+	}
+	jid, err := types.ParseJID(req.ChatID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid chatId")
+		return
+	}
+	jid = jid.ToNonAD()
+	log.Printf("handleBlock: raw=%s canonical=%s parsed=%s server=%s", rawChatID, req.ChatID, jid.String(), jid.Server)
+	var altJID types.JID
+	_, err = a.client.UpdateBlocklist(context.Background(), jid, events.BlocklistChangeActionBlock)
+	if err != nil {
+		if jid.Server == types.DefaultUserServer && a.client.Store != nil && a.client.Store.LIDs != nil {
+			if l, errAlt := a.client.Store.LIDs.GetLIDForPN(context.Background(), jid); errAlt == nil && l.User != "" {
+				altJID = l
+			}
+		} else if jid.Server == types.HiddenUserServer && a.client.Store != nil && a.client.Store.LIDs != nil {
+			if p, errAlt := a.client.Store.LIDs.GetPNForLID(context.Background(), jid); errAlt == nil && p.User != "" {
+				altJID = p
+			}
+		}
+		if altJID.User != "" {
+			_, err = a.client.UpdateBlocklist(context.Background(), altJID, events.BlocklistChangeActionBlock)
+		}
+	}
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to block %s (alt: %s): %s", jid.String(), altJID.String(), err.Error())
+		writeErr(w, http.StatusInternalServerError, errMsg)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
