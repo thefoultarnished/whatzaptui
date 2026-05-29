@@ -164,10 +164,11 @@ func (p *picker) RenderHelp(w, h int) string {
 
 	titleSt   := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
 	hintSt    := bg(lipgloss.NewStyle().Foreground(muted))
-	sectionSt := bg(lipgloss.NewStyle().Foreground(purple).Bold(true))
-	cmdSt     := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
-	descSt    := bg(lipgloss.NewStyle().Foreground(muted))
-	activeCmdSt  := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	sectionSt    := bg(lipgloss.NewStyle().Foreground(purple).Bold(true))
+	sectionDivSt := bg(lipgloss.NewStyle().Foreground(purple))
+	cmdSt        := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
+	descSt       := bg(lipgloss.NewStyle().Foreground(muted))
+	activeCmdSt  := bg(lipgloss.NewStyle().Foreground(accent).Bold(true).Underline(true))
 	activeDescSt := bg(lipgloss.NewStyle().Foreground(text))
 	keySt     := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
 	divSt     := bg(lipgloss.NewStyle().Foreground(muted))
@@ -200,7 +201,11 @@ func (p *picker) RenderHelp(w, h int) string {
 
 	itemOffset := 0
 	for gi, g := range helpGroupDefs {
-		lines = append(lines, ln(sectionSt.Render(g.name)))
+		nameW := len([]rune(g.name))
+		lines = append(lines,
+			ln(sectionSt.Render(g.name)),
+			ln(sectionDivSt.Render(strings.Repeat("─", nameW))),
+		)
 
 		rows := (g.count + numCols - 1) / numCols
 		for r := range rows {
