@@ -1954,7 +1954,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		}
 		cmds := []tea.Cmd{}
 		for n := range x.whitelist {
-			cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, "", 0))
+			cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], 0))
 		}
 		x.whitelist = map[string]string{}
 		x.markIdentityChanged()

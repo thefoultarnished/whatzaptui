@@ -192,6 +192,9 @@ func (p *picker) RenderTheme(w, h int) string {
 
 	colFill := bg(lipgloss.NewStyle().Width(colW))
 
+	activeBg := lipgloss.NewStyle().Background(accent).Width(innerW)
+	activeLn := func(s string) string { return activeBg.Render(s) }
+
 	divLine := ln(divSt.Render(strings.Repeat("─", innerW)))
 
 	titleRunes := len([]rune(p.title))
@@ -203,6 +206,7 @@ func (p *picker) RenderTheme(w, h int) string {
 	lines := []string{titleRow, divLine, ln("")}
 
 	indent := bg(lipgloss.NewStyle()).Render("  ")
+	activeIndent := lipgloss.NewStyle().Background(accent).Render("  ")
 
 	itemOffset := 0
 	for gi, g := range themeGroupDefs {
@@ -215,6 +219,7 @@ func (p *picker) RenderTheme(w, h int) string {
 		rows := (g.count + numCols - 1) / numCols
 		for r := range rows {
 			var row strings.Builder
+			rowHasActive := false
 			for c := range numCols {
 				localIdx := r*numCols + c
 				if localIdx >= g.count {
@@ -226,18 +231,25 @@ func (p *picker) RenderTheme(w, h int) string {
 				anomalyColor := lipgloss.Color(themeGroupOrder[fi].theme.AnomalyTag)
 				accentColor := lipgloss.Color(themeGroupOrder[fi].theme.Accent)
 
-				swatchSt := bg(lipgloss.NewStyle().Foreground(anomalyColor).Background(anomalyColor))
 				var cell string
 				if fi == p.idx {
-					themeItemSt := bg(lipgloss.NewStyle().Foreground(accentColor).Bold(true).Underline(true))
-					cell = colFill.Render(indent + swatchSt.Render("■ ") + themeItemSt.Render(item.label))
+					rowHasActive = true
+					activeRowSt := lipgloss.NewStyle().Background(accent)
+					activeSwatchSt := activeRowSt.Foreground(anomalyColor)
+					themeItemSt := activeRowSt.Foreground(badgeInk).Bold(true).Underline(true)
+					cell = activeRowSt.Width(colW).Render(activeIndent + activeSwatchSt.Render("■ ") + themeItemSt.Render(item.label))
 				} else {
+					swatchSt := bg(lipgloss.NewStyle().Foreground(anomalyColor).Background(anomalyColor))
 					themeItemSt := bg(lipgloss.NewStyle().Foreground(accentColor).Bold(true))
 					cell = colFill.Render(indent + swatchSt.Render("■ ") + themeItemSt.Render(item.label))
 				}
 				row.WriteString(cell)
 			}
-			lines = append(lines, ln(row.String()))
+			if rowHasActive {
+				lines = append(lines, activeLn(row.String()))
+			} else {
+				lines = append(lines, ln(row.String()))
+			}
 		}
 		itemOffset += g.count
 		if gi < len(themeGroupDefs)-1 {
