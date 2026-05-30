@@ -150,7 +150,7 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					x.flashUntil[wm.Key.ID] = time.Now().Add(5 * time.Second)
 					x.msgActivityUntil = time.Now().Add(3 * time.Second)
 					x.msgActivityType = "received"
-					if x.shouldNotifyIncoming(wm) {
+					if x.shouldNotifyIncoming(wm) && currentConfig.NotificationsEnabled {
 						notify = true
 						notifyTitle = "New message from " + x.nameFor(wm.Key.RemoteJID)
 						notifyBody = messagePreviewForNotification(wm)
@@ -161,11 +161,14 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if x.soundEnabled {
 						soundCmd = playSoundProfileCmd(x.soundProfile)
 					}
-					cmds = append(cmds, tea.Batch(
-						x.setTopBar(notifyTitle+": "+notifyBody),
+					notifyCmds := []tea.Cmd{
+						x.setTopBar(notifyTitle + ": " + notifyBody),
 						soundCmd,
-						flashTaskbarCmd(),
-					))
+					}
+					if currentConfig.FlashTaskbar {
+						notifyCmds = append(notifyCmds, flashTaskbarCmd())
+					}
+					cmds = append(cmds, tea.Batch(notifyCmds...))
 				}
 				if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 					cmds = append(cmds, titleCmd)
@@ -215,7 +218,11 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cm callMsg
 			if err := json.Unmarshal(v.evt.Payload, &cm); err == nil {
 				banner := x.callBanner(cm)
-				cmds = append(cmds, tea.Batch(x.setTopBar(banner), flashTaskbarCmd()))
+				callCmds := []tea.Cmd{x.setTopBar(banner)}
+				if currentConfig.FlashTaskbar {
+					callCmds = append(callCmds, flashTaskbarCmd())
+				}
+				cmds = append(cmds, tea.Batch(callCmds...))
 			}
 		}
 		return x, tea.Batch(cmds...)
@@ -624,7 +631,7 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.lastTypeTime = time.Now()
 		mdl, cmd := x.key(v)
 		// Send composing indicator when typing in chat mode
-		if x.mode == "chat" && x.active != "" && !x.demoMode && x.lastComposingChat != x.active {
+		if x.mode == "chat" && x.active != "" && !x.demoMode && x.lastComposingChat != x.active && currentConfig.SendTypingIndicator {
 			inp := x.input + x.inputBuf
 			if inp != "" {
 				x.lastComposingChat = x.active
@@ -1142,6 +1149,19 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		_, done := x.helpPicker.HandleHelp(k)
 		if done {
 			x.helpPicker.Close(false)
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
+	if x.settingsPicker.open {
+		action, done := x.settingsPicker.HandleSettings(k)
+		if done {
+			if action == "confirm" {
+				msg := x.settingsPicker.toggleSetting()
+				x.mainCache.result = ""
+				return x, x.setTopBar(msg)
+			}
+			x.settingsPicker.Close(false)
 			x.mainCache.result = ""
 		}
 		return x, nil
@@ -2085,6 +2105,13 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		return nil, true
 	case txt == "/help":
 		x.helpPicker.Open("")
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/settings":
+		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker.Open("")
 		x.leftInput = ""
 		x.leftInputFocused = false
 		x.mainCache.result = ""

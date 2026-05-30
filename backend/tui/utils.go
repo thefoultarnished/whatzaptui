@@ -108,10 +108,13 @@ func saveConfig() {
 
 func loadConfig() {
 	currentConfig = Config{
-		ThemeName:    "tokyonight",
-		MouseEnabled: true,
-		SoundEnabled: true,
-		SoundProfile: 2,
+		ThemeName:            "tokyonight",
+		MouseEnabled:         true,
+		SoundEnabled:         true,
+		SoundProfile:         2,
+		SendTypingIndicator:  true,
+		FlashTaskbar:         true,
+		NotificationsEnabled: true,
 	}
 	path := resolveConfigPath()
 	data, err := os.ReadFile(path)

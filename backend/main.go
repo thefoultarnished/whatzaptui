@@ -588,6 +588,34 @@ func (a *App) bindEvents() {
 					ReceiptStatus: status,
 				}})
 			}
+			if v.Type == types.ReceiptTypeReadSelf {
+				a.mu.Lock()
+				chat := a.state.Chats[chatID]
+				chat.ID = chatID
+				chat.UnreadCount = 0
+				a.state.Chats[chatID] = chat
+				a.mu.Unlock()
+				a.persistState()
+				a.broadcast(EventEnvelope{Type: "chats:loaded"})
+			}
+		case *events.MarkChatAsRead:
+			if v == nil {
+				return
+			}
+			chatID := a.canonicalizeChatID(v.JID.String())
+			if chatID == "" {
+				return
+			}
+			if v.Action != nil && v.Action.GetRead() {
+				a.mu.Lock()
+				chat := a.state.Chats[chatID]
+				chat.ID = chatID
+				chat.UnreadCount = 0
+				a.state.Chats[chatID] = chat
+				a.mu.Unlock()
+				a.persistState()
+				a.broadcast(EventEnvelope{Type: "chats:loaded"})
+			}
 		case *events.HistorySync:
 			a.applyHistorySync(v.Data)
 		case *events.CallOffer:
@@ -3246,6 +3274,8 @@ func canonicalChatID(chatID string) string {
 		return chatID
 	}
 	local := phoneFromJID(chatID)
+	local = strings.SplitN(local, ":", 2)[0]
+	local = strings.SplitN(local, ".", 2)[0]
 	digits := strings.Map(func(r rune) rune {
 		if r >= '0' && r <= '9' {
 			return r

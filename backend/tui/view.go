@@ -176,6 +176,8 @@ func (x m) View() string {
 		main = x.pointerPicker.Render(rightW, mainH)
 	} else if x.helpPicker.open {
 		main = x.helpPicker.RenderHelp(rightW, mainH)
+	} else if x.settingsPicker.open {
+		main = x.settingsPicker.RenderSettings(rightW, mainH)
 	} else if x.fileBrowserOpen {
 		main = x.renderFileBrowser(rightW, mainH)
 	} else if x.emojiPickerOpen {
@@ -355,8 +357,6 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 		}
 		if time.Now().Before(x.msgActivityUntil) && x.msgActivityType == "sent" {
 			centerContent += accentStyle.Copy().Bold(false).Render("  " + spinnerFrames[x.spinnerFrame] + " message sent")
-		} else if _, typing := x.typingChats[x.active]; typing {
-			centerContent += mutedStyle.Copy().Italic(true).Render("  typing...")
 		}
 	}
 
@@ -1389,6 +1389,14 @@ func (x m) renderMain(w, h int) string {
 	}
 	for len(lines) < h {
 		lines = append(lines, "")
+	}
+	if _, typing := x.typingChats[x.active]; typing && len(lines) > 0 {
+		name := x.nameFor(x.active)
+		icon := typingIcons[x.shineFrame%len(typingIcons)]
+		text := icon + " " + name + " is typing..."
+		baseSt := lipgloss.NewStyle().Foreground(receivedText).Italic(true)
+		shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true).Italic(true)
+		lines[len(lines)-1] = renderShine(text, baseSt, shineSt, x.shineFrame)
 	}
 	return lipgloss.NewStyle().
 		Width(w).

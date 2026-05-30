@@ -55,11 +55,14 @@ type Theme struct {
 var currentTheme Theme
 
 type Config struct {
-	ThemeName    string `json:"theme_name"`
-	MouseEnabled bool   `json:"mouse_enabled"`
-	SoundEnabled bool   `json:"sound_enabled"`
-	SoundProfile int    `json:"sound_profile"`
-	PointerIcon  string `json:"pointer_icon,omitempty"`
+	ThemeName            string `json:"theme_name"`
+	MouseEnabled         bool   `json:"mouse_enabled"`
+	SoundEnabled         bool   `json:"sound_enabled"`
+	SoundProfile         int    `json:"sound_profile"`
+	PointerIcon          string `json:"pointer_icon,omitempty"`
+	SendTypingIndicator  bool   `json:"send_typing_indicator"`
+	FlashTaskbar         bool   `json:"flash_taskbar"`
+	NotificationsEnabled bool   `json:"notifications_enabled"`
 }
 
 var currentConfig Config
@@ -148,6 +151,7 @@ type m struct {
 	themePicker                              picker
 	pointerPicker                            picker
 	helpPicker                               picker
+	settingsPicker                           picker
 	fileBrowserOpen                          bool
 	fileBrowserDir                           string
 	fileBrowserEntries                       []fileBrowserEntry

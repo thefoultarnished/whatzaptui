@@ -67,6 +67,7 @@ func main() {
 			themePicker:      picker{title: "Select Theme", items: buildThemePickerItems()},
 			pointerPicker:    picker{title: "Select Pointer Icon", items: buildPointerPickerItems()},
 			helpPicker:       picker{title: "Commands", items: buildHelpPickerItems()},
+			settingsPicker:   picker{title: "Settings", items: buildSettingsPickerItems()},
 		}
 		if demoMode {
 			model.status = "Starting demo..."

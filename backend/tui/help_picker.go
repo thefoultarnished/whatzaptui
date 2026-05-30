@@ -15,6 +15,7 @@ var helpCommands = []struct {
 	{"/help", "Show commands"},
 	{"/theme", "Change color theme"},
 	{"/pointer", "Change message icon"},
+	{"/settings", "Open settings panel"},
 	{"/emoji", "Open emoji picker"},
 	{"/mouseon", "Enable mouse"},
 	{"/mouseoff", "Disable mouse"},
@@ -45,7 +46,7 @@ var helpGroupDefs = []struct {
 	name  string
 	count int
 }{
-	{"Interface", 6},
+	{"Interface", 7},
 	{"Contacts", 8},
 	{"Sounds", 7},
 	{"Session", 3},

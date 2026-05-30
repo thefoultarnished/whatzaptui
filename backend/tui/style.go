@@ -65,6 +65,7 @@ var (
 	replyPreviewBg, messageSelectedBg, mediaTokenBg, mediaTokenPulseBg lipgloss.Color
 
 	spinnerFrames  = []string{"✶", "✸", "✹", "✺", "✹", "✷"}
+	typingIcons    = []string{"✿", "✦", "◇", "☆"}
 	systemCommands []string
 	chatCommands   = []string{
 		"/emoji",
@@ -75,7 +76,7 @@ var (
 func init() {
 	cmds := []string{
 		"/synccontacts", "/syncgroups", "/whitelist", "/whitelistall", "/blacklist", "/blacklistall", "/block", "/rename", "/logout", "/restart", "/exit",
-		"/theme", "/pointer", "/help",
+		"/theme", "/pointer", "/help", "/settings",
 	}
 	for i, t := range themeList {
 		cmds = append(cmds, fmt.Sprintf("/theme%d%s", i+1, t.name))
