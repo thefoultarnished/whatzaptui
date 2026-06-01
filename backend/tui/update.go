@@ -308,6 +308,11 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		x.rebuildContactIndex()
 		x.markIdentityChanged()
+	case groupPreviewMsg:
+		if v.err == nil {
+			x.groupPreviews[v.jid] = v.preview
+			x.markIdentityChanged()
+		}
 	case msgsMsg:
 		if v.err != nil {
 			x.err = ""
@@ -2560,6 +2565,11 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 	batch := []tea.Cmd{
 		getMsgs(x.client, x.baseURL, x.active, 120),
 		postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }),
+	}
+	if strings.HasSuffix(x.active, "@g.us") {
+		if _, cached := x.groupPreviews[x.active]; !cached {
+			batch = append(batch, fetchGroupPreview(x.client, x.baseURL, x.active))
+		}
 	}
 	if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 		batch = append(batch, titleCmd)

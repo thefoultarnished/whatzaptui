@@ -463,6 +463,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/messages/delete", a.handleDeleteMessage)
 	mux.HandleFunc("/search", a.handleSearch)
 	mux.HandleFunc("/block", a.handleBlock)
+	mux.HandleFunc("/group/members", a.handleGroupMembers)
 	return withCORS(a.withAuth(mux))
 }
 
@@ -3907,6 +3908,81 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	jidStr := r.URL.Query().Get("jid")
+	if !strings.HasSuffix(jidStr, "@g.us") {
+		writeErr(w, http.StatusBadRequest, "jid must be a group JID ending in @g.us")
+		return
+	}
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid jid")
+		return
+	}
+	info, err := a.client.GetGroupInfo(r.Context(), jid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to get group info: "+err.Error())
+		return
+	}
+
+	a.mu.RLock()
+	contacts := make(map[string]Contact, len(a.state.Contacts))
+	for k, v := range a.state.Contacts {
+		contacts[k] = v
+	}
+	a.mu.RUnlock()
+
+	resolveName := func(p types.GroupParticipant) (name string, saved bool) {
+		phoneJID := p.PhoneNumber
+		if phoneJID.IsEmpty() {
+			phoneJID = p.JID
+		}
+		key := phoneJID.User + "@" + phoneJID.Server
+		if ct, ok := contacts[key]; ok {
+			if n := strings.TrimSpace(ct.Notify); n != "" {
+				return n, true
+			}
+			if n := strings.TrimSpace(ct.Name); n != "" {
+				return n, true
+			}
+		}
+		return phoneJID.User, false
+	}
+
+	var savedNames, unknownNames []string
+	for _, p := range info.Participants {
+		name, isSaved := resolveName(p)
+		if isSaved {
+			savedNames = append(savedNames, name)
+		} else {
+			unknownNames = append(unknownNames, name)
+		}
+	}
+
+	// Up to 4: saved contacts first, pad with unknown numbers if needed.
+	members := make([]string, 0, 4)
+	members = append(members, savedNames...)
+	if len(members) > 4 {
+		members = members[:4]
+	}
+	if len(members) < 4 && len(unknownNames) > 0 {
+		need := 4 - len(members)
+		if need > len(unknownNames) {
+			need = len(unknownNames)
+		}
+		members = append(members, unknownNames[:need]...)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"members": members,
+		"total":   len(info.Participants),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

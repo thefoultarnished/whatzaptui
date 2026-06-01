@@ -302,6 +302,30 @@ func getContacts(c *http.Client, base string) tea.Cmd {
 		return contactsMsg{contacts: out.Contacts}
 	}
 }
+
+func fetchGroupPreview(c *http.Client, base, jid string) tea.Cmd {
+	return func() tea.Msg {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
+			base+"/group/members?jid="+url.QueryEscape(jid), nil)
+		attachAuthHeader(req, apiTokenFromURL(base))
+		res, err := c.Do(req)
+		if err != nil {
+			return groupPreviewMsg{jid: jid, err: err}
+		}
+		defer res.Body.Close()
+		if res.StatusCode/100 != 2 {
+			return groupPreviewMsg{jid: jid, err: apiErrorFromResponse(res, "failed to get group members")}
+		}
+		var out struct {
+			Members []string `json:"members"`
+			Total   int      `json:"total"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			return groupPreviewMsg{jid: jid, err: err}
+		}
+		return groupPreviewMsg{jid: jid, preview: groupPreview{members: out.Members, total: out.Total}}
+	}
+}
 func getMsgs(c *http.Client, base, chatID string, limit int) tea.Cmd {
 	return getMsgsBefore(c, base, chatID, limit, 0)
 }

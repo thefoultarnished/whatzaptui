@@ -67,6 +67,16 @@ type Config struct {
 
 var currentConfig Config
 
+type groupPreview struct {
+	members []string
+	total   int
+}
+type groupPreviewMsg struct {
+	jid     string
+	preview groupPreview
+	err     error
+}
+
 type chat struct {
 	ID                    string `json:"id"`
 	Name                  string `json:"name"`
@@ -137,6 +147,7 @@ type m struct {
 	startedBackend                           bool
 	whitelist                                map[string]string // phone -> name, allowed=1 only (send gating)
 	names                                    map[string]string // phone -> custom display name (all contacts)
+	groupPreviews                            map[string]groupPreview
 	replyTo                                  *wireMsg          // message being replied to, nil if none
 	selectedMsgID                            string            // message ID highlighted via mouse click or reply pick
 	replyPickMode                            bool              // Alt+R reply pick mode active

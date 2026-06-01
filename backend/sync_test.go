@@ -41,13 +41,13 @@ func TestMarkChatAsReadEventHandler(t *testing.T) {
 		ID:          chatID,
 		UnreadCount: 5,
 	}
+	app.connected = true
 
 	srv := httptest.NewServer(app.handler())
 	defer srv.Close()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
 	header := http.Header{}
 	header.Set(authHeaderName, "Bearer "+app.apiToken)
-	header.Set("Origin", "http://127.0.0.1:3000")
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
@@ -55,6 +55,7 @@ func TestMarkChatAsReadEventHandler(t *testing.T) {
 	}
 	defer conn.Close()
 
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, _, err = conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read ready: %v", err)
@@ -112,13 +113,13 @@ func TestReceiptTypeReadSelfEventHandler(t *testing.T) {
 		ID:          chatID,
 		UnreadCount: 3,
 	}
+	app.connected = true
 
 	srv := httptest.NewServer(app.handler())
 	defer srv.Close()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
 	header := http.Header{}
 	header.Set(authHeaderName, "Bearer "+app.apiToken)
-	header.Set("Origin", "http://127.0.0.1:3000")
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
@@ -126,6 +127,7 @@ func TestReceiptTypeReadSelfEventHandler(t *testing.T) {
 	}
 	defer conn.Close()
 
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, _, err = conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read ready: %v", err)
@@ -167,6 +169,7 @@ func TestReceiptTypeReadSelfEventHandler(t *testing.T) {
 		t.Errorf("expected UnreadCount = 0, got %d", unread)
 	}
 
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read expected broadcast: %v", err)

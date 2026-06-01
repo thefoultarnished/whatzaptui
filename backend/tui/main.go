@@ -42,6 +42,7 @@ func main() {
 			noMoreOlder:      map[string]bool{},
 			whitelist:        map[string]string{},
 			names:            map[string]string{},
+			groupPreviews:    map[string]groupPreview{},
 			sel:              0,
 			scroll:           0,
 			sideScroll:       0,

@@ -12,6 +12,8 @@ CONTEXT.md
 *.out
 *.so
 *.dylib
+backend/bin/
+dist/
 
 # Go cache
 backend/.whatsmeow_cache/

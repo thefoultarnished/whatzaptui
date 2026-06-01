@@ -347,16 +347,38 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing groups...", purpleStyle, shineStyle, x.shineFrame)
 	} else if x.active != "" {
 		displayName := x.nameFor(x.active)
-		nameLimit := 22
+		var avatarStr string
+		avatarW := 0
 		if centerW >= 24 {
-			avatar := renderHeaderAvatar(displayName, x.active)
-			nameLimit = 18
-			centerContent = " " + avatar + " " + accentStyle.Render(truncate(displayName, nameLimit))
+			avatarStr = renderHeaderAvatar(displayName, x.active)
+			avatarW = lipgloss.Width(avatarStr) + 2 // leading " " + avatar + trailing " "
+		}
+		// Use all available center width for the name; preview takes whatever's left.
+		nameLimit := centerW - 1 - avatarW // 1 for the leading " "
+		if nameLimit < 8 {
+			nameLimit = 8
+		}
+		if avatarStr != "" {
+			centerContent = " " + avatarStr + " " + accentStyle.Render(truncate(displayName, nameLimit))
 		} else {
 			centerContent = " " + accentStyle.Render(truncate(displayName, nameLimit))
 		}
 		if time.Now().Before(x.msgActivityUntil) && x.msgActivityType == "sent" {
 			centerContent += accentStyle.Copy().Bold(false).Render("  " + spinnerFrames[x.spinnerFrame] + " message sent")
+		}
+		if strings.HasSuffix(x.active, "@g.us") {
+			if gp, ok := x.groupPreviews[x.active]; ok && len(gp.members) > 0 {
+				preview := strings.Join(gp.members, ", ")
+				rest := gp.total - len(gp.members)
+				if rest > 0 {
+					preview += fmt.Sprintf(" +%d", rest)
+				}
+				const sep = "  · "
+				previewLimit := centerW - lipgloss.Width(centerContent) - len([]rune(sep))
+				if previewLimit > 0 {
+					centerContent += mutedStyle.Render(sep + truncate(preview, previewLimit))
+				}
+			}
 		}
 	}
 
@@ -1363,11 +1385,19 @@ func (x m) renderMain(w, h int) string {
 			allTimeLine = append(allTimeLine, j == timeLineInBlock)
 		}
 	}
-	start := len(all) - h - x.scroll
+	// When the other party is typing, reserve the bottom row of the chat
+	// area for the typing indicator and let messages shift up by one row.
+	// Otherwise the typing row would overwrite the last message line.
+	messageH := h
+	if _, typing := x.typingChats[x.active]; typing {
+		messageH = h - 1
+	}
+
+	start := len(all) - messageH - x.scroll
 	if start < 0 {
 		start = 0
 	}
-	end := start + h
+	end := start + messageH
 	if end > len(all) {
 		end = len(all)
 	}
@@ -1387,16 +1417,16 @@ func (x m) renderMain(w, h int) string {
 			}
 		}
 	}
-	for len(lines) < h {
+	for len(lines) < messageH {
 		lines = append(lines, "")
 	}
-	if _, typing := x.typingChats[x.active]; typing && len(lines) > 0 {
+	if _, typing := x.typingChats[x.active]; typing {
 		name := x.nameFor(x.active)
 		icon := typingIcons[x.shineFrame%len(typingIcons)]
 		text := icon + " " + name + " is typing..."
-		baseSt := lipgloss.NewStyle().Foreground(receivedText).Italic(true)
-		shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true).Italic(true)
-		lines[len(lines)-1] = renderShine(text, baseSt, shineSt, x.shineFrame)
+		baseSt := lipgloss.NewStyle().Foreground(anomalyTag)
+		shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true)
+		lines = append(lines, renderShine(text, shineSt, baseSt, x.shineFrame))
 	}
 	return lipgloss.NewStyle().
 		Width(w).
@@ -1565,7 +1595,7 @@ func nextCursorBlink() tea.Cmd {
 	return tea.Tick(530*time.Millisecond, func(time.Time) tea.Msg { return cursorBlinkMsg{} })
 }
 func nextSpinnerTick() tea.Cmd {
-	return tea.Tick(170*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+	return tea.Tick(102*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 func clearTopBarAfter(ver int, d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return topBarClearMsg{ver: ver} })
@@ -1587,15 +1617,68 @@ func renderShine(text string, baseStyle, shineStyle lipgloss.Style, frame int) s
 	if n == 0 {
 		return ""
 	}
-	cycle := n + 6
+	cycle := 2 * (n - 1)
+	if cycle < 1 {
+		cycle = 1
+	}
 	f := frame % cycle
+	center := f
+	if f >= n {
+		center = cycle - f
+	}
+	baseFg, _ := baseStyle.GetForeground().(lipgloss.Color)
+	shineFg, _ := shineStyle.GetForeground().(lipgloss.Color)
+	mid1 := lerpColor(baseFg, shineFg, 0.15)
+	mid2 := lerpColor(baseFg, shineFg, 0.35)
+	mid3 := lerpColor(baseFg, shineFg, 0.70)
 	var sb strings.Builder
 	for i := 0; i < n; i++ {
-		if i >= f-3 && i < f {
-			sb.WriteString(shineStyle.Render(string(runes[i])))
-		} else {
-			sb.WriteString(baseStyle.Render(string(runes[i])))
+		dist := i - center
+		if dist < 0 {
+			dist = -dist
+		}
+		ch := string(runes[i])
+		switch {
+		case dist == 0:
+			sb.WriteString(shineStyle.Render(ch))
+		case dist == 1:
+			sb.WriteString(lipgloss.NewStyle().Foreground(mid3).Bold(true).Render(ch))
+		case dist == 2:
+			sb.WriteString(lipgloss.NewStyle().Foreground(mid2).Render(ch))
+		case dist == 3:
+			sb.WriteString(lipgloss.NewStyle().Foreground(mid1).Render(ch))
+		default:
+			sb.WriteString(baseStyle.Render(ch))
 		}
 	}
 	return sb.String()
+}
+
+func hexToRGB(c lipgloss.Color) (r, g, b uint8, ok bool) {
+	s := string(c)
+	if len(s) != 7 || s[0] != '#' {
+		return 0, 0, 0, false
+	}
+	rv, e1 := strconv.ParseUint(s[1:3], 16, 8)
+	gv, e2 := strconv.ParseUint(s[3:5], 16, 8)
+	bv, e3 := strconv.ParseUint(s[5:7], 16, 8)
+	if e1 != nil || e2 != nil || e3 != nil {
+		return 0, 0, 0, false
+	}
+	return uint8(rv), uint8(gv), uint8(bv), true
+}
+
+func lerpColor(a, b lipgloss.Color, t float64) lipgloss.Color {
+	ar, ag, ab, aok := hexToRGB(a)
+	br, bg, bb, bok := hexToRGB(b)
+	if !aok || !bok {
+		if t < 0.5 {
+			return a
+		}
+		return b
+	}
+	r := uint8(float64(ar) + t*(float64(br)-float64(ar)))
+	g := uint8(float64(ag) + t*(float64(bg)-float64(ag)))
+	bv := uint8(float64(ab) + t*(float64(bb)-float64(ab)))
+	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", r, g, bv))
 }

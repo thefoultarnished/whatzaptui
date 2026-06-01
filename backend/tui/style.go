@@ -65,7 +65,7 @@ var (
 	replyPreviewBg, messageSelectedBg, mediaTokenBg, mediaTokenPulseBg lipgloss.Color
 
 	spinnerFrames  = []string{"✶", "✸", "✹", "✺", "✹", "✷"}
-	typingIcons    = []string{"✿", "✦", "◇", "☆"}
+	typingIcons    = []string{"✿", "✦", "◇", "☆", "⌘"}
 	systemCommands []string
 	chatCommands   = []string{
 		"/emoji",
