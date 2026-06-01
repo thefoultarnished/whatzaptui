@@ -795,6 +795,15 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 			if msg.Key.RemoteJID == "status@broadcast" {
 				continue
 			}
+			// History sync doesn't carry a live receipt state for previously-sent
+			// messages. Any FromMe row that survived into history is, by
+			// definition, at minimum delivered (you can't have a history row for
+			// a message WhatsApp never accepted). Default to "delivered" so the
+			// TUI renders ✓✓. Live send paths set "sent" explicitly and receipt
+			// events upgrade from there.
+			if msg.Key.FromMe && msg.ReceiptStatus == "" {
+				msg.ReceiptStatus = "delivered"
+			}
 			a.upsertMessageTx(exec, msg.Key.RemoteJID, msg)
 			changedChats = true
 		}
@@ -3000,10 +3009,36 @@ func (a *App) purgeOwnPushNameFromContacts() {
 	}
 }
 
+// backfillReceipt upgrades any FromMe message row that has no receipt state
+// to "delivered". History sync (and pre-fix inserts) leave FromMe rows with
+// an empty receipt, which the TUI renders as a single tick — looking the
+// same as a live message that's been sent but not yet delivered. Any FromMe
+// row that made it into the store is, at minimum, delivered, so this is a
+// safe default. Idempotent: a second run is a no-op.
+func (a *App) backfillReceipt() {
+	if a.db == nil {
+		return
+	}
+	res, err := a.db.Exec(
+		`UPDATE messages SET receipt = 'delivered' WHERE from_me = 1 AND (receipt = '' OR receipt IS NULL)`,
+	)
+	if err != nil {
+		log.Printf("backfillReceipt: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("backfillReceipt: upgraded %d FromMe row(s) to delivered", n)
+	}
+}
+
 func (a *App) loadState() {
 	// Defensive: clear any chat_permissions rows that have the local user's own
 	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
 	a.purgeOwnPushNameFromContacts()
+	// Upgrade FromMe rows that have no receipt state (legacy: pre-fix history
+	// sync inserted them as empty receipt, which the TUI renders as a single
+	// tick). Idempotent.
+	a.backfillReceipt()
 	// Compact the DB in the background to reclaim space freed by message deletes.
 	a.vacuumDB()
 

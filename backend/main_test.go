@@ -2408,4 +2408,128 @@ func TestHandleBlockValidation(t *testing.T) {
 	}
 }
 
+// History sync must default a FromMe row with no receipt state to "delivered",
+// so the TUI renders ✓✓ for old outgoing messages. Incoming rows must stay
+// empty (no tick at all on the recipient's view).
+func TestApplyHistorySyncDefaultsFromMeReceiptToDelivered(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	history := &waHistorySync.HistorySync{
+		Conversations: []*waHistorySync.Conversation{
+			{
+				ID: proto.String(chatID),
+				Messages: []*waHistorySync.HistorySyncMsg{
+					{
+						Message: &waWeb.WebMessageInfo{
+							Key: &waCommon.MessageKey{
+								ID:        proto.String("out-1"),
+								RemoteJID: proto.String(chatID),
+								FromMe:    proto.Bool(true),
+							},
+							MessageTimestamp: proto.Uint64(100),
+							Message: &waE2E.Message{
+								Conversation: proto.String("hello"),
+							},
+						},
+					},
+					{
+						Message: &waWeb.WebMessageInfo{
+							Key: &waCommon.MessageKey{
+								ID:        proto.String("in-1"),
+								RemoteJID: proto.String(chatID),
+								FromMe:    proto.Bool(false),
+							},
+							MessageTimestamp: proto.Uint64(110),
+							Message: &waE2E.Message{
+								Conversation: proto.String("hi"),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	app.applyHistorySync(history)
+
+	var (
+		outReceipt string
+		inReceipt  string
+	)
+	if err := app.db.QueryRow(
+		`SELECT receipt FROM messages WHERE chat_id = ? AND id = 'out-1'`, chatID,
+	).Scan(&outReceipt); err != nil {
+		t.Fatalf("read out-1: %v", err)
+	}
+	if outReceipt != "delivered" {
+		t.Fatalf("FromMe receipt = %q, want delivered", outReceipt)
+	}
+	if err := app.db.QueryRow(
+		`SELECT receipt FROM messages WHERE chat_id = ? AND id = 'in-1'`, chatID,
+	).Scan(&inReceipt); err != nil {
+		t.Fatalf("read in-1: %v", err)
+	}
+	if inReceipt != "" {
+		t.Fatalf("incoming receipt = %q, want empty", inReceipt)
+	}
+}
+
+// backfillReceipt must upgrade FromMe+"" rows to delivered, leave incoming
+// rows alone, and be a no-op on a second run.
+func TestBackfillReceiptUpgradesFromMeRows(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	// Seed: outgoing with empty receipt, outgoing with explicit "read"
+	// (must not be downgraded), incoming with empty receipt.
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:              WireKey{ID: "out-empty", RemoteJID: chatID, FromMe: true},
+		ReceiptStatus:    "",
+		MessageTimestamp: 1,
+		Message:          map[string]any{"conversation": "a"},
+	}); err != nil {
+		t.Fatalf("insert out-empty: %v", err)
+	}
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:              WireKey{ID: "out-read", RemoteJID: chatID, FromMe: true},
+		ReceiptStatus:    "read",
+		MessageTimestamp: 2,
+		Message:          map[string]any{"conversation": "b"},
+	}); err != nil {
+		t.Fatalf("insert out-read: %v", err)
+	}
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:              WireKey{ID: "in-empty", RemoteJID: chatID, FromMe: false},
+		ReceiptStatus:    "",
+		MessageTimestamp: 3,
+		Message:          map[string]any{"conversation": "c"},
+	}); err != nil {
+		t.Fatalf("insert in-empty: %v", err)
+	}
+
+	app.backfillReceipt()
+
+	check := func(id, want string) {
+		t.Helper()
+		var got string
+		if err := app.db.QueryRow(
+			`SELECT receipt FROM messages WHERE chat_id = ? AND id = ?`, chatID, id,
+		).Scan(&got); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if got != want {
+			t.Fatalf("%s receipt = %q, want %q", id, got, want)
+		}
+	}
+	check("out-empty", "delivered")
+	check("out-read", "read")
+	check("in-empty", "")
+
+	// Idempotent: second run must not change out-read back to delivered.
+	app.backfillReceipt()
+	check("out-empty", "delivered")
+	check("out-read", "read")
+	check("in-empty", "")
+}
+
 
