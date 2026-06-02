@@ -2562,18 +2562,19 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 	}()
 	hadRuntimeResources := a.client != nil || a.storeContainer != nil
-	var warnings []string
+	var errs []string
+	// Remote logout is best-effort. Even if the server is unreachable, we want
+	// to tear down local state.
 	if a.client != nil {
 		if a.client.Store != nil && a.client.Store.ID != nil {
 			if err := a.client.Logout(context.Background()); err != nil {
-				warnings = append(warnings, fmt.Sprintf("remote logout failed: %v", err))
+				errs = append(errs, fmt.Sprintf("remote logout failed: %v", err))
 			}
 		}
 		a.client.Disconnect()
 		if a.client.Store != nil && a.client.Store.ID != nil {
 			if err := a.client.Store.Delete(context.Background()); err != nil {
-				writeErr(w, http.StatusInternalServerError, fmt.Sprintf("store delete failed: %v", err))
-				return
+				errs = append(errs, fmt.Sprintf("store delete failed: %v", err))
 			} else {
 				a.client.Store.ID = nil
 			}
@@ -2587,45 +2588,43 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Chats:    map[string]Chat{},
 		Contacts: map[string]Contact{},
 	}
-	a.mu.Unlock()
 	// Close all DB connections before deleting files (required on Windows to release file locks).
 	if a.storeContainer != nil {
-		_ = a.storeContainer.Close()
+		if err := a.storeContainer.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("store container close failed: %v", err))
+		}
 		a.storeContainer = nil
 	}
 	if a.db != nil {
-		_ = a.db.Close()
+		if err := a.db.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("db close failed: %v", err))
+		}
 		a.db = nil
 	}
+	a.mu.Unlock()
 	if strings.TrimSpace(a.cacheDir) != "" {
 		if hadRuntimeResources {
 			if err := a.resetPersistentStorage(); err != nil {
-				writeErr(w, http.StatusInternalServerError, fmt.Sprintf("state cleanup failed: %v", err))
-				return
+				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
 			}
 		} else {
 			if err := os.RemoveAll(a.cacheDir); err != nil {
-				writeErr(w, http.StatusInternalServerError, fmt.Sprintf("state cleanup failed: %v", err))
-				return
-			}
-			if err := os.MkdirAll(a.cacheDir, 0o755); err != nil {
-				writeErr(w, http.StatusInternalServerError, fmt.Sprintf("state cleanup failed: %v", err))
-				return
+				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+			} else if err := os.MkdirAll(a.cacheDir, 0o755); err != nil {
+				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
 			}
 		}
 		if err := a.persistStateWithErr(); err != nil {
-			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("state cleanup failed: %v", err))
-			return
+			errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
 		}
 	} else if err := a.persistStateWithErr(); err != nil {
-		writeErr(w, http.StatusInternalServerError, fmt.Sprintf("state cleanup failed: %v", err))
+		errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+	}
+	if len(errs) > 0 {
+		writeErr(w, http.StatusInternalServerError, strings.Join(errs, "; "))
 		return
 	}
-	msg := "Logged out successfully"
-	if len(warnings) > 0 {
-		msg = "Local data cleared; QR login required"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": msg})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Logged out successfully"})
 }
 
 func (a *App) toWireMessage(evt *events.Message) WireMessage {

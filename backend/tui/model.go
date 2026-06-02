@@ -47,6 +47,7 @@ type Theme struct {
 	QRLight, QRDark                                string
 	ShortcutActive                                 string
 	SidebarActiveBg, SidebarActiveUnreadBg         string
+	SidebarWhitelistActiveBg, SidebarBlacklistActiveBg string
 	ReplyPreviewBg, MessageSelectedBg              string
 	MediaTokenBg, MediaTokenPulseBg                string
 	Background                                     string

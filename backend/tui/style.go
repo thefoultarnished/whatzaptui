@@ -41,6 +41,12 @@ func getSidebarActiveBg() lipgloss.Color {
 func getSidebarActiveUnreadBg() lipgloss.Color {
 	return lipgloss.Color(currentTheme.SidebarActiveUnreadBg)
 }
+func getSidebarWhitelistActiveBg() lipgloss.Color {
+	return lipgloss.Color(currentTheme.SidebarWhitelistActiveBg)
+}
+func getSidebarBlacklistActiveBg() lipgloss.Color {
+	return lipgloss.Color(currentTheme.SidebarBlacklistActiveBg)
+}
 func getReplyPreviewBg() lipgloss.Color {
 	return lipgloss.Color(currentTheme.ReplyPreviewBg)
 }
@@ -62,6 +68,7 @@ var (
 	quotedSentText, quotedReceivedText                                 lipgloss.Color
 	badgeInk, buttonInk, tagInk, cursorColor, qrLight, qrDark          lipgloss.Color
 	shortcutActive, sidebarActiveBg, sidebarActiveUnreadBg             lipgloss.Color
+	sidebarWhitelistActiveBg, sidebarBlacklistActiveBg                 lipgloss.Color
 	replyPreviewBg, messageSelectedBg, mediaTokenBg, mediaTokenPulseBg lipgloss.Color
 
 	spinnerFrames  = []string{"✶", "✸", "✹", "✺", "✹", "✷"}

@@ -3,15 +3,19 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/gorilla/websocket"
+	"github.com/muesli/termenv"
 )
 
 func TestChatInputLockedIgnoresTyping(t *testing.T) {
@@ -563,6 +567,179 @@ func TestRenderUserListHighlightedNameUsesMarqueeOffset(t *testing.T) {
 	}
 	if got := lipgloss.Width(lines[0]); got != 28 {
 		t.Fatalf("highlighted row width = %d, want 28", got)
+	}
+}
+
+func hexToBgANSI(hex string) string {
+	if len(hex) != 7 || hex[0] != '#' {
+		return ""
+	}
+	probe := lipgloss.NewStyle().Background(lipgloss.Color(hex)).Render("x")
+	if i := strings.Index(probe, "\x1b[48;2;"); i >= 0 {
+		if j := strings.Index(probe[i:], "m"); j > 0 {
+			return probe[i : i+j+1]
+		}
+	}
+	return ""
+}
+
+func enableTrueColor(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
+
+func TestUserListDefaultRowHasNoBg(t *testing.T) {
+	enableTrueColor(t)
+	currentTheme = TokyoNight
+	rehashStyles()
+
+	model := m{
+		mode:           "nav",
+		sidebarFocused: true,
+		sel:            1,
+		active:         "99999999@s.whatsapp.net",
+		whitelist:      map[string]string{"15551230001": "Allowed"},
+		contacts: map[string]contact{
+			"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Allowed"},
+		},
+		contactsByNumber: map[string]contact{
+			"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Allowed"},
+		},
+	}
+	items := []chat{{ID: "15551230001@s.whatsapp.net"}}
+
+	lines := model.renderUserList(items, 0, 1, 30)
+	if len(lines) == 0 {
+		t.Fatal("renderUserList returned no lines")
+	}
+	if strings.Contains(lines[0], "\x1b[48;2;") {
+		t.Fatalf("default unselected row should have no background, got %q", lines[0])
+	}
+}
+
+func TestUserListHighlightedWhitelistedRowUsesBrandBg(t *testing.T) {
+	enableTrueColor(t)
+	currentTheme = TokyoNight
+	rehashStyles()
+
+	model := m{
+		mode:           "nav",
+		sidebarFocused: true,
+		sel:            0,
+		whitelist:      map[string]string{"15551230001": "Allowed"},
+		contacts: map[string]contact{
+			"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Allowed"},
+		},
+		contactsByNumber: map[string]contact{
+			"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Allowed"},
+		},
+	}
+	items := []chat{{ID: "15551230001@s.whatsapp.net"}}
+
+	lines := model.renderUserList(items, 0, 1, 30)
+	if len(lines) == 0 {
+		t.Fatal("renderUserList returned no lines")
+	}
+	brandEsc := hexToBgANSI(currentTheme.Brand)
+	if !strings.Contains(lines[0], brandEsc) {
+		t.Fatalf("highlighted whitelisted row missing brand bg %q in %q", brandEsc, lines[0])
+	}
+}
+
+func TestUserListHighlightedBlacklistedRowUsesRedBg(t *testing.T) {
+	enableTrueColor(t)
+	currentTheme = TokyoNight
+	rehashStyles()
+
+	model := m{
+		mode:           "nav",
+		sidebarFocused: true,
+		sel:            0,
+		whitelist:      map[string]string{},
+		contacts: map[string]contact{
+			"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Stranger"},
+		},
+		contactsByNumber: map[string]contact{
+			"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Stranger"},
+		},
+	}
+	items := []chat{{ID: "15551230001@s.whatsapp.net"}}
+
+	lines := model.renderUserList(items, 0, 1, 30)
+	if len(lines) == 0 {
+		t.Fatal("renderUserList returned no lines")
+	}
+	redEsc := hexToBgANSI(currentTheme.Red)
+	if !strings.Contains(lines[0], redEsc) {
+		t.Fatalf("highlighted blacklisted row missing red bg %q in %q", redEsc, lines[0])
+	}
+}
+
+func TestUserListActiveWhitelistedRowUsesWhitelistActiveBg(t *testing.T) {
+	enableTrueColor(t)
+	currentTheme = TokyoNight
+	rehashStyles()
+
+	model := m{
+		mode:           "chat",
+		sidebarFocused: false,
+		sel:            1,
+		active:         "15551230001@s.whatsapp.net",
+		whitelist:      map[string]string{"15551230001": "Allowed"},
+		contacts: map[string]contact{
+			"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Allowed"},
+		},
+		contactsByNumber: map[string]contact{
+			"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Allowed"},
+		},
+	}
+	items := []chat{{ID: "15551230001@s.whatsapp.net"}}
+
+	lines := model.renderUserList(items, 0, 1, 30)
+	if len(lines) == 0 {
+		t.Fatal("renderUserList returned no lines")
+	}
+	activeEsc := hexToBgANSI(currentTheme.SidebarWhitelistActiveBg)
+	if activeEsc == "" {
+		t.Fatal("could not derive expected bg escape from theme")
+	}
+	if !strings.Contains(lines[0], activeEsc) {
+		t.Fatalf("active whitelisted row missing active bg %q in %q", activeEsc, lines[0])
+	}
+}
+
+func TestUserListActiveBlacklistedRowUsesBlacklistActiveBg(t *testing.T) {
+	enableTrueColor(t)
+	currentTheme = TokyoNight
+	rehashStyles()
+
+	model := m{
+		mode:           "chat",
+		sidebarFocused: false,
+		sel:            1,
+		active:         "15551230001@s.whatsapp.net",
+		whitelist:      map[string]string{},
+		contacts: map[string]contact{
+			"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Stranger"},
+		},
+		contactsByNumber: map[string]contact{
+			"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Stranger"},
+		},
+	}
+	items := []chat{{ID: "15551230001@s.whatsapp.net"}}
+
+	lines := model.renderUserList(items, 0, 1, 30)
+	if len(lines) == 0 {
+		t.Fatal("renderUserList returned no lines")
+	}
+	activeEsc := hexToBgANSI(currentTheme.SidebarBlacklistActiveBg)
+	if activeEsc == "" {
+		t.Fatal("could not derive expected bg escape from theme")
+	}
+	if !strings.Contains(lines[0], activeEsc) {
+		t.Fatalf("active blacklisted row missing active bg %q in %q", activeEsc, lines[0])
 	}
 }
 
@@ -1531,6 +1708,25 @@ func wsMsg(chatID, msgID string, fromMe bool, ts int64) wsEvtMsg {
 	return wsEvtMsg{ok: true, evt: env{Type: "message", Payload: b}}
 }
 
+// runBatch invokes a tea.Cmd and, if it returns a tea.BatchMsg, runs every
+// sub-cmd in its own goroutine. bubbletea normally does this in its event
+// loop, but in tests we drive things synchronously.
+func runBatch(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, sub := range batch {
+			if sub == nil {
+				continue
+			}
+			go func(c tea.Cmd) { _ = c() }(sub)
+		}
+	}
+}
+
 func baseModel(chatID string) m {
 	return m{
 		status:     "ready",
@@ -1712,5 +1908,145 @@ func TestPlaySoundProfileCmdFiresWhenSlotFree(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("playSoundProfileCmd blocked for >5s")
+	}
+}
+
+// Bug Audit #8: a "chats:loaded" WS event must NOT clobber a chat that already
+// has messages loaded. Only fetch the initial window if msgs is empty.
+func TestChatsLoadedDoesNotClobberLoadedMessages(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	// Pre-populate the active chat with one message so the guard should fire.
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{},
+		msgs:       map[string][]wireMsg{chatID: {mkMsg("m1", 1)}},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		// Buffered send channel so the readWS sub-cmd in the batch returns
+		// immediately instead of blocking the sibling cmds.
+		wsCh: func() <-chan env { c := make(chan env, 1); c <- env{}; return c }(),
+	}
+
+	next, cmd := model.Update(wsEvtMsg{ok: true, evt: env{Type: "chats:loaded"}})
+	_ = next.(m)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from chats:loaded (should still refresh chats)")
+	}
+	// Calling cmd() returns a tea.BatchMsg. bubbletea normally schedules the
+	// sub-cmds via its event loop; we do the same manually here.
+	runBatch(t, cmd)
+
+	// Drain concurrent writes.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(paths)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range paths {
+		if strings.HasPrefix(p, "/messages") {
+			t.Fatalf("chats:loaded must not hit /messages when msgs is populated; got path %q (all: %v)", p, paths)
+		}
+	}
+	if len(paths) == 0 {
+		t.Fatal("chats:loaded should still refresh the chat list (got no requests at all)")
+	}
+}
+
+// Counterpart to TestChatsLoadedDoesNotClobberLoadedMessages: when msgs is
+// empty, chats:loaded MUST still fetch the initial window.
+func TestChatsLoadedFetchesInitialWindowWhenEmpty(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("content-type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/messages") {
+			_, _ = w.Write([]byte(`{"messages":[],"hasMore":false}`))
+		} else {
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		wsCh:       func() <-chan env { c := make(chan env, 1); c <- env{}; return c }(),
+	}
+
+	next, cmd := model.Update(wsEvtMsg{ok: true, evt: env{Type: "chats:loaded"}})
+	_ = next.(m)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from chats:loaded")
+	}
+	runBatch(t, cmd)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		hasMessages := false
+		for _, p := range paths {
+			if strings.HasPrefix(p, "/messages") {
+				hasMessages = true
+				break
+			}
+		}
+		mu.Unlock()
+		if hasMessages {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	sawMessages := false
+	for _, p := range paths {
+		if strings.HasPrefix(p, "/messages") {
+			sawMessages = true
+			break
+		}
+	}
+	if !sawMessages {
+		t.Fatalf("chats:loaded with empty msgs should fetch /messages; got paths %v", paths)
 	}
 }

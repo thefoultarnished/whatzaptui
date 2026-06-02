@@ -92,7 +92,7 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, getChats(x.client, x.baseURL), getContacts(x.client, x.baseURL), getWhitelist(x.client, x.baseURL))
 		case "chats:loaded":
 			cmds = append(cmds, getChats(x.client, x.baseURL))
-			if x.active != "" {
+			if x.active != "" && len(x.msgs[x.active]) == 0 {
 				cmds = append(cmds, getMsgs(x.client, x.baseURL, x.active, 120))
 			}
 		case "contacts:updated":
@@ -2205,6 +2205,8 @@ func rehashStyles() {
 	shortcutActive = lipgloss.Color(currentTheme.ShortcutActive)
 	sidebarActiveBg = lipgloss.Color(currentTheme.SidebarActiveBg)
 	sidebarActiveUnreadBg = lipgloss.Color(currentTheme.SidebarActiveUnreadBg)
+	sidebarWhitelistActiveBg = lipgloss.Color(currentTheme.SidebarWhitelistActiveBg)
+	sidebarBlacklistActiveBg = lipgloss.Color(currentTheme.SidebarBlacklistActiveBg)
 	replyPreviewBg = lipgloss.Color(currentTheme.ReplyPreviewBg)
 	messageSelectedBg = lipgloss.Color(currentTheme.MessageSelectedBg)
 	mediaTokenBg = lipgloss.Color(currentTheme.MediaTokenBg)

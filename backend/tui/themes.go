@@ -34,6 +34,8 @@ var (
 		ShortcutActive:        "#1e1400",
 		SidebarActiveBg:       "#2a1800", // dark amber tint
 		SidebarActiveUnreadBg: "#251000", // darker red tint
+		SidebarWhitelistActiveBg: "#3a5a18", // brighter green — open whitelisted chat
+		SidebarBlacklistActiveBg: "#5a1e0a", // brighter red — open blacklisted chat
 		ReplyPreviewBg:        "#1a1000",
 		MessageSelectedBg:     "#1e1200",
 		MediaTokenBg:          "#ff4500",
@@ -74,6 +76,8 @@ var (
 		ShortcutActive:        "#101c28",
 		SidebarActiveBg:       "#142030", // dark ice-navy active
 		SidebarActiveUnreadBg: "#0e1a2a", // deeper navy unread
+		SidebarWhitelistActiveBg: "#1e5a40", // brighter icy green
+		SidebarBlacklistActiveBg: "#5a1e26", // brighter frozen berry
 		ReplyPreviewBg:        "#0c1824",
 		MessageSelectedBg:     "#101e2c",
 		MediaTokenBg:          "#7ec8e3",
@@ -114,6 +118,8 @@ var (
 		ShortcutActive:        "#141e0c",
 		SidebarActiveBg:       "#182410", // dark forest active
 		SidebarActiveUnreadBg: "#1a1e08", // darker earthy unread
+		SidebarWhitelistActiveBg: "#285a26", // brighter forest green
+		SidebarBlacklistActiveBg: "#5a1e1e", // brighter berry red
 		ReplyPreviewBg:        "#121a0c",
 		MessageSelectedBg:     "#101808",
 		MediaTokenBg:          "#5aab3a",
@@ -154,6 +160,8 @@ var (
 		ShortcutActive:        "#1e1028",
 		SidebarActiveBg:       "#2a1040", // rich plum-indigo active
 		SidebarActiveUnreadBg: "#1e0c30", // deeper indigo unread
+		SidebarWhitelistActiveBg: "#2a6038", // brighter twilight green
+		SidebarBlacklistActiveBg: "#5a1c30", // brighter sunset red
 		ReplyPreviewBg:        "#1c0c30",
 		MessageSelectedBg:     "#180a28",
 		MediaTokenBg:          "#e76f51",
@@ -194,6 +202,8 @@ var (
 		ShortcutActive:        "#201a12",
 		SidebarActiveBg:       "#2a2018", // dark warm sepia active
 		SidebarActiveUnreadBg: "#251a10", // darker unread
+		SidebarWhitelistActiveBg: "#2e5a30", // brighter aged moss
+		SidebarBlacklistActiveBg: "#5a2a24", // brighter burnt sienna
 		ReplyPreviewBg:        "#1c1610",
 		MessageSelectedBg:     "#1a140e",
 		MediaTokenBg:          "#a87c50",
@@ -234,6 +244,8 @@ var (
 		ShortcutActive:        "#e4eaf2", // soft blue-gray
 		SidebarActiveBg:       "#e4ecf4", // light blue tint
 		SidebarActiveUnreadBg: "#f5ede0", // soft warm amber tint
+		SidebarWhitelistActiveBg: "#c8e0c0", // brighter sage
+		SidebarBlacklistActiveBg: "#f0c8c8", // brighter rose
 		ReplyPreviewBg:        "#edf0f6",
 		MessageSelectedBg:     "#e8edf5",
 		MediaTokenBg:          "#7a95b8", // dusty cornflower
@@ -274,6 +286,8 @@ var (
 		ShortcutActive:        "#eef2fb", // cool white-blue
 		SidebarActiveBg:       "#e8eefc", // pale powder-blue wash
 		SidebarActiveUnreadBg: "#f1f5da", // pale citrus wash
+		SidebarWhitelistActiveBg: "#c8e0b8", // brighter pale green
+		SidebarBlacklistActiveBg: "#f0c8c8", // brighter rose
 		ReplyPreviewBg:        "#f3f6fe", // soft porcelain-blue
 		MessageSelectedBg:     "#e6ecfb", // powder-blue selection
 		MediaTokenBg:          "#95B1EE", // powder blue
@@ -314,6 +328,8 @@ var (
 		ShortcutActive:        "#536aa3", // lighter cobalt chip
 		SidebarActiveBg:       "#4b629d", // raised cobalt active
 		SidebarActiveUnreadBg: "#5b74b0", // brighter unread blue
+		SidebarWhitelistActiveBg: "#4a8a6a", // brighter green on cobalt
+		SidebarBlacklistActiveBg: "#8a4a6a", // brighter red on cobalt
 		ReplyPreviewBg:        "#4a6099", // cobalt panel
 		MessageSelectedBg:     "#556ca7", // selected cobalt
 		MediaTokenBg:          "#95B1EE", // powder blue token
@@ -354,6 +370,8 @@ var (
 		ShortcutActive:        "#202C33", // dark app chrome
 		SidebarActiveBg:       "#202C33", // WhatsApp dark list selection
 		SidebarActiveUnreadBg: "#1F3A33", // green-tinted dark selection
+		SidebarWhitelistActiveBg: "#2a5a40", // brighter WhatsApp green
+		SidebarBlacklistActiveBg: "#5a2e2e", // brighter red on dark app shell
 		ReplyPreviewBg:        "#111B21", // dark app panel
 		MessageSelectedBg:     "#1A2A2F", // slightly lifted dark selection
 		MediaTokenBg:          "#128C7E", // WhatsApp dark teal
@@ -394,6 +412,8 @@ var (
 		ShortcutActive:        "#24283b", // Tokyo Night surface bg
 		SidebarActiveBg:       "#2e3566", // rich navy-blue tint — cool, on-theme
 		SidebarActiveUnreadBg: "#252a40", // cool navy for unread — no amber bleed
+		SidebarWhitelistActiveBg: "#2a7a4a", // brighter cool green
+		SidebarBlacklistActiveBg: "#7a2e3e", // brighter cool red
 		ReplyPreviewBg:        "#1d2545", // deep navy reply context
 		MessageSelectedBg:     "#232845", // subtle navy highlight
 		MediaTokenBg:          "#f7768e", // theme's own red — more cohesive
@@ -434,6 +454,8 @@ var (
 		ShortcutActive:        "#2a2a3d", // Mocha Surface0 variant
 		SidebarActiveBg:       "#313244", // Mocha Surface0 (official)
 		SidebarActiveUnreadBg: "#2a2545", // mauve-tinted navy — on-theme for unread
+		SidebarWhitelistActiveBg: "#3a7a4e", // brighter sage
+		SidebarBlacklistActiveBg: "#7a3a50", // brighter mauve-pink
 		ReplyPreviewBg:        "#272040", // dark mauve context
 		MessageSelectedBg:     "#252040", // deep mauve selection
 		MediaTokenBg:          "#f38ba8", // Mocha Red
@@ -474,6 +496,8 @@ var (
 		ShortcutActive:        "#2a2820", // darker than Monokai bg
 		SidebarActiveBg:       "#3e3d32", // Monokai bg lightened
 		SidebarActiveUnreadBg: "#3e3520", // warm yellow-green tint — on-theme
+		SidebarWhitelistActiveBg: "#3a7a30", // brighter lime
+		SidebarBlacklistActiveBg: "#7a2e4a", // brighter Monokai red
 		ReplyPreviewBg:        "#332c18", // dark warm Monokai
 		MessageSelectedBg:     "#2d2910", // very dark warm highlight
 		MediaTokenBg:          "#f92672", // Monokai red
@@ -514,6 +538,8 @@ var (
 		ShortcutActive:        "#2e2e2e",
 		SidebarActiveBg:       "#2d2d2d",
 		SidebarActiveUnreadBg: "#333333", // neutral gray, no warm tint
+		SidebarWhitelistActiveBg: "#2e4e2e", // brighter green-gray
+		SidebarBlacklistActiveBg: "#4e2e2e", // brighter red-gray
 		ReplyPreviewBg:        "#3f3f3f",
 		MessageSelectedBg:     "#383838",
 		MediaTokenBg:          "#c8c8c8",
@@ -554,6 +580,8 @@ var (
 		ShortcutActive:        "#1a1e2e",
 		SidebarActiveBg:       "#1e2540", // deep aurora night sky blue
 		SidebarActiveUnreadBg: "#18272a", // dark teal — aurora green band
+		SidebarWhitelistActiveBg: "#1a6e3a", // brighter electric green
+		SidebarBlacklistActiveBg: "#6a1e3a", // brighter aurora red
 		ReplyPreviewBg:        "#1a2030",
 		MessageSelectedBg:     "#14192a", // very dark navy
 		MediaTokenBg:          "#ff79c6", // aurora pink
@@ -594,6 +622,8 @@ var (
 		ShortcutActive:        "#231019",
 		SidebarActiveBg:       "#3d1f35", // rich plum — active
 		SidebarActiveUnreadBg: "#2a1020", // clearly darker plum — unread, distinct from active
+		SidebarWhitelistActiveBg: "#2e6e3e", // brighter moss
+		SidebarBlacklistActiveBg: "#6a2638", // brighter coral rose
 		ReplyPreviewBg:        "#4a1d3f", // deep plum reply context
 		MessageSelectedBg:     "#351430", // deep burgundy selection
 		MediaTokenBg:          "#db2777",
@@ -634,6 +664,8 @@ var (
 		ShortcutActive:        "#0d1f2d",
 		SidebarActiveBg:       "#0a2233",
 		SidebarActiveUnreadBg: "#102a20", // dark teal-green — distinct from blue active
+		SidebarWhitelistActiveBg: "#1a6e50", // brighter bioluminescent teal
+		SidebarBlacklistActiveBg: "#5a1e3a", // brighter bioluminescent red
 		ReplyPreviewBg:        "#0c2030",
 		MessageSelectedBg:     "#091c28",
 		MediaTokenBg:          "#0077aa",

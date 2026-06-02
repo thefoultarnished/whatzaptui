@@ -2532,4 +2532,66 @@ func TestBackfillReceiptUpgradesFromMeRows(t *testing.T) {
 	check("in-empty", "")
 }
 
+// Bug Audit #6: handleLogout must tear down ALL of {a.state, a.db,
+// a.storeContainer, cacheDir} on a single call — no early return on a
+// non-fatal failure. With a nil client (no Store.Delete to fail), the full
+// teardown path runs; we assert every step completed.
+func TestHandleLogoutTearsDownEverything(t *testing.T) {
+	app := newTestApp(t)
+	app.cacheDir = t.TempDir()
+	app.state.Chats["c1"] = Chat{ID: "c1", Name: "Alice"}
+	app.state.Contacts["c1"] = Contact{ID: "c1", Notify: "Alice"}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	app.handleLogout(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	if app.db != nil {
+		t.Fatal("a.db should be nil after logout")
+	}
+	if len(app.state.Chats) != 0 || len(app.state.Contacts) != 0 {
+		t.Fatalf("state not cleared: chats=%d contacts=%d",
+			len(app.state.Chats), len(app.state.Contacts))
+	}
+	if _, err := os.Stat(app.cacheDir); err != nil {
+		t.Fatalf("cacheDir not preserved/recreated after logout: %v", err)
+	}
+}
+
+// Bug Audit #6: even if a teardown step fails (e.g. cacheDir can't be
+// recreated), earlier steps must still have completed. We force a failure in
+// resetPersistentStorage by pointing cacheDir at a path that os.MkdirAll
+// can't create (an existing regular file on Windows/Linux).
+func TestHandleLogoutContinuesTeardownWhenLaterStepFails(t *testing.T) {
+	app := newTestApp(t)
+	tmp := t.TempDir()
+	// Make cacheDir point to a regular file so os.MkdirAll(cacheDir, 0755)
+	// inside resetPersistentStorage fails.
+	blockingFile := filepath.Join(tmp, "blocker")
+	if err := os.WriteFile(blockingFile, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+	app.cacheDir = filepath.Join(blockingFile, "subdir") // MkdirAll on a file fails
+	app.state.Chats["c1"] = Chat{ID: "c1"}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	app.handleLogout(rec, req)
+
+	// Must report the failure (500) since user said "500 if anything failed".
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
+	}
+	// But the EARLIER steps must still have completed: state cleared, db nil.
+	if app.db != nil {
+		t.Fatal("a.db should be nil even when later teardown step failed")
+	}
+	if len(app.state.Chats) != 0 {
+		t.Fatalf("state should be cleared even when later teardown step failed; got %d chats", len(app.state.Chats))
+	}
+}
+
 

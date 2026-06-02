@@ -758,11 +758,11 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			}
 			rowBase = rowBase.Background(bg).Foreground(fg).Bold(isSel && navActive)
 		} else if isActive {
-			bg = sidebarActiveBg
+			bg = sidebarWhitelistActiveBg
 			fg = buttonInk
 			if !whitelisted {
-				bg = red
-				fg = lipgloss.Color("15")
+				bg = sidebarBlacklistActiveBg
+				fg = buttonInk
 			}
 			rowBase = rowBase.Background(bg).Foreground(fg)
 		}
