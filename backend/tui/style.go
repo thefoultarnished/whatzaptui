@@ -83,7 +83,7 @@ var (
 func init() {
 	cmds := []string{
 		"/synccontacts", "/syncgroups", "/whitelist", "/whitelistall", "/blacklist", "/blacklistall", "/block", "/rename", "/logout", "/restart", "/exit",
-		"/theme", "/pointer", "/help", "/settings",
+		"/theme", "/pointer", "/typinganimation", "/help", "/settings",
 	}
 	for i, t := range themeList {
 		cmds = append(cmds, fmt.Sprintf("/theme%d%s", i+1, t.name))

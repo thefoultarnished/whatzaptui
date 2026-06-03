@@ -2050,3 +2050,464 @@ func TestChatsLoadedFetchesInitialWindowWhenEmpty(t *testing.T) {
 		t.Fatalf("chats:loaded with empty msgs should fetch /messages; got paths %v", paths)
 	}
 }
+
+// captureSetWhitelistRequest is what the test server stores for the
+// /whitelist/set POST so we can assert on body fields.
+type captureSetWhitelistRequest struct {
+	method  string
+	path    string
+	phone   string
+	name    string
+	allowed int
+}
+
+// buildToggleTestServer returns an httptest.Server that records all
+// /whitelist/set POSTs and replies 200 OK.
+func buildToggleTestServer(t *testing.T) (*httptest.Server, *[]captureSetWhitelistRequest, *sync.Mutex) {
+	t.Helper()
+	var mu sync.Mutex
+	var captured []captureSetWhitelistRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/whitelist/set" && r.Method == http.MethodPost {
+			var body struct {
+				Phone   string `json:"phone"`
+				Name    string `json:"name"`
+				Allowed int    `json:"allowed"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+				mu.Lock()
+				captured = append(captured, captureSetWhitelistRequest{
+					method:  r.Method,
+					path:    r.URL.Path,
+					phone:   body.Phone,
+					name:    body.Name,
+					allowed: body.Allowed,
+				})
+				mu.Unlock()
+			}
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	return srv, &captured, &mu
+}
+
+// waitForCapturedCount blocks up to 2s for at least n recorded requests.
+func waitForCapturedCount(t *testing.T, mu *sync.Mutex, captured *[]captureSetWhitelistRequest, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := len(*captured)
+		mu.Unlock()
+		if got >= n {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// withTempAPIEnv clears API_TOKEN env vars that attachAuthHeader reads so the
+// test server isn't sent a token. t.Cleanup restores the previous value.
+func withTempAPIEnv(t *testing.T) {
+	t.Helper()
+	prev := os.Getenv("WHATZAP_API_TOKEN")
+	os.Unsetenv("WHATZAP_API_TOKEN")
+	t.Cleanup(func() {
+		if prev != "" {
+			os.Setenv("WHATZAP_API_TOKEN", prev)
+		}
+	})
+}
+
+func TestAltBBlacklistsWhitelistedSelectedContact(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	chatID := "15551230001@s.whatsapp.net"
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{"15551230001": "Allowed"},
+		names:      map[string]string{"15551230001": "Allowed"},
+		chats:      []chat{{ID: chatID, Name: "Allowed", ConversationTimestamp: 1700000000}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.rebuildContactIndex()
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	if cmd == nil {
+		t.Fatal("alt+b should return a non-nil cmd batch")
+	}
+	runBatch(t, cmd)
+	if _, ok := next.(m).whitelist["15551230001"]; ok {
+		t.Fatal("whitelist should be cleared locally after alt+b")
+	}
+
+	waitForCapturedCount(t, mu, captured, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 /whitelist/set request, got %d", len(*captured))
+	}
+	req := (*captured)[0]
+	if req.phone != "15551230001" {
+		t.Fatalf("phone = %q, want 15551230001", req.phone)
+	}
+	if req.allowed != 0 {
+		t.Fatalf("allowed = %d, want 0 (blacklist)", req.allowed)
+	}
+}
+
+func TestAltWWhitelistsBlacklistedSelectedContact(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	chatID := "15551230002@s.whatsapp.net"
+	model := m{
+		status:     "ready",
+		mode:       "nav",
+		active:     "",
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{},
+		names:      map[string]string{"15551230002": "Bobby"},
+		chats:      []chat{{ID: chatID, Name: "Bobby", ConversationTimestamp: 1700000000}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.rebuildContactIndex()
+	// sel stays at 0 (chats tab, one entry).
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}, Alt: true})
+	if cmd == nil {
+		t.Fatal("alt+w should return a non-nil cmd batch")
+	}
+	runBatch(t, cmd)
+	if _, ok := next.(m).whitelist["15551230002"]; !ok {
+		t.Fatal("whitelist should contain the contact after alt+w")
+	}
+
+	waitForCapturedCount(t, mu, captured, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 /whitelist/set request, got %d", len(*captured))
+	}
+	req := (*captured)[0]
+	if req.phone != "15551230002" {
+		t.Fatalf("phone = %q, want 15551230002", req.phone)
+	}
+	if req.allowed != 1 {
+		t.Fatalf("allowed = %d, want 1 (whitelist)", req.allowed)
+	}
+	if req.name != "Bobby" {
+		t.Fatalf("name = %q, want Bobby", req.name)
+	}
+}
+
+func TestAltToggleIsSymmetricFlipsBothDirections(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	chatID := "15551230003@s.whatsapp.net"
+	model := m{
+		status:     "ready",
+		mode:       "nav",
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{"15551230003": "Cara"},
+		names:      map[string]string{"15551230003": "Cara"},
+		chats:      []chat{{ID: chatID, Name: "Cara", ConversationTimestamp: 1700000000}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.rebuildContactIndex()
+
+	altB := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true}
+	altW := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}, Alt: true}
+
+	// 1st press (alt+b) on whitelisted -> blacklisted, allowed=0
+	next, cmd1 := model.key(altB)
+	model = next.(m)
+	runBatch(t, cmd1)
+	// 2nd press (alt+b) on now-blacklisted -> whitelisted, allowed=1
+	next, cmd2 := model.key(altB)
+	model = next.(m)
+	runBatch(t, cmd2)
+	// 3rd press (alt+w) on whitelisted -> blacklisted, allowed=0
+	next, cmd3 := model.key(altW)
+	model = next.(m)
+	runBatch(t, cmd3)
+
+	// Local state after the three toggles: started whitelisted, toggled to
+	// blacklisted, whitelisted, blacklisted. Final state = blacklisted.
+	if _, ok := model.whitelist["15551230003"]; ok {
+		t.Fatal("after 3 toggles starting from whitelisted, contact should be blacklisted")
+	}
+
+	waitForCapturedCount(t, mu, captured, 3)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 3 {
+		t.Fatalf("expected 3 /whitelist/set requests, got %d", len(*captured))
+	}
+	// Order is not deterministic because sub-commands run in goroutines; assert
+	// the multiset of allowed values instead.
+	tally := map[int]int{}
+	for _, req := range *captured {
+		tally[req.allowed]++
+	}
+	if tally[0] != 2 || tally[1] != 1 {
+		t.Fatalf("allowed tally = %v, want {0:2, 1:1}", tally)
+	}
+}
+
+func TestAltToggleClearsComposerOnOpenChatBlacklist(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, _, _ := buildToggleTestServer(t)
+	defer srv.Close()
+
+	chatID := "15551230004@s.whatsapp.net"
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{"15551230004": "Dee"},
+		names:      map[string]string{"15551230004": "Dee"},
+		chats:      []chat{{ID: chatID, Name: "Dee", ConversationTimestamp: 1700000000}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+		input:      "draft message",
+		inputBuf:   "draft",
+	}
+	model.rebuildContactIndex()
+
+	next, _ := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	got := next.(m)
+	if got.input != "" || got.inputBuf != "" {
+		t.Fatalf("composer should be cleared on blacklist of open chat: input=%q inputBuf=%q", got.input, got.inputBuf)
+	}
+	if _, ok := got.whitelist["15551230004"]; ok {
+		t.Fatal("contact should be removed from whitelist after blacklist")
+	}
+}
+
+func TestAltToggleNoopWhenNotReady(t *testing.T) {
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	chatID := "15551230005@s.whatsapp.net"
+	model := m{
+		status:     "connecting", // not ready
+		mode:       "nav",
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{"15551230005": "Eve"},
+		names:      map[string]string{"15551230005": "Eve"},
+		chats:      []chat{{ID: chatID, Name: "Eve", ConversationTimestamp: 1700000000}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.rebuildContactIndex()
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	got := next.(m)
+	if cmd == nil {
+		t.Fatal("alt+b should still emit a top-bar cmd when not ready (user feedback)")
+	}
+	runBatch(t, cmd)
+	if got.topBarMsg == "" {
+		t.Fatal("top-bar should be set when not ready")
+	}
+	if !strings.Contains(strings.ToLower(got.topBarMsg), "not ready") &&
+		!strings.Contains(strings.ToLower(got.topBarMsg), "wait") {
+		t.Fatalf("top-bar should mention not-ready state, got %q", got.topBarMsg)
+	}
+
+	// Give the server a brief window to confirm no requests land.
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 0 {
+		t.Fatalf("expected 0 /whitelist/set requests when not ready, got %d", len(*captured))
+	}
+}
+
+func TestAltToggleNoopWhenLeftInputFocused(t *testing.T) {
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	chatID := "15551230006@s.whatsapp.net"
+	model := m{
+		status:          "ready",
+		mode:            "nav",
+		baseURL:         srv.URL,
+		client:          srv.Client(),
+		whitelist:       map[string]string{"15551230006": "Finn"},
+		names:           map[string]string{"15551230006": "Finn"},
+		chats:           []chat{{ID: chatID, Name: "Finn", ConversationTimestamp: 1700000000}},
+		msgs:            map[string][]wireMsg{},
+		flashUntil:      map[string]time.Time{},
+		mainCache:       &renderCache{},
+		sidebarCache:    &sidebarCache{},
+		leftInputFocused: true,
+		leftInput:       "/blacklist ",
+	}
+	model.rebuildContactIndex()
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	got := next.(m)
+	if cmd == nil {
+		t.Fatal("alt+b should still emit a top-bar cmd when leftInputFocused")
+	}
+	runBatch(t, cmd)
+	if got.topBarMsg == "" {
+		t.Fatal("top-bar should be set when leftInputFocused")
+	}
+	if !strings.Contains(strings.ToLower(got.topBarMsg), "command") &&
+		!strings.Contains(strings.ToLower(got.topBarMsg), "esc") {
+		t.Fatalf("top-bar should mention leaving the command, got %q", got.topBarMsg)
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 0 {
+		t.Fatalf("expected 0 /whitelist/set requests when leftInputFocused, got %d", len(*captured))
+	}
+}
+
+func TestAltToggleNoSelectionTopsNoContactSelected(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, _, _ := buildToggleTestServer(t)
+	defer srv.Close()
+
+	model := m{
+		status:     "ready",
+		mode:       "nav",
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{},
+		names:      map[string]string{},
+		chats:      []chat{},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.sel = 5 // out of bounds, no active either
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}, Alt: true})
+	got := next.(m)
+	if cmd == nil {
+		t.Fatal("should at least return a top-bar setTopBar cmd")
+	}
+	runBatch(t, cmd)
+	if !strings.Contains(strings.ToLower(got.topBarMsg), "no contact") {
+		t.Fatalf("top-bar should say no contact selected, got %q", got.topBarMsg)
+	}
+}
+
+func TestAltToggleFallsBackToActiveChatWhenNoSidebarSelection(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	// Active chat is set but the sidebar has no chats and sel is out of bounds
+	// — the helper should still toggle the open chat (matches /whitelist).
+	chatID := "15551230007@s.whatsapp.net"
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{},
+		names:      map[string]string{"15551230007": "Gigi"},
+		chats:      []chat{},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.sel = 0
+	model.rebuildContactIndex()
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}, Alt: true})
+	got := next.(m)
+	if cmd == nil {
+		t.Fatal("should return a non-nil cmd (setWhitelistEntry + top-bar)")
+	}
+	runBatch(t, cmd)
+	if _, ok := got.whitelist["15551230007"]; !ok {
+		t.Fatal("x.active fallback should whitelist the open chat when sidebar is empty")
+	}
+	if !strings.Contains(got.topBarMsg, "Whitelisted") || !strings.Contains(got.topBarMsg, "Gigi") {
+		t.Fatalf("top-bar should announce whitelist of active chat, got %q", got.topBarMsg)
+	}
+
+	waitForCapturedCount(t, mu, captured, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 1 || (*captured)[0].allowed != 1 || (*captured)[0].phone != "15551230007" {
+		t.Fatalf("expected 1 setWhitelistEntry(allowed=1, phone=15551230007), got %+v", *captured)
+	}
+}
+
+func TestAltToggleFiresViaInlineRuneFallback(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	// The inline k.Alt && k.Runes[0] == 'b' check at update.go:1633 (mirroring
+	// the alt+f pattern) guarantees the toggle fires even if the top-level
+	// k.String() switch somehow misses the chord. This test exercises the
+	// full chat-mode path so both branches are covered.
+	chatID := "15551230008@s.whatsapp.net"
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		baseURL:    srv.URL,
+		client:     srv.Client(),
+		whitelist:  map[string]string{"15551230008": "Hank"},
+		names:      map[string]string{"15551230008": "Hank"},
+		chats:      []chat{{ID: chatID, Name: "Hank", ConversationTimestamp: 1700000000}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+		sidebarCache: &sidebarCache{},
+	}
+	model.rebuildContactIndex()
+
+	km := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true}
+
+	next, cmd := model.key(km)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from alt+b in chat mode")
+	}
+	runBatch(t, cmd)
+	if _, ok := next.(m).whitelist["15551230008"]; ok {
+		t.Fatal("contact should be blacklisted after alt+b")
+	}
+	waitForCapturedCount(t, mu, captured, 1)
+}

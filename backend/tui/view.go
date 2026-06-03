@@ -174,6 +174,8 @@ func (x m) View() string {
 		main = x.themePicker.RenderTheme(rightW, mainH)
 	} else if x.pointerPicker.open {
 		main = x.pointerPicker.Render(rightW, mainH)
+	} else if x.typingAnimationPicker.open {
+		main = x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH)
 	} else if x.helpPicker.open {
 		main = x.helpPicker.RenderHelp(rightW, mainH)
 	} else if x.settingsPicker.open {
@@ -1422,6 +1424,7 @@ func (x m) renderMain(w, h int) string {
 	}
 	if _, typing := x.typingChats[x.active]; typing {
 		name := x.nameFor(x.active)
+		typingIcons := getTypingIcons(currentConfig.TypingAnimationStyle)
 		icon := typingIcons[x.shineFrame%len(typingIcons)]
 		text := icon + " " + name + " is typing..."
 		baseSt := lipgloss.NewStyle().Foreground(anomalyTag)

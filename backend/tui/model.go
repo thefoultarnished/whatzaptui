@@ -64,6 +64,7 @@ type Config struct {
 	SendTypingIndicator  bool   `json:"send_typing_indicator"`
 	FlashTaskbar         bool   `json:"flash_taskbar"`
 	NotificationsEnabled bool   `json:"notifications_enabled"`
+	TypingAnimationStyle string `json:"typing_animation_style,omitempty"`
 }
 
 var currentConfig Config
@@ -164,6 +165,7 @@ type m struct {
 	pointerPicker                            picker
 	helpPicker                               picker
 	settingsPicker                           picker
+	typingAnimationPicker                    picker
 	fileBrowserOpen                          bool
 	fileBrowserDir                           string
 	fileBrowserEntries                       []fileBrowserEntry

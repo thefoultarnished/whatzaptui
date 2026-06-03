@@ -69,6 +69,7 @@ func main() {
 			pointerPicker:    picker{title: "Select Pointer Icon", items: buildPointerPickerItems()},
 			helpPicker:       picker{title: "Commands", items: buildHelpPickerItems()},
 			settingsPicker:   picker{title: "Settings", items: buildSettingsPickerItems()},
+			typingAnimationPicker: picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()},
 		}
 		if demoMode {
 			model.status = "Starting demo..."

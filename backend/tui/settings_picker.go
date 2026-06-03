@@ -8,23 +8,31 @@ import (
 )
 
 var settingsDefs = []struct {
-	name string
-	get  func() bool
-	set  func(bool)
+	name       string
+	isSelector bool
+	get        func() bool
+	set        func(bool)
+	getStr     func() string
 }{
-	{"Typing indicator", func() bool { return currentConfig.SendTypingIndicator }, func(v bool) { currentConfig.SendTypingIndicator = v }},
-	{"Sound", func() bool { return currentConfig.SoundEnabled }, func(v bool) { currentConfig.SoundEnabled = v }},
-	{"Mouse", func() bool { return currentConfig.MouseEnabled }, func(v bool) { currentConfig.MouseEnabled = v }},
-	{"Taskbar flash", func() bool { return currentConfig.FlashTaskbar }, func(v bool) { currentConfig.FlashTaskbar = v }},
-	{"Notifications", func() bool { return currentConfig.NotificationsEnabled }, func(v bool) { currentConfig.NotificationsEnabled = v }},
+	{"Typing indicator", false, func() bool { return currentConfig.SendTypingIndicator }, func(v bool) { currentConfig.SendTypingIndicator = v }, nil},
+	{"Sound", false, func() bool { return currentConfig.SoundEnabled }, func(v bool) { currentConfig.SoundEnabled = v }, nil},
+	{"Mouse", false, func() bool { return currentConfig.MouseEnabled }, func(v bool) { currentConfig.MouseEnabled = v }, nil},
+	{"Taskbar flash", false, func() bool { return currentConfig.FlashTaskbar }, func(v bool) { currentConfig.FlashTaskbar = v }, nil},
+	{"Notifications", false, func() bool { return currentConfig.NotificationsEnabled }, func(v bool) { currentConfig.NotificationsEnabled = v }, nil},
+	{"Typing animation", true, nil, nil, func() string { return currentConfig.TypingAnimationStyle }},
 }
 
 func buildSettingsPickerItems() []pickerItem {
 	items := make([]pickerItem, len(settingsDefs))
 	for i, s := range settingsDefs {
-		state := "OFF"
-		if s.get() {
-			state = "ON"
+		var state string
+		if s.isSelector {
+			state = s.getStr()
+		} else {
+			state = "OFF"
+			if s.get() {
+				state = "ON"
+			}
 		}
 		items[i] = pickerItem{key: s.name, label: s.name + "  " + state}
 	}
@@ -43,6 +51,9 @@ func (p *picker) HandleSettings(k tea.KeyMsg) (action string, done bool) {
 	const numCols = 2
 	switch k.Type {
 	case tea.KeyEnter:
+		if p.idx >= 0 && p.idx < len(settingsDefs) && settingsDefs[p.idx].isSelector {
+			return "selector", true
+		}
 		return "confirm", true
 	case tea.KeyEsc:
 		return "cancel", true
@@ -146,32 +157,44 @@ func (p *picker) RenderSettings(w, h int) string {
 				continue
 			}
 			item := p.items[localIdx]
-			isOn := strings.HasSuffix(item.label, "ON")
-			dotColor := muted
-			if isOn {
+			isSelector := localIdx < len(settingsDefs) && settingsDefs[localIdx].isSelector
+
+			var state string
+			var dotColor lipgloss.Color
+
+			if isSelector {
+				state = settingsDefs[localIdx].getStr()
+				if state == "" {
+					state = "Default"
+				}
 				dotColor = accent
+			} else {
+				isOn := strings.HasSuffix(item.label, "ON")
+				state = "OFF"
+				if isOn {
+					state = "ON"
+					dotColor = accent
+				} else {
+					dotColor = muted
+				}
 			}
 
 			var cell string
+			dot := "● "
+			if isSelector {
+				dot = "→ "
+			}
 			if localIdx == p.idx {
 				rowHasActive = true
 				dotSt := activeBg.Foreground(dotColor).Bold(true)
 				nameSt := activeBg.Foreground(accent).Bold(true).Underline(true)
 				stateSt := activeBg.Foreground(dotColor).Bold(true)
-				state := "OFF"
-				if isOn {
-					state = "ON"
-				}
-				cell = colFill.Render(activeIndent + dotSt.Render("● ") + nameSt.Render(item.key) + stateSt.Render("  "+state))
+				cell = colFill.Render(activeIndent + dotSt.Render(dot) + nameSt.Render(item.key) + stateSt.Render("  "+state))
 			} else {
 				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
 				nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
 				stateSt := bg(lipgloss.NewStyle().Foreground(dotColor))
-				state := "OFF"
-				if isOn {
-					state = "ON"
-				}
-				cell = colFill.Render(indent + dotSt.Render("● ") + nameSt.Render(item.key) + stateSt.Render("  "+state))
+				cell = colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(item.key) + stateSt.Render("  "+state))
 			}
 			row.WriteString(cell)
 		}

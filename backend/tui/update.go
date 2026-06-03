@@ -968,6 +968,67 @@ func (x *m) clearChatComposer() {
 	x.closeEmojiPicker()
 }
 
+func (x *m) toggleWhitelistForSelection() tea.Cmd {
+	if x.status != "ready" {
+		return x.setTopBar("Not ready — wait for the chat to load")
+	}
+	if x.leftInputFocused {
+		return x.setTopBar("Finish the /command first (Esc)")
+	}
+	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open {
+		return x.setTopBar("Close the picker first (Esc)")
+	}
+	if x.fileBrowserOpen {
+		return x.setTopBar("Close the file browser first (Esc)")
+	}
+	// Prefer the userlist selection. If the sidebar is empty/invalid (no
+	// chats, no contacts, or sel is out of range), fall back to the open chat.
+	// This matches /whitelist / /blacklist and means the shortcut also works
+	// in the common case "I have the chat open and haven't navigated the
+	// sidebar yet."
+	targetID := ""
+	items := x.sidebarItems()
+	if x.sel >= 0 && x.sel < len(items) {
+		targetID = items[x.sel].ID
+	}
+	if targetID == "" && x.active != "" {
+		targetID = x.active
+	}
+	if targetID == "" {
+		return x.setTopBar("No contact selected")
+	}
+	n := num(targetID)
+	if n == "" {
+		return x.setTopBar("No contact selected")
+	}
+	name := x.nameFor(targetID)
+	wasWhitelisted := false
+	if _, ok := x.whitelist[n]; ok {
+		delete(x.whitelist, n)
+		wasWhitelisted = true
+	} else {
+		x.whitelist[n] = name
+	}
+	x.markIdentityChanged()
+	if wasWhitelisted && x.active != "" && num(x.active) == n {
+		x.clearChatComposer()
+	}
+	verb := "Blacklisted"
+	allowed := 0
+	if !wasWhitelisted {
+		verb = "Whitelisted"
+		allowed = 1
+	}
+	msg := fmt.Sprintf("%s: %s (%s)", verb, name, n)
+	if x.demoMode {
+		return x.setTopBar(msg)
+	}
+	return tea.Batch(
+		setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], allowed),
+		x.setTopBar(msg),
+	)
+}
+
 func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	markPasteLikeInput := func() {
 		x.lastPasteLikeAt = time.Now()
@@ -1052,6 +1113,8 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return x, tea.Batch(x.setTopBar("Mouse on"), func() tea.Msg { return tea.EnableMouseCellMotion() })
 		}
 		return x, tea.Batch(x.setTopBar("Mouse off - zoom restored"), func() tea.Msg { return tea.DisableMouse() })
+	case "alt+b", "alt+w":
+		return x, x.toggleWhitelistForSelection()
 	case "alt+o":
 		if x.mode == "chat" && x.active != "" {
 			msgs := x.msgs[x.active]
@@ -1164,9 +1227,46 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if action == "confirm" {
 				msg := x.settingsPicker.toggleSetting()
 				x.mainCache.result = ""
+
+				// Handle mouse enable/disable command for the toggle
+				var cmd tea.Cmd
+				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) && settingsDefs[x.settingsPicker.idx].name == "Mouse" {
+					x.mouseEnabled = currentConfig.MouseEnabled
+					if x.mouseEnabled {
+						cmd = func() tea.Msg { return tea.EnableMouseCellMotion() }
+					} else {
+						cmd = func() tea.Msg { return tea.DisableMouse() }
+					}
+					return x, tea.Batch(x.setTopBar(msg), cmd)
+				}
 				return x, x.setTopBar(msg)
+			} else if action == "selector" {
+				x.settingsPicker.Close(false)
+				x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
+				x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
+				x.mainCache.result = ""
+				return x, nil
 			}
 			x.settingsPicker.Close(false)
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
+	if x.typingAnimationPicker.open {
+		action, done := x.typingAnimationPicker.Handle(k)
+		if !done {
+			currentConfig.TypingAnimationStyle = x.typingAnimationPicker.SelectedKey()
+			x.mainCache.result = ""
+		} else if action == "confirm" {
+			currentConfig.TypingAnimationStyle = x.typingAnimationPicker.Close(true)
+			saveConfig()
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		} else {
+			x.typingAnimationPicker.Close(false)
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
 			x.mainCache.result = ""
 		}
 		return x, nil
@@ -1581,6 +1681,15 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.inputBuf = ""
 			x.inputFlushScheduled = false
 			return x, x.openFileBrowser()
+		}
+		// Alt+B / Alt+W: toggle whitelist for the selected / active contact.
+		// Mirrors the alt+f pattern above so this works even if the terminal
+		// delivers Alt+letter in a way that k.String() doesn't see as "alt+b".
+		if k.Alt && len(k.Runes) > 0 {
+			r := k.Runes[0]
+			if r == 'b' || r == 'B' || r == 'w' || r == 'W' {
+				return x, x.toggleWhitelistForSelection()
+			}
 		}
 		switch k.Type {
 		case tea.KeyTab:
@@ -2104,6 +2213,13 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		return nil, true
 	case txt == "/pointer":
 		x.pointerPicker.Open(receivedMsgIcon)
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/typinganimation":
+		x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
+		x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 		x.leftInput = ""
 		x.leftInputFocused = false
 		x.mainCache.result = ""
