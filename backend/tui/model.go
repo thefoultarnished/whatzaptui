@@ -169,8 +169,13 @@ type m struct {
 	fileBrowserOpen                          bool
 	fileBrowserDir                           string
 	fileBrowserEntries                       []fileBrowserEntry
+	fileBrowserFiltered                      []fileBrowserEntry
 	fileBrowserIndex                         int
 	fileBrowserScroll                        int
+	fileBrowserFilter                        string
+	fileBrowserSortRecent                    bool
+	fileBrowserPathMode                      bool
+	fileBrowserPathBuf                       string
 	pendingAttachmentPath                    string
 	pendingAttachmentKind                    string
 	pendingAttachmentName                    string

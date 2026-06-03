@@ -1053,6 +1053,10 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.input = appendComposerText(x.input, "\n")
 		x.inputAllSelected = false
 	}
+	if x.fileBrowserOpen {
+		return x.handleFileBrowser(k)
+	}
+
 	switch k.String() {
 	case "ctrl+c":
 		return x, tea.Quit
@@ -1268,55 +1272,6 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
 			x.mainCache.result = ""
-		}
-		return x, nil
-	}
-	if x.fileBrowserOpen {
-		rows := x.fileBrowserVisibleRows(max(1, x.h-6))
-		switch k.Type {
-		case tea.KeyEsc:
-			x.closeFileBrowser()
-			return x, nil
-		case tea.KeyUp:
-			x.fileBrowserIndex = wrappedIndex(x.fileBrowserIndex, len(x.fileBrowserEntries), -1)
-			x.ensureFileBrowserVisible(rows)
-			return x, nil
-		case tea.KeyDown:
-			x.fileBrowserIndex = wrappedIndex(x.fileBrowserIndex, len(x.fileBrowserEntries), 1)
-			x.ensureFileBrowserVisible(rows)
-			return x, nil
-		case tea.KeyBackspace:
-			if x.fileBrowserDir == "" {
-				return x, nil
-			}
-			parent := filepath.Dir(x.fileBrowserDir)
-			if parent == x.fileBrowserDir {
-				return x, nil
-			}
-			if err := x.loadFileBrowserDir(parent); err != nil {
-				return x, x.setTopBar(fmt.Sprintf("File browser: %v", err))
-			}
-			return x, nil
-		case tea.KeyEnter:
-			entry, ok := x.selectedFileBrowserEntry()
-			if !ok || entry.isPlaceholder {
-				return x, nil
-			}
-			if entry.isDir {
-				if err := x.loadFileBrowserDir(entry.path); err != nil {
-					return x, x.setTopBar(fmt.Sprintf("File browser: %v", err))
-				}
-				return x, nil
-			}
-			x.closeFileBrowser()
-			x.input = ""
-			x.inputBuf = ""
-			x.inputFlushScheduled = false
-			x.inputAllSelected = false
-			x.replyTo = nil
-			x.setPendingAttachment(entry.path)
-			x.sidebarFocused = false
-			return x, nil
 		}
 		return x, nil
 	}
@@ -1898,6 +1853,140 @@ func wrappedIndex(cur, n, delta int) int {
 
 func (x *m) handleSlash(txt string) (tea.Cmd, bool) {
 	return x.runCommand(txt, false)
+}
+
+func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := x.fileBrowserVisibleRows(max(1, x.h-8))
+
+	if x.fileBrowserPathMode {
+		switch k.Type {
+		case tea.KeyEsc:
+			x.fileBrowserPathMode = false
+			x.fileBrowserPathBuf = ""
+			x.mainCache.result = ""
+		case tea.KeyEnter:
+			target := strings.TrimSpace(x.fileBrowserPathBuf)
+			target = strings.Trim(target, `"'`)
+			target = strings.TrimRight(target, `\/`)
+			x.fileBrowserPathMode = false
+			x.fileBrowserPathBuf = ""
+			if target != "" {
+				if err := x.loadFileBrowserDir(target); err != nil {
+					return x, x.setTopBar(fmt.Sprintf("Path not found: %s", target))
+				}
+			}
+			x.mainCache.result = ""
+		case tea.KeyBackspace:
+			runes := []rune(x.fileBrowserPathBuf)
+			if len(runes) > 0 {
+				x.fileBrowserPathBuf = string(runes[:len(runes)-1])
+			}
+			x.mainCache.result = ""
+		case tea.KeyRunes:
+			for _, r := range k.Runes {
+				if r >= 32 && r != 127 {
+					x.fileBrowserPathBuf += string(r)
+				}
+			}
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
+
+	if k.String() == "alt+f" {
+		x.fileBrowserPathMode = true
+		x.fileBrowserPathBuf = ""
+		x.mainCache.result = ""
+		return x, nil
+	}
+
+	switch k.Type {
+	case tea.KeyEsc:
+		if x.fileBrowserFilter != "" {
+			x.fileBrowserFilter = ""
+			x.rebuildFileBrowserFiltered()
+			x.fileBrowserIndex = 0
+			x.fileBrowserScroll = 0
+			x.mainCache.result = ""
+			return x, nil
+		}
+		x.closeFileBrowser()
+		return x, nil
+	case tea.KeyUp:
+		x.fileBrowserIndex = wrappedIndex(x.fileBrowserIndex, len(x.fileBrowserFiltered), -1)
+		x.ensureFileBrowserVisible(rows)
+		x.mainCache.result = ""
+		return x, nil
+	case tea.KeyDown:
+		x.fileBrowserIndex = wrappedIndex(x.fileBrowserIndex, len(x.fileBrowserFiltered), 1)
+		x.ensureFileBrowserVisible(rows)
+		x.mainCache.result = ""
+		return x, nil
+	case tea.KeyTab:
+		x.fileBrowserSortRecent = !x.fileBrowserSortRecent
+		entries, err := readFileBrowserEntries(x.fileBrowserDir, x.fileBrowserSortRecent)
+		if err == nil {
+			x.fileBrowserEntries = entries
+			x.rebuildFileBrowserFiltered()
+			x.fileBrowserIndex = 0
+			x.fileBrowserScroll = 0
+		}
+		x.mainCache.result = ""
+		return x, nil
+	case tea.KeyBackspace:
+		if x.fileBrowserFilter != "" {
+			runes := []rune(x.fileBrowserFilter)
+			x.fileBrowserFilter = string(runes[:len(runes)-1])
+			x.rebuildFileBrowserFiltered()
+			x.fileBrowserIndex = 0
+			x.fileBrowserScroll = 0
+			x.mainCache.result = ""
+			return x, nil
+		}
+		if x.fileBrowserDir == "" {
+			return x, nil
+		}
+		parent := filepath.Dir(x.fileBrowserDir)
+		if parent == x.fileBrowserDir {
+			return x, nil
+		}
+		if err := x.loadFileBrowserDir(parent); err != nil {
+			return x, x.setTopBar(fmt.Sprintf("File browser: %v", err))
+		}
+		return x, nil
+	case tea.KeyEnter:
+		entry, ok := x.selectedFileBrowserEntry()
+		if !ok || entry.isPlaceholder {
+			return x, nil
+		}
+		if entry.isDir {
+			if err := x.loadFileBrowserDir(entry.path); err != nil {
+				return x, x.setTopBar(fmt.Sprintf("File browser: %v", err))
+			}
+			return x, nil
+		}
+		x.closeFileBrowser()
+		x.input = ""
+		x.inputBuf = ""
+		x.inputFlushScheduled = false
+		x.inputAllSelected = false
+		x.replyTo = nil
+		x.setPendingAttachment(entry.path)
+		x.sidebarFocused = false
+		return x, nil
+	case tea.KeyRunes:
+		if k.Alt {
+			return x, nil
+		}
+		x.fileBrowserFilter += k.String()
+		x.rebuildFileBrowserFiltered()
+		x.fileBrowserIndex = 0
+		x.fileBrowserScroll = 0
+		x.mainCache.result = ""
+		return x, nil
+	}
+	// swallow all other keys (ctrl, alt combos, etc.)
+	return x, nil
 }
 
 func (x m) handleEmojiPicker(k tea.KeyMsg) (tea.Model, tea.Cmd) {
