@@ -932,6 +932,12 @@ func TestQuotedFromMeForOneToOneChatTreatsNonRemoteAsSelf(t *testing.T) {
 	if quotedFromMeForChat("15551230001@s.whatsapp.net", "15551230001@s.whatsapp.net", false) {
 		t.Fatalf("expected remote participant in 1:1 chat to stay non-self")
 	}
+	if quotedFromMeForChat("15551230001@s.whatsapp.net", "", false) {
+		t.Fatalf("expected empty quoted participant in 1:1 chat to default to non-self (other party quoting self)")
+	}
+	if quotedFromMeForChat("15551230001@s.whatsapp.net", "", true) {
+		t.Fatalf("expected empty quoted participant in group to default to non-self")
+	}
 }
 
 // File validation.

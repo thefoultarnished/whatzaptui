@@ -103,7 +103,7 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				notify := false
 				notifyTitle := ""
 				notifyBody := ""
-				activeViewing := x.mode == "chat" && !x.sidebarFocused && !x.leftInputFocused && x.active == wm.Key.RemoteJID
+				activeViewing := x.mode == "chat" && !x.sidebarFocused && x.active == wm.Key.RemoteJID
 				exists := false
 				// For our own outgoing messages, replace a local-* placeholder
 				// in-place to avoid the optimistic/WS race creating a duplicate.

@@ -26,11 +26,26 @@ type mediaSendCommand struct {
 }
 
 func truncate(s string, n int) string {
-	r := []rune(strings.TrimSpace(s))
-	if n <= 3 || len(r) <= n {
-		return string(r)
+	s = strings.TrimSpace(s)
+	if n <= 0 {
+		return ""
 	}
-	return string(r[:n-3]) + "..."
+	if runeDisplayWidth(s) <= n {
+		return s
+	}
+	if n <= 3 {
+		return strings.Repeat(".", n)
+	}
+	limit := n - 3
+	var b strings.Builder
+	for _, ch := range s {
+		next := string(ch)
+		if runeDisplayWidth(b.String())+runeDisplayWidth(next) > limit {
+			break
+		}
+		b.WriteString(next)
+	}
+	return b.String() + "..."
 }
 
 func truncateDisplayWidth(s string, width int) string {

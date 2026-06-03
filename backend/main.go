@@ -2719,7 +2719,7 @@ func phoneIdentity(jid string) string {
 func quotedFromMeForChat(chatID, quotedParticipant string, isGroup bool) bool {
 	quotedParticipant = strings.TrimSpace(quotedParticipant)
 	if quotedParticipant == "" {
-		return true
+		return false
 	}
 	if isGroup {
 		return false
