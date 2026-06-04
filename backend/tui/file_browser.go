@@ -299,6 +299,16 @@ func (x m) pendingAttachmentLabel() string {
 	if x.pendingAttachmentPath == "" {
 		return ""
 	}
+	if currentConfig.MediaIconStyle == "nerd" {
+		kind := x.pendingAttachmentKind
+		if kind == "document" {
+			kind = "file"
+		}
+		if g := nerdIconFor(kind); g != "" {
+			return mediaTagStyle(kind).Render(g) + "  " + x.pendingAttachmentName
+		}
+		return x.pendingAttachmentName
+	}
 	switch x.pendingAttachmentKind {
 	case "image":
 		return "[image attached] " + x.pendingAttachmentName

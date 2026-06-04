@@ -176,10 +176,14 @@ func (x m) View() string {
 		main = x.pointerPicker.Render(rightW, mainH)
 	} else if x.typingAnimationPicker.open {
 		main = x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH)
+	} else if x.mediaIconPicker.open {
+		main = x.mediaIconPicker.Render(rightW, mainH)
 	} else if x.helpPicker.open {
 		main = x.helpPicker.RenderHelp(rightW, mainH)
 	} else if x.settingsPicker.open {
 		main = x.settingsPicker.RenderSettings(rightW, mainH)
+	} else if x.fontTestOpen {
+		main = renderFontTest(rightW, mainH)
 	} else if x.fileBrowserOpen {
 		main = x.renderFileBrowser(rightW, mainH)
 	} else if x.emojiPickerOpen {
@@ -1228,7 +1232,8 @@ func (x m) renderMain(w, h int) string {
 		timeSuffixW := runeDisplayWidth(timeSuffixPlain)
 		if msg.Key.FromMe {
 			for _, ln := range wrapped {
-				outgoingBodyW = max(outgoingBodyW, runeDisplayWidth(ln+" "))
+				// Use lipgloss.Width to strip ANSI codes (media tag lines are pre-styled).
+				outgoingBodyW = max(outgoingBodyW, lipgloss.Width(ln)+1)
 			}
 			// Block must fit the widest text line OR the timestamp, whichever is wider.
 			lastLineW := runeDisplayWidth(wrapped[len(wrapped)-1] + " ")
@@ -1245,6 +1250,27 @@ func (x m) renderMain(w, h int) string {
 			outgoingBlockW = min(outgoingBlockW, max(1, w-2))
 		}
 		indent := outgoingMessageIndent(max(1, w-2), outgoingBlockW, msg.Key.FromMe)
+		// For multi-line outgoing media, the icon and filename lines should
+		// be right-aligned within the last text line's width (not the full
+		// bubble width) so their right edges match the caption/name's right
+		// edge, with the timestamp extending further right. The last line
+		// itself (caption or name) right-aligns within the full width.
+		// Use the caption width WITHOUT the trailing space (which outgoing
+		// rendering appends to every line) so the content right edges line
+		// up after the trailing space is stripped.
+		var lastTextW int
+		var mediaName string
+		if msg.Key.FromMe && isMediaMsg && len(wrapped) > 1 {
+			lastTextW = runeDisplayWidth(wrapped[len(wrapped)-1])
+			if msg.Message != nil {
+				for _, key := range []string{"imageMessage", "videoMessage", "documentMessage", "audioMessage"} {
+					if v, ok := msg.Message[key].(map[string]any); ok {
+						mediaName, _ = v["fileName"].(string)
+						break
+					}
+				}
+			}
+		}
 		if quoteStyled != "" {
 			if msg.Key.FromMe {
 				// Anchor the quote connector to message text, not the trailing receipt/time.
@@ -1257,7 +1283,16 @@ func (x m) renderMain(w, h int) string {
 		}
 		lastBodyPlainW := 0
 		for i, ln := range wrapped {
-			bodyStyle := applyBodyBG(lipgloss.NewStyle().Foreground(bodyColor).Bold(isFlashing))
+			// Media layout: line 1 is the kind tag (pre-styled in saturated
+			// color), line 2 is the filename (muted), line 3 is the caption
+			// (body color, with timestamp appended). Render the filename
+			// muted and the caption in body color; for 2-line media where
+			// only one of name/caption is present, apply the matching style.
+			lineFg := bodyColor
+			if isMediaMsg && i == 1 && mediaName != "" {
+				lineFg = muted
+			}
+			bodyStyle := applyBodyBG(lipgloss.NewStyle().Foreground(lineFg).Bold(isFlashing))
 			tokenStyle := applyBodyBG(lipgloss.NewStyle().
 				Foreground(tagInk).
 				Background(mediaTokenBG).
@@ -1301,8 +1336,26 @@ func (x m) renderMain(w, h int) string {
 			}
 			bodyContent := strings.Join(lineParts, "")
 			if msg.Key.FromMe {
-				if isMediaMsg {
-					bodyContent = lipgloss.NewStyle().Width(max(1, w-2)).Align(lipgloss.Right).Render(bodyContent)
+				if isMediaMsg && i < len(wrapped)-1 {
+					// Non-last lines of multi-line media (icon + filename):
+					// right-align within the last text line's width so their
+					// right edges match the caption/name's right edge, with
+					// the timestamp extending further right. Manually pad
+					// with spaces (stripping ANSI for width measurement) to
+					// avoid lipgloss.Align quirks with pre-styled content.
+					visualW := lipgloss.Width(bodyContent)
+					targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1)
+					if visualW < targetW {
+						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
+					}
+				} else if isMediaMsg {
+					// Last line of media (caption/name + timestamp):
+					// right-align within the full chat width.
+					visualW := lipgloss.Width(bodyContent)
+					targetW := max(1, w-2)
+					if visualW < targetW {
+						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
+					}
 				} else {
 					bodyContent = indent + bodyContent
 				}

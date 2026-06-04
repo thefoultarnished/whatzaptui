@@ -65,6 +65,7 @@ type Config struct {
 	FlashTaskbar         bool   `json:"flash_taskbar"`
 	NotificationsEnabled bool   `json:"notifications_enabled"`
 	TypingAnimationStyle string `json:"typing_animation_style,omitempty"`
+	MediaIconStyle       string `json:"media_icon_style,omitempty"`
 }
 
 var currentConfig Config
@@ -166,6 +167,8 @@ type m struct {
 	helpPicker                               picker
 	settingsPicker                           picker
 	typingAnimationPicker                    picker
+	mediaIconPicker                          picker
+	fontTestOpen                             bool
 	fileBrowserOpen                          bool
 	fileBrowserDir                           string
 	fileBrowserEntries                       []fileBrowserEntry

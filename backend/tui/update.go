@@ -988,7 +988,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open {
+	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.fontTestOpen {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -1206,6 +1206,13 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if x.status != "ready" {
 		return x, nil
 	}
+	if x.fontTestOpen {
+		if k.Type == tea.KeyEsc {
+			x.fontTestOpen = false
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
 	if x.themePicker.open {
 		action, done := x.themePicker.HandleTheme(k)
 		if !done {
@@ -1263,9 +1270,19 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return x, x.setTopBar(msg)
 			} else if action == "selector" {
+				selName := ""
+				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) {
+					selName = settingsDefs[x.settingsPicker.idx].name
+				}
 				x.settingsPicker.Close(false)
-				x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
-				x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
+				switch selName {
+				case "Media icons":
+					x.mediaIconPicker = picker{title: "Media Icons", items: buildMediaIconPickerItems()}
+					x.mediaIconPicker.Open(currentConfig.MediaIconStyle)
+				default:
+					x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
+					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
+				}
 				x.mainCache.result = ""
 				return x, nil
 			}
@@ -1287,6 +1304,25 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.mainCache.result = ""
 		} else {
 			x.typingAnimationPicker.Close(false)
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
+	if x.mediaIconPicker.open {
+		action, done := x.mediaIconPicker.Handle(k)
+		if !done {
+			currentConfig.MediaIconStyle = x.mediaIconPicker.SelectedKey()
+			x.mainCache.result = ""
+		} else if action == "confirm" {
+			currentConfig.MediaIconStyle = x.mediaIconPicker.Close(true)
+			saveConfig()
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		} else {
+			x.mediaIconPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
 			x.mainCache.result = ""
@@ -2340,6 +2376,12 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 	case txt == "/settings":
 		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 		x.settingsPicker.Open("")
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/fonttest":
+		x.fontTestOpen = true
 		x.leftInput = ""
 		x.leftInputFocused = false
 		x.mainCache.result = ""

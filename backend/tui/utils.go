@@ -611,22 +611,22 @@ func renderMessageBody(m map[string]any) string {
 		}
 	}
 	if v, ok := m["imageMessage"].(map[string]any); ok {
-		return renderMediaSummary(imageTagStyle.Render("[image]"), v)
+		return renderMediaSummary(mediaTagStyle("image").Render(mediaIconLabel("image")), v)
 	}
 	if v, ok := m["videoMessage"].(map[string]any); ok {
-		return renderMediaSummary(videoTagStyle.Render("[video]"), v)
+		return renderMediaSummary(mediaTagStyle("video").Render(mediaIconLabel("video")), v)
 	}
 	if v, ok := m["documentMessage"].(map[string]any); ok {
-		return renderMediaSummary(fileTagStyle.Render("[file]"), v)
+		return renderMediaSummary(mediaTagStyle("file").Render(mediaIconLabel("file")), v)
 	}
 	if v, ok := m["audioMessage"].(map[string]any); ok {
 		if ptt, _ := v["ptt"].(bool); ptt {
-			return audioTagStyle.Render("[voice]")
+			return mediaTagStyle("audio").Render(mediaIconLabel("voice"))
 		}
-		return audioTagStyle.Render("[audio]")
+		return mediaTagStyle("audio").Render(mediaIconLabel("audio"))
 	}
 	if _, ok := m["stickerMessage"]; ok {
-		return stickerTagStyle.Render("[sticker]")
+		return mediaTagStyle("sticker").Render(mediaIconLabel("sticker"))
 	}
 	if v, ok := m["reactionMessage"].(map[string]any); ok {
 		if emoji, _ := v["emoji"].(string); emoji != "" {
@@ -643,23 +643,29 @@ func renderMessageBody(m map[string]any) string {
 		if label := unknownMessageLabel(v); label != "" {
 			return renderUnknownTag(label)
 		}
-		return anomalyTagStyle.Render("[anomaly]")
+		return mediaTagStyle("anomaly").Render(mediaIconLabel("anomaly"))
 	}
 	return ""
 }
 
+// renderMediaSummary renders a media message as a multi-line block:
+// line 1 is the kind tag (icon or "[kind]"), line 2 is the filename
+// (if present), line 3 is the caption (if present). Stickers, voice
+// notes, and other media without filename or caption render as a
+// single line. The rendering code applies muted styling to the
+// filename line and body styling to the caption line.
 func renderMediaSummary(tag string, payload map[string]any) string {
 	name, _ := payload["fileName"].(string)
 	caption, _ := payload["caption"].(string)
 
-	parts := []string{tag}
+	lines := []string{tag}
 	if name != "" {
-		parts = append(parts, "["+name+"]")
+		lines = append(lines, name)
 	}
 	if caption != "" {
-		parts = append(parts, caption)
+		lines = append(lines, caption)
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(lines, "\n")
 }
 
 func renderProtocolMessage(v map[string]any) string {
@@ -719,33 +725,105 @@ func formatEphemeralDuration(seconds uint64) string {
 }
 
 func renderUnknownTag(label string) string {
-	switch label {
-	case "image":
-		return imageTagStyle.Render("[image]")
-	case "video":
-		return videoTagStyle.Render("[video]")
-	case "audio":
-		return audioTagStyle.Render("[audio]")
-	case "voice":
-		return audioTagStyle.Render("[voice]")
-	case "file":
-		return fileTagStyle.Render("[file]")
-	case "sticker":
-		return stickerTagStyle.Render("[sticker]")
-	case "contact":
-		return contactTagStyle.Render("[contact]")
-	case "poll":
-		return pollTagStyle.Render("[poll]")
-	case "location":
-		return locationTagStyle.Render("[location]")
-	case "anomaly":
-		return anomalyTagStyle.Render("[anomaly]")
-	default:
-		if label == "" {
-			return anomalyTagStyle.Render("[anomaly]")
-		}
-		return anomalyTagStyle.Render("[" + label + "]")
+	known := label == "image" || label == "video" || label == "audio" ||
+		label == "voice" || label == "file" || label == "sticker" ||
+		label == "contact" || label == "poll" || label == "location" ||
+		label == "anomaly"
+	if known {
+		return mediaTagStyle(label).Render(mediaIconLabel(label))
 	}
+	if label == "" {
+		return mediaTagStyle("anomaly").Render(mediaIconLabel("anomaly"))
+	}
+	return mediaTagStyle("anomaly").Render("[" + label + "]")
+}
+
+// mediaIconLabel returns the tag text for a given media kind. With
+// MediaIconStyle == "nerd" it returns a Nerd Font glyph followed by the
+// kind name (e.g. "<image-glyph> image") — the icon is too small to read on
+// its own at terminal cell sizes, so the kind name carries the meaning and
+// the glyph is a visual marker. In the default text mode it returns the
+// plain bracketed text (e.g. "[image]").
+func mediaIconLabel(kind string) string {
+	if currentConfig.MediaIconStyle == "nerd" {
+		if g := nerdIconFor(kind); g != "" {
+			return g + " " + kind
+		}
+	}
+	return "[" + kind + "]"
+}
+
+// mediaTagColor returns the theme color associated with a media kind.
+// "voice" shares the audio color since it is conceptually audio.
+func mediaTagColor(kind string) lipgloss.Color {
+	switch kind {
+	case "image":
+		return imageTag
+	case "video":
+		return videoTag
+	case "audio", "voice":
+		return audioTag
+	case "file":
+		return fileTag
+	case "sticker":
+		return stickerTag
+	case "contact":
+		return contactTag
+	case "poll":
+		return pollTag
+	case "location":
+		return locationTag
+	case "anomaly":
+		return anomalyTag
+	}
+	return muted
+}
+
+// mediaTagStyle returns the style used to render a media-kind tag in chat
+// message bodies. In the default (text) mode it is the "pill" style used
+// since before the icon feature: a saturated background with dark text. In
+// Nerd mode it switches to the file-browser style: a saturated foreground
+// with no background, so the icon glyph is actually visible at terminal cell
+// sizes (the pill style would render the icon as a dark blob on a colored
+// background, which reads as a smudge).
+func mediaTagStyle(kind string) lipgloss.Style {
+	if currentConfig.MediaIconStyle == "nerd" {
+		return lipgloss.NewStyle().Foreground(mediaTagColor(kind)).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(tagInk).Background(mediaTagColor(kind)).Bold(true)
+}
+
+// nerdIconFor returns a Nerd Font (Material Design) glyph for the given media
+// kind, or "" if no glyph is defined for that kind. Codepoints are the
+// Nerd Fonts v3.0+ Material Design set, which lives in the SMP Private Use
+// Area (U+F0000+). Render these with a Nerd Font installed; otherwise your
+// terminal will show tofu (e.g. "[]") for each glyph. See
+// https://www.nerdfonts.com/cheat-sheet and the i_md.sh file in
+// https://github.com/ryanoasis/nerd-fonts.
+func nerdIconFor(kind string) string {
+	switch kind {
+	case "image":
+		return "\U000F02E9" // nf-md-image
+	case "video":
+		return "\U000F022F" // nf-md-film
+	case "file":
+		return "\U000F0219" // nf-md-file-document
+	case "audio":
+		return "\U000F0387" // nf-md-music_note
+	case "voice":
+		return "\U000F036C" // nf-md-microphone
+	case "sticker":
+		return "\U000F0785" // nf-md-sticker-emoji
+	case "contact":
+		return "\U000F0004" // nf-md-account
+	case "location":
+		return "\U000F034E" // nf-md-map-marker
+	case "poll":
+		return "\U000F041F" // nf-md-poll
+	case "anomaly":
+		return "\U000F0028" // nf-md-alert-circle
+	}
+	return ""
 }
 
 func unknownMessageLabel(v map[string]any) string {

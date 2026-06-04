@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Config path check.
@@ -245,5 +247,206 @@ func TestSearchMsgsReturnsErrorOn5xx(t *testing.T) {
 	}
 	if !strings.Contains(res.err.Error(), "500") {
 		t.Fatalf("unexpected error message: %v", res.err)
+	}
+}
+
+func TestMediaIconLabelDefault(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = ""
+	for _, kind := range []string{"image", "video", "file", "audio", "voice", "sticker", "contact", "poll", "location", "anomaly"} {
+		got := mediaIconLabel(kind)
+		want := "[" + kind + "]"
+		if got != want {
+			t.Errorf("mediaIconLabel(%q) default = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+func TestMediaIconLabelNerd(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = "nerd"
+	for _, kind := range []string{"image", "video", "file", "audio", "voice", "sticker", "contact", "poll", "location", "anomaly"} {
+		glyph := nerdIconFor(kind)
+		if glyph == "" {
+			t.Errorf("nerdIconFor(%q) is empty; expected a Nerd Font codepoint", kind)
+			continue
+		}
+		// Nerd mode now returns "<glyph> <kind>" so the kind name
+		// carries the meaning alongside the small visual marker.
+		want := glyph + " " + kind
+		got := mediaIconLabel(kind)
+		if got != want {
+			t.Errorf("mediaIconLabel(%q) nerd = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+func TestMediaIconLabelUnknownKindFallsBackToBracketed(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = "nerd"
+	got := mediaIconLabel("notarealkind")
+	want := "[notarealkind]"
+	if got != want {
+		t.Errorf("mediaIconLabel(\"notarealkind\") nerd fallback = %q, want %q", got, want)
+	}
+}
+
+func TestRenderMessageBodyImageDefault(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = ""
+	msg := map[string]any{
+		"imageMessage": map[string]any{"fileName": "cat.png", "caption": "fluffy"},
+	}
+	got := renderMessageBody(msg)
+	// New layout: "[image]" on line 1, "cat.png" on line 2, "fluffy" on line 3.
+	want := "[image]\ncat.png\nfluffy"
+	if got != want {
+		t.Fatalf("default render = %q, want %q", got, want)
+	}
+}
+
+func TestRenderMessageBodyImageDefaultNameOnly(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = ""
+	msg := map[string]any{
+		"imageMessage": map[string]any{"fileName": "cat.png"},
+	}
+	got := renderMessageBody(msg)
+	want := "[image]\ncat.png"
+	if got != want {
+		t.Fatalf("default render = %q, want %q", got, want)
+	}
+}
+
+func TestRenderMessageBodyImageDefaultCaptionOnly(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = ""
+	msg := map[string]any{
+		"imageMessage": map[string]any{"caption": "fluffy"},
+	}
+	got := renderMessageBody(msg)
+	want := "[image]\nfluffy"
+	if got != want {
+		t.Fatalf("default render = %q, want %q", got, want)
+	}
+}
+
+func TestRenderMessageBodyImageDefaultNoMeta(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = ""
+	msg := map[string]any{
+		"imageMessage": map[string]any{},
+	}
+	got := renderMessageBody(msg)
+	want := "[image]"
+	if got != want {
+		t.Fatalf("default render = %q, want %q", got, want)
+	}
+}
+
+func TestRenderMessageBodyImageNerd(t *testing.T) {
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	currentConfig.MediaIconStyle = "nerd"
+	msg := map[string]any{
+		"imageMessage": map[string]any{"fileName": "cat.png", "caption": "fluffy"},
+	}
+	got := renderMessageBody(msg)
+	glyph := nerdIconFor("image")
+	if glyph == "" {
+		t.Skip("nerdIconFor(\"image\") returned empty; cannot run assertion")
+	}
+	// New layout: "<glyph> image" on line 1, "cat.png" on line 2, "fluffy" on line 3.
+	want := glyph + " image\ncat.png\nfluffy"
+	if got != want {
+		t.Fatalf("nerd render = %q, want %q", got, want)
+	}
+}
+
+func TestRenderFontTestRendersAllKinds(t *testing.T) {
+	currentTheme = Monokai
+	rehashStyles()
+
+	out := renderFontTest(100, 40)
+	if out == "" {
+		t.Fatal("renderFontTest returned empty")
+	}
+	for _, kind := range []string{"image", "video", "file", "audio", "voice", "sticker", "contact", "poll", "location", "anomaly"} {
+		// The kind label appears as a word in the panel.
+		if !strings.Contains(out, kind) {
+			t.Errorf("renderFontTest missing kind label %q", kind)
+		}
+		// The text fallback "[kind]" is shown alongside the Nerd glyph.
+		if !strings.Contains(out, "["+kind+"]") {
+			t.Errorf("renderFontTest missing text fallback [%s]", kind)
+		}
+	}
+	if !strings.Contains(out, "Nerd Font") {
+		t.Errorf("renderFontTest should mention Nerd Font in help text")
+	}
+}
+
+func TestNerdIconForAllKindsNonEmpty(t *testing.T) {
+	// All media kinds we expose in the chat must have a Nerd Font glyph;
+	// otherwise the toggle silently degrades to bracketed text for that kind.
+	kinds := []string{"image", "video", "file", "audio", "voice", "sticker", "contact", "poll", "location", "anomaly"}
+	for _, k := range kinds {
+		got := nerdIconFor(k)
+		if got == "" {
+			t.Errorf("nerdIconFor(%q) is empty; expected a Material Design codepoint", k)
+		}
+		// Sanity: the codepoint should be in the SMP PUA where Nerd Fonts
+		// Material Design lives (U+F0000 - U+FFFFF).
+		if len(got) > 0 {
+			r := []rune(got)[0]
+			if r < 0xF0000 || r > 0xFFFFF {
+				t.Errorf("nerdIconFor(%q) = U+%04X; expected SMP PUA (U+F0000-U+FFFFF)", k, r)
+			}
+		}
+	}
+}
+
+func TestMediaTagStyle(t *testing.T) {
+	currentTheme = Monokai
+	rehashStyles()
+
+	saved := currentConfig.MediaIconStyle
+	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
+
+	// Text mode (default): pill style = dark foreground, saturated background.
+	currentConfig.MediaIconStyle = ""
+	st := mediaTagStyle("image")
+	if got, _ := st.GetForeground().(lipgloss.Color); got != tagInk {
+		t.Errorf("text mode foreground = %v, want %v", got, tagInk)
+	}
+	if got, _ := st.GetBackground().(lipgloss.Color); got != imageTag {
+		t.Errorf("text mode background = %v, want %v", got, imageTag)
+	}
+
+	// Nerd mode: file-browser style = saturated foreground, no background.
+	// Without a background, the icon stays visible on the chat's dark panel
+	// rather than reading as a dark blob on a saturated pill.
+	currentConfig.MediaIconStyle = "nerd"
+	st = mediaTagStyle("image")
+	if got, _ := st.GetForeground().(lipgloss.Color); got != imageTag {
+		t.Errorf("nerd mode foreground = %v, want %v", got, imageTag)
+	}
+	if got, _ := st.GetBackground().(lipgloss.Color); got != "" {
+		t.Errorf("nerd mode should have no background, got %v", got)
 	}
 }

@@ -20,6 +20,27 @@ var settingsDefs = []struct {
 	{"Taskbar flash", false, func() bool { return currentConfig.FlashTaskbar }, func(v bool) { currentConfig.FlashTaskbar = v }, nil},
 	{"Notifications", false, func() bool { return currentConfig.NotificationsEnabled }, func(v bool) { currentConfig.NotificationsEnabled = v }, nil},
 	{"Typing animation", true, nil, nil, func() string { return currentConfig.TypingAnimationStyle }},
+	{"Media icons", true, nil, nil, func() string {
+		if currentConfig.MediaIconStyle == "nerd" {
+			return "nerd"
+		}
+		return "text"
+	}},
+}
+
+var mediaIconList = []struct {
+	key, label string
+}{
+	{"text", "Text  [image] [video] [file] [audio]"},
+	{"nerd", "Nerd  " + nerdIconFor("image") + " " + nerdIconFor("video") + " " + nerdIconFor("file") + " " + nerdIconFor("audio")},
+}
+
+func buildMediaIconPickerItems() []pickerItem {
+	items := make([]pickerItem, len(mediaIconList))
+	for i, e := range mediaIconList {
+		items[i] = pickerItem{key: e.key, label: e.label}
+	}
+	return items
 }
 
 func buildSettingsPickerItems() []pickerItem {
