@@ -1607,11 +1607,24 @@ func setTopBarAfter(msg string, d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return topBarSetMsg{msg: msg} })
 }
 func padRight(s string, n int) string {
-	r := []rune(s)
-	if len(r) >= n {
-		return string(r[:n])
+	w := runeDisplayWidth(s)
+	if w == n {
+		return s
 	}
-	return s + strings.Repeat(" ", n-len(r))
+	if w > n {
+		var b strings.Builder
+		used := 0
+		for _, r := range s {
+			rw := runeDisplayWidth(string(r))
+			if used+rw > n {
+				break
+			}
+			b.WriteRune(r)
+			used += rw
+		}
+		return b.String()
+	}
+	return s + strings.Repeat(" ", n-w)
 }
 
 func renderShine(text string, baseStyle, shineStyle lipgloss.Style, frame int) string {

@@ -201,6 +201,35 @@ func TestSearchMsgsBuildsQueryAndDecodes(t *testing.T) {
 	}
 }
 
+func TestPadRightAccountsForEmojiWidth(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		n    int
+	}{
+		{name: "no emoji short", in: "hello", n: 10},
+		{name: "no emoji exact", in: "hello", n: 5},
+		{name: "trailing boot emoji", in: "03. Tartu Hiking Group \U0001F97E", n: 25},
+		{name: "leading emoji", in: "\U0001F44B wave", n: 12},
+		{name: "multiple emojis", in: "\U0001F680 \U0001F4A1 \U0001F525", n: 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := padRight(tt.in, tt.n)
+			if w := runeDisplayWidth(got); w != tt.n {
+				t.Fatalf("padRight(%q, %d) display width = %d, want %d (got %q)", tt.in, tt.n, w, tt.n, got)
+			}
+		})
+	}
+}
+
+func TestPadRightTruncatesByDisplayWidth(t *testing.T) {
+	got := padRight("abcdef\U0001F97Eghi", 8)
+	if w := runeDisplayWidth(got); w > 8 {
+		t.Fatalf("padRight display width = %d, want <= 8 (got %q)", w, got)
+	}
+}
+
 func TestSearchMsgsReturnsErrorOn5xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")

@@ -329,6 +329,11 @@ type syncContactsDoneMsg struct {
 type syncGroupsDoneMsg struct {
 	msg string
 }
+type clipboardPasteMsg struct {
+	path    string
+	isImage bool
+	err     error
+}
 
 func (x m) Init() tea.Cmd {
 	bgCmd := setTerminalBgCmd(currentTheme.Background)

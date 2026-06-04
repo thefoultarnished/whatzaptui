@@ -580,6 +580,42 @@ func downloadMedia(c *http.Client, base, chatID, msgID string) tea.Cmd {
 	}
 }
 
+func pasteFromClipboard() tea.Cmd {
+	return func() tea.Msg {
+		// PowerShell: try image first, then file drop list
+		script := `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($img -ne $null) {
+    $p = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'whatzap_paste_' + [System.DateTime]::Now.Ticks.ToString() + '.png')
+    $img.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
+    Write-Output "IMAGE:$p"
+    exit
+}
+$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
+if ($files.Count -gt 0) {
+    Write-Output "FILE:$($files[0])"
+    exit
+}
+Write-Output "NONE"
+`
+		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+		if err != nil {
+			return clipboardPasteMsg{err: err}
+		}
+		result := strings.TrimSpace(string(out))
+		switch {
+		case strings.HasPrefix(result, "IMAGE:"):
+			return clipboardPasteMsg{path: strings.TrimPrefix(result, "IMAGE:"), isImage: true}
+		case strings.HasPrefix(result, "FILE:"):
+			return clipboardPasteMsg{path: strings.TrimPrefix(result, "FILE:")}
+		default:
+			return clipboardPasteMsg{err: fmt.Errorf("no file or image in clipboard")}
+		}
+	}
+}
+
 func openFile(path string) tea.Cmd {
 	return func() tea.Msg {
 		var cmd *exec.Cmd

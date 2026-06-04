@@ -545,6 +545,19 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+	case clipboardPasteMsg:
+		if v.err != nil {
+			return x, x.setTopBar("Clipboard: " + v.err.Error())
+		}
+		x.setPendingAttachment(v.path)
+		x.input = ""
+		x.inputBuf = ""
+		x.sidebarFocused = false
+		label := filepath.Base(v.path)
+		if v.isImage {
+			label = "screenshot → " + label
+		}
+		return x, x.setTopBar("Attached: " + label)
 	case mediaDownloadMsg:
 		if v.err != nil {
 			return x, x.setTopBar(v.err.Error())
@@ -1140,6 +1153,11 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if x.mode == "search" {
 			x.mode = "nav"
+		}
+		return x, nil
+	case "alt+v", "ctrl+v":
+		if x.status == "ready" && x.mode == "chat" && x.active != "" {
+			return x, tea.Batch(x.setTopBar("Reading clipboard…"), pasteFromClipboard())
 		}
 		return x, nil
 	case "alt+e":

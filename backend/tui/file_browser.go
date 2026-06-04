@@ -379,61 +379,75 @@ func (x m) renderFileBrowser(w, h int) string {
 	sp := bg(lipgloss.NewStyle()) // bg-colored space helper
 	spc := func(s string) string { return sp.Render(s) }
 
-	for i := start; i < end; i++ {
-		entry := list[i]
+	const maxName = 80
+	rowW := w - 2
 
-		if i == xCopy.fileBrowserIndex {
+	renderFileRow := func(
+		isActive bool,
+		isDir, isPlaceholder bool,
+		entry fileBrowserEntry,
+		cursor string,
+	) string {
+		if isDir || isPlaceholder {
+			label := truncateDisplayWidth(entry.label(), maxName)
+			content := cursor + label
+			if isActive {
+				abg := lipgloss.NewStyle().Background(activePanelBg)
+				return abg.Foreground(accent).Bold(true).Width(rowW).Render(content)
+			}
+			if isPlaceholder {
+				return ln(spc("  ") + hintSt.Render(label))
+			}
+			return ln(spc("  ") + dirSt.Render(label))
+		}
+
+		icon := fileTypeIcon(entry.name)
+		ext := strings.ToLower(filepath.Ext(entry.name))
+		if ext == "" {
+			ext = "·"
+		}
+		size := formatFileSize(entry.size)
+
+		if isActive {
 			abg := lipgloss.NewStyle().Background(activePanelBg)
 			asp := abg.Render
-
-			if entry.isDir || entry.isPlaceholder {
-				label := truncateDisplayWidth(entry.label(), max(4, w-4))
-				row := abg.Foreground(accent).Bold(true).Width(w - 2).Render("▶ " + label)
-				lines = append(lines, row)
-				continue
-			}
-
-			icon := fileTypeIcon(entry.name)
-			ext := strings.ToLower(filepath.Ext(entry.name))
-			if ext == "" {
-				ext = "·"
-			}
 			iconSt := abg.Foreground(fileTypeColor(entry.name)).Bold(true)
+			nameSt := abg.Foreground(accent).Bold(true).Underline(true)
 			extSt := abg.Foreground(muted)
 			sizeSt := abg.Foreground(accent)
 
 			prefix := asp(" ") + iconSt.Render(icon) + asp(" ")
-			maxNameW := max(4, w-2-lipgloss.Width(prefix)-len([]rune(ext))-2-8)
-			name := truncateDisplayWidth(entry.name, maxNameW)
-			nameSt := abg.Foreground(accent).Bold(true).Underline(true)
-			row := lipgloss.NewStyle().Background(activePanelBg).Width(w - 2).Render(
-				prefix + nameSt.Render(name) + asp("  ") + extSt.Render(ext) + asp("  ") + sizeSt.Render(formatFileSize(entry.size)),
+			name := truncateDisplayWidth(entry.name, maxName)
+			left := prefix + nameSt.Render(name) + asp("  ") + extSt.Render(ext)
+			leftW := lipgloss.Width(left)
+			sizeW := lipgloss.Width(size)
+			pad := max(1, rowW-leftW-sizeW-1)
+			return lipgloss.NewStyle().Background(activePanelBg).Width(rowW).Render(
+				left + asp(strings.Repeat(" ", pad)) + sizeSt.Render(size),
 			)
-			lines = append(lines, row)
-			continue
 		}
 
-		if entry.isDir && !entry.isPlaceholder {
-			name := truncateDisplayWidth(entry.label(), max(4, w-4))
-			lines = append(lines, ln(spc("  ")+dirSt.Render(name)))
-		} else if entry.isPlaceholder {
-			name := truncateDisplayWidth(entry.name, max(4, w-4))
-			lines = append(lines, ln(spc("  ")+hintSt.Render(name)))
-		} else {
-			icon := fileTypeIcon(entry.name)
-			ext := strings.ToLower(filepath.Ext(entry.name))
-			if ext == "" {
-				ext = "·"
-			}
-			iconSt := bg(lipgloss.NewStyle().Foreground(fileTypeColor(entry.name)).Bold(true))
-			extSt := bg(lipgloss.NewStyle().Foreground(muted))
-			sizeSt := bg(lipgloss.NewStyle().Foreground(muted))
+		iconSt := bg(lipgloss.NewStyle().Foreground(fileTypeColor(entry.name)).Bold(true))
+		extSt := bg(lipgloss.NewStyle().Foreground(muted))
+		sizeSt := bg(lipgloss.NewStyle().Foreground(muted))
 
-			prefix := spc(" ") + iconSt.Render(icon) + spc(" ")
-			maxNameW := max(4, w-2-lipgloss.Width(prefix)-len([]rune(ext))-2-8)
-			name := truncateDisplayWidth(entry.name, maxNameW)
-			lines = append(lines, ln(prefix+fileSt.Render(name)+spc("  ")+extSt.Render(ext)+spc("  ")+sizeSt.Render(formatFileSize(entry.size))))
+		prefix := spc(" ") + iconSt.Render(icon) + spc(" ")
+		name := truncateDisplayWidth(entry.name, maxName)
+		left := prefix + fileSt.Render(name) + spc("  ") + extSt.Render(ext)
+		leftW := lipgloss.Width(left)
+		sizeW := lipgloss.Width(size)
+		pad := max(1, rowW-leftW-sizeW-1)
+		return ln(left + spc(strings.Repeat(" ", pad)) + sizeSt.Render(size))
+	}
+
+	for i := start; i < end; i++ {
+		entry := list[i]
+		isActive := i == xCopy.fileBrowserIndex
+		cursor := "  "
+		if isActive {
+			cursor = "▶ "
 		}
+		lines = append(lines, renderFileRow(isActive, entry.isDir, entry.isPlaceholder, entry, cursor))
 	}
 
 	// pad remaining rows
