@@ -805,13 +805,42 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			nameText = strings.Repeat(" ", x.sidebarHighlightInset) + nameText
 		}
 		var content string
-		if highlighted || isActive {
+		switch {
+		case hasUnread:
+			// Shine plays for unread rows in every state (highlighted/active too).
+			// The wave travels only across the name, so it bounces at the last
+			// character instead of drifting through the trailing padding.
+			var shineBase, shineHigh lipgloss.Style
+			if highlighted || isActive {
+				shineBase = lipgloss.NewStyle().Foreground(fg).Background(bg)
+				shineHigh = lipgloss.NewStyle().Foreground(accent).Background(bg).Bold(true)
+			} else {
+				shineBase = lipgloss.NewStyle().Foreground(muted)
+				shineHigh = lipgloss.NewStyle().Foreground(accent).Bold(true)
+			}
+			if highlighted {
+				shineBase = shineBase.Bold(isSel && navActive)
+			}
+			// Clamp the label to the row so the wave's end matches the visible name.
+			label := nameText
+			if runeDisplayWidth(label) > nameWidth {
+				label = padRight(label, nameWidth)
+			}
+			content = renderShine(label, shineBase, shineHigh, x.shineFrame+i*4)
+			if pad := nameWidth - runeDisplayWidth(label); pad > 0 {
+				padStyle := lipgloss.NewStyle()
+				if highlighted || isActive {
+					padStyle = padStyle.Background(bg)
+				}
+				content += padStyle.Render(strings.Repeat(" ", pad))
+			}
+		case highlighted || isActive:
 			contentStyle := lipgloss.NewStyle().Foreground(fg).Background(bg)
 			if highlighted {
 				contentStyle = contentStyle.Bold(isSel && navActive)
 			}
 			content = contentStyle.Render(padRight(nameText, nameWidth))
-		} else {
+		default:
 			content = padRight(nameText, nameWidth)
 		}
 		unreadStyle := lipgloss.NewStyle()
@@ -819,7 +848,7 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			unreadStyle = unreadStyle.Background(bg)
 		}
 		if hasUnread {
-			content += unreadStyle.Foreground(amber).Render("\u25cf")
+			content += unreadStyle.Foreground(accent).Render("\u25cf")
 		} else {
 			content += unreadStyle.Render(" ")
 		}
@@ -1069,6 +1098,19 @@ func (x m) renderMain(w, h int) string {
 			bodyColor = receivedText
 		}
 		isMediaMsg := isMediaWire(msg)
+
+		// For multi-line outgoing text messages, try re-wrapping at a slightly
+		// narrower width so the first (widest) line doesn't reach the right edge
+		// while the last line's text sits well to the left of the timestamp.
+		if msg.Key.FromMe && !isMediaMsg && len(wrapped) > 1 {
+			tsApprox := runeDisplayWidth("  " + timeStr + receiptText + " ")
+			narrowW := max(8, availableW-tsApprox/2)
+			if narrowW < availableW {
+				if attempt := wrapMessageLines(msgBody, narrowW, msg.Key.FromMe, wrappedSender); len(attempt) == len(wrapped) {
+					wrapped = attempt
+				}
+			}
+		}
 		mediaTokenBG := mediaTokenBg
 		if x.pulseOn {
 			mediaTokenBG = mediaTokenPulseBg
@@ -1700,6 +1742,12 @@ func renderShine(text string, baseStyle, shineStyle lipgloss.Style, frame int) s
 	mid1 := lerpColor(baseFg, shineFg, 0.15)
 	mid2 := lerpColor(baseFg, shineFg, 0.35)
 	mid3 := lerpColor(baseFg, shineFg, 0.70)
+	// Inherit the base background so the wave doesn't punch holes in a
+	// highlighted row's background as it travels.
+	bg := baseStyle.GetBackground()
+	m3 := lipgloss.NewStyle().Foreground(mid3).Bold(true).Background(bg)
+	m2 := lipgloss.NewStyle().Foreground(mid2).Background(bg)
+	m1 := lipgloss.NewStyle().Foreground(mid1).Background(bg)
 	var sb strings.Builder
 	for i := 0; i < n; i++ {
 		dist := i - center
@@ -1711,11 +1759,11 @@ func renderShine(text string, baseStyle, shineStyle lipgloss.Style, frame int) s
 		case dist == 0:
 			sb.WriteString(shineStyle.Render(ch))
 		case dist == 1:
-			sb.WriteString(lipgloss.NewStyle().Foreground(mid3).Bold(true).Render(ch))
+			sb.WriteString(m3.Render(ch))
 		case dist == 2:
-			sb.WriteString(lipgloss.NewStyle().Foreground(mid2).Render(ch))
+			sb.WriteString(m2.Render(ch))
 		case dist == 3:
-			sb.WriteString(lipgloss.NewStyle().Foreground(mid1).Render(ch))
+			sb.WriteString(m1.Render(ch))
 		default:
 			sb.WriteString(baseStyle.Render(ch))
 		}
