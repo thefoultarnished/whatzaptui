@@ -1108,11 +1108,15 @@ func (x m) renderMain(w, h int) string {
 			wrappedSender = receivedMsgIcon
 		}
 		isImageMsg := false
+		isPollCreation := false
 		var imgPayload map[string]any
 		if msg.Message != nil {
 			if p, ok := msg.Message["imageMessage"].(map[string]any); ok {
 				isImageMsg = true
 				imgPayload = p
+			}
+			if _, ok := msg.Message["pollCreationMessage"]; ok {
+				isPollCreation = true
 			}
 		}
 		numPixelLines := 0
@@ -1135,6 +1139,25 @@ func (x m) renderMain(w, h int) string {
 			if caption, _ := imgPayload["caption"].(string); caption != "" {
 				wrappedCaption := wrapMessageLines(caption, availableW, msg.Key.FromMe, wrappedSender)
 				wrapped = append(wrapped, wrappedCaption...)
+			}
+		} else if isPollCreation {
+			var prefixWidth int
+			if !msg.Key.FromMe {
+				if isGroup {
+					prefixWidth = runeDisplayWidth(senderName + ": ")
+				} else {
+					prefixWidth = 0
+				}
+			}
+			rawLines := strings.Split(msgBody, "\n")
+			wrapped = make([]string, len(rawLines))
+			wrapped[0] = rawLines[0]
+			for i := 1; i < len(rawLines); i++ {
+				if !msg.Key.FromMe {
+					wrapped[i] = strings.Repeat(" ", prefixWidth) + rawLines[i]
+				} else {
+					wrapped[i] = rawLines[i]
+				}
 			}
 		} else {
 			wrapped = wrapMessageLines(msgBody, availableW, msg.Key.FromMe, wrappedSender)
@@ -1856,7 +1879,10 @@ func incomingLeftIcon(lineIdx int, isLastLine bool) string {
 		}
 		return "║"
 	}
-	return receivedMsgIcon
+	if lineIdx == 0 {
+		return receivedMsgIcon
+	}
+	return strings.Repeat(" ", runeDisplayWidth(receivedMsgIcon))
 }
 
 // outgoingRightIcon returns the right-side icon glyph for a given line of an
@@ -1881,7 +1907,10 @@ func outgoingRightIcon(lineIdx int, isTimestamp bool) string {
 		}
 		return "║"
 	}
-	return receivedMsgIcon
+	if isTimestamp {
+		return receivedMsgIcon
+	}
+	return strings.Repeat(" ", runeDisplayWidth(receivedMsgIcon))
 }
 
 func renderShine(text string, baseStyle, shineStyle lipgloss.Style, frame int) string {

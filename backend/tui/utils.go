@@ -637,27 +637,64 @@ func renderMessageBody(m map[string]any) string {
 	}
 	if v, ok := m["pollCreationMessage"].(map[string]any); ok {
 		name, _ := v["name"].(string)
-		tag := mediaTagStyle("poll").Render(mediaIconLabel("poll"))
-		title := tag
-		if name != "" {
-			title = tag + " " + name
-		}
-		var optLines []string
-		if opts, ok := v["options"].([]any); ok {
-			for i, o := range opts {
-				if s, ok := o.(string); ok {
-					optLines = append(optLines, fmt.Sprintf("  %d. %s", i+1, s))
+		var opts []string
+		if rawOpts, ok := v["options"].([]any); ok {
+			for _, o := range rawOpts {
+				if s, ok := o.(string); ok && s != "" {
+					opts = append(opts, s)
 				}
 			}
-		} else if opts, ok := v["options"].([]string); ok {
-			for i, s := range opts {
-				optLines = append(optLines, fmt.Sprintf("  %d. %s", i+1, s))
+		} else if rawOpts, ok := v["options"].([]string); ok {
+			for _, s := range rawOpts {
+				if s != "" {
+					opts = append(opts, s)
+				}
 			}
 		}
-		if len(optLines) > 0 {
-			return title + "\n" + strings.Join(optLines, "\n")
+		cardWidth := len(name) + 6
+		for _, o := range opts {
+			if len(o)+8 > cardWidth {
+				cardWidth = len(o) + 8
+			}
 		}
-		return title
+		if cardWidth < 30 {
+			cardWidth = 30
+		}
+		if cardWidth > 38 {
+			cardWidth = 38
+		}
+		accentCol := lipgloss.Color(currentTheme.Accent)
+		mutedCol := lipgloss.Color(currentTheme.Muted)
+		tagStyle := mediaTagStyle("poll")
+		borderStyle := lipgloss.NewStyle().Foreground(mutedCol)
+		accentBorderStyle := lipgloss.NewStyle().Foreground(accentCol)
+		var sb strings.Builder
+		badge := tagStyle.Render(" " + mediaIconLabel("poll") + " ")
+		topLen := cardWidth - lipgloss.Width(badge) - 4
+		if topLen < 2 {
+			topLen = 2
+		}
+		sb.WriteString(borderStyle.Render(" ╭─") + badge + borderStyle.Render(strings.Repeat("─", topLen)+"╮") + "\n")
+		qText := " " + name
+		if len([]rune(qText)) > cardWidth-4 {
+			qText = string([]rune(qText)[:cardWidth-7]) + "..."
+		} else {
+			qText = qText + strings.Repeat(" ", cardWidth-4-len([]rune(qText)))
+		}
+		sb.WriteString(borderStyle.Render(" │ ") + lipgloss.NewStyle().Bold(true).Foreground(accentCol).Render(qText) + borderStyle.Render("│") + "\n")
+		sb.WriteString(borderStyle.Render(" ├"+strings.Repeat("─", cardWidth-3)+"┤") + "\n")
+		for _, opt := range opts {
+			oText := opt
+			if len([]rune(oText)) > cardWidth-8 {
+				oText = string([]rune(oText)[:cardWidth-11]) + "..."
+			} else {
+				oText = oText + strings.Repeat(" ", cardWidth-8-len([]rune(oText)))
+			}
+			bullet := accentBorderStyle.Render("◯")
+			sb.WriteString(borderStyle.Render(" │  ") + bullet + " " + oText + borderStyle.Render(" │") + "\n")
+		}
+		sb.WriteString(borderStyle.Render(" ╰" + strings.Repeat("─", cardWidth-3) + "╯"))
+		return sb.String()
 	}
 	if v, ok := m["pollUpdateMessage"].(map[string]any); ok {
 		names, hasNames := v["selectedOptionNames"]
