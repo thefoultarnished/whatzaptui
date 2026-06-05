@@ -2701,6 +2701,7 @@ func (a *App) decryptPollVoteOptions(evt *events.Message) []string {
 	if pollChatID == "" {
 		pollChatID = evt.Info.Chat.String()
 	}
+	pollChatID = a.canonicalizeChatID(pollChatID)
 	options := a.pollOptionNames(pollChatID, pollMsgID)
 	if options == nil {
 		return nil
@@ -2884,7 +2885,7 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 			"targetMsgID": rxn.GetKey().GetID(),
 		}
 	}
-	if pc := effective.GetPollCreationMessage(); pc != nil {
+	if pc := extractPollCreationMessage(effective); pc != nil {
 		opts := make([]string, 0, len(pc.GetOptions()))
 		for _, o := range pc.GetOptions() {
 			opts = append(opts, o.GetOptionName())
@@ -2926,6 +2927,34 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 	}
 	return msg, mediaProto
 }
+
+func extractPollCreationMessage(msg *waE2E.Message) *waE2E.PollCreationMessage {
+	if msg == nil {
+		return nil
+	}
+	if pc := msg.GetPollCreationMessage(); pc != nil {
+		return pc
+	}
+	if pc := msg.GetPollCreationMessageV2(); pc != nil {
+		return pc
+	}
+	if pc := msg.GetPollCreationMessageV3(); pc != nil {
+		return pc
+	}
+	if pc := msg.GetPollCreationMessageV5(); pc != nil {
+		return pc
+	}
+	if pc := msg.GetPollCreationMessageV6(); pc != nil {
+		return pc
+	}
+	if v4 := msg.GetPollCreationMessageV4(); v4 != nil {
+		if inner := v4.GetMessage(); inner != nil {
+			return extractPollCreationMessage(inner)
+		}
+	}
+	return nil
+}
+
 
 func protocolMessagePayload(raw, effective *waE2E.Message) map[string]any {
 	var protocol *waE2E.ProtocolMessage

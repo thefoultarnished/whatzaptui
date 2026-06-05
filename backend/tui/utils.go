@@ -638,10 +638,26 @@ func renderMessageBody(m map[string]any) string {
 	if v, ok := m["pollCreationMessage"].(map[string]any); ok {
 		name, _ := v["name"].(string)
 		tag := mediaTagStyle("poll").Render(mediaIconLabel("poll"))
+		title := tag
 		if name != "" {
-			return tag + " " + name
+			title = tag + " " + name
 		}
-		return tag
+		var optLines []string
+		if opts, ok := v["options"].([]any); ok {
+			for i, o := range opts {
+				if s, ok := o.(string); ok {
+					optLines = append(optLines, fmt.Sprintf("  %d. %s", i+1, s))
+				}
+			}
+		} else if opts, ok := v["options"].([]string); ok {
+			for i, s := range opts {
+				optLines = append(optLines, fmt.Sprintf("  %d. %s", i+1, s))
+			}
+		}
+		if len(optLines) > 0 {
+			return title + "\n" + strings.Join(optLines, "\n")
+		}
+		return title
 	}
 	if v, ok := m["pollUpdateMessage"].(map[string]any); ok {
 		names, hasNames := v["selectedOptionNames"]
@@ -651,7 +667,7 @@ func renderMessageBody(m map[string]any) string {
 				if len(opts) == 0 {
 					return anomalyTagStyle.Render("[removed vote]")
 				}
-				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted: " + strings.Join(opts, ", ")
+				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted \"" + strings.Join(opts, ", ") + "\" on poll"
 			case []any:
 				strs := make([]string, 0, len(opts))
 				for _, o := range opts {
@@ -662,10 +678,10 @@ func renderMessageBody(m map[string]any) string {
 				if len(strs) == 0 {
 					return anomalyTagStyle.Render("[removed vote]")
 				}
-				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted: " + strings.Join(strs, ", ")
+				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted \"" + strings.Join(strs, ", ") + "\" on poll"
 			}
 		}
-		return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted"
+		return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted on poll"
 	}
 	if v, ok := m["protocolMessage"].(map[string]any); ok {
 		if label := renderProtocolMessage(v); label != "" {
@@ -674,6 +690,9 @@ func renderMessageBody(m map[string]any) string {
 	}
 	if v, ok := m["unknown"].(map[string]any); ok {
 		if label := unknownMessageLabel(v); label != "" {
+			if label == "pollUpdateMessage" {
+				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted on poll"
+			}
 			return renderUnknownTag(label)
 		}
 		return mediaTagStyle("anomaly").Render(mediaIconLabel("anomaly"))
