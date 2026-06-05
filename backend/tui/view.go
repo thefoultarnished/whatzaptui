@@ -1340,9 +1340,12 @@ func (x m) renderMain(w, h int) string {
 		}
 		if quoteStyled != "" {
 			if msg.Key.FromMe {
-				// Anchor the quote connector to message text, not the trailing receipt/time.
 				qPlainW := runeDisplayWidth(quotePlainRight)
-				qIndent := max(0, len(indent)+outgoingBodyW-qPlainW)
+				targetW := outgoingBodyW
+				if currentConfig.TimestampNewLine && !isMediaMsg {
+					targetW -= 3
+				}
+				qIndent := max(0, len(indent)+targetW-qPlainW)
 				block = append(block, strings.Repeat(" ", qIndent)+quoteStyledRight)
 			} else {
 				block = append(block, quoteStyled)
@@ -1814,24 +1817,15 @@ func outgoingRightIcon(lineIdx int, isTimestamp bool) string {
 		if isTimestamp {
 			return "╵"
 		}
-		if lineIdx == 0 {
-			return "╷"
-		}
 		return "│"
 	case "┃":
 		if isTimestamp {
 			return "╹"
 		}
-		if lineIdx == 0 {
-			return "╻"
-		}
 		return "┃"
 	case "║":
 		if isTimestamp {
 			return "╵"
-		}
-		if lineIdx == 0 {
-			return "╷"
 		}
 		return "║"
 	}
