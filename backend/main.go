@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
@@ -2633,6 +2634,14 @@ func (a *App) toWireMessage(evt *events.Message) WireMessage {
 	effective := effectiveMessage(evt.Message)
 	msg, mediaProto := a.wireMessagePayload(evt.Message, effective, chatID, info.IsGroup)
 
+	// Decrypt poll votes so the TUI can show which option(s) were selected.
+	if pu, ok := msg["pollUpdateMessage"].(map[string]any); ok {
+		if names := a.decryptPollVoteOptions(evt); names != nil {
+			pu["selectedOptionNames"] = names
+		}
+		msg["pollUpdateMessage"] = pu
+	}
+
 	key := WireKey{
 		ID:        info.ID,
 		RemoteJID: chatID,
@@ -2649,6 +2658,88 @@ func (a *App) toWireMessage(evt *events.Message) WireMessage {
 		PushName:         evt.Info.PushName,
 		MediaProto:       mediaProto,
 	}
+}
+
+// decryptPollVoteOptions decrypts an incoming poll vote and returns the
+// selected option name(s) by matching SHA-256 hashes against the original
+// poll's option list (fetched from our message DB).
+func (a *App) decryptPollVoteOptions(evt *events.Message) []string {
+	vote, err := a.client.DecryptPollVote(context.Background(), evt)
+	if err != nil || vote == nil {
+		return nil
+	}
+	if len(vote.GetSelectedOptions()) == 0 {
+		return []string{} // empty slice = removed vote
+	}
+	pu := evt.Message.GetPollUpdateMessage()
+	if pu == nil {
+		return nil
+	}
+	pollMsgID := pu.GetPollCreationMessageKey().GetID()
+	pollChatID := pu.GetPollCreationMessageKey().GetRemoteJID()
+	if pollChatID == "" {
+		pollChatID = evt.Info.Chat.String()
+	}
+	options := a.pollOptionNames(pollChatID, pollMsgID)
+	if options == nil {
+		return nil
+	}
+	var selected []string
+	for _, optHash := range vote.GetSelectedOptions() {
+		for _, name := range options {
+			h := sha256OfString(name)
+			if len(h) == len(optHash) {
+				match := true
+				for i := range h {
+					if h[i] != optHash[i] {
+						match = false
+						break
+					}
+				}
+				if match {
+					selected = append(selected, name)
+				}
+			}
+		}
+	}
+	return selected
+}
+
+func sha256OfString(s string) []byte {
+	h := sha256.Sum256([]byte(s))
+	return h[:]
+}
+
+// pollOptionNames looks up a poll creation message in the DB and returns its
+// option names, or nil if the message isn't found or has no options stored.
+func (a *App) pollOptionNames(chatID, msgID string) []string {
+	if chatID == "" || msgID == "" {
+		return nil
+	}
+	row := a.db.QueryRow(
+		`SELECT message_json FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
+		chatID, msgID,
+	)
+	var msgJSON string
+	if err := row.Scan(&msgJSON); err != nil {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(msgJSON), &payload); err != nil {
+		return nil
+	}
+	pc, _ := payload["pollCreationMessage"].(map[string]any)
+	if pc == nil {
+		return nil
+	}
+	raw, _ := pc["options"].([]any)
+	names := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			names = append(names, s)
+		}
+	}
+	return names
 }
 
 func (a *App) toWireMessageFromHistory(webMsg *waWeb.WebMessageInfo) WireMessage {
@@ -2770,6 +2861,29 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 		msg["reactionMessage"] = map[string]any{
 			"emoji":       rxn.GetText(),
 			"targetMsgID": rxn.GetKey().GetID(),
+		}
+	}
+	if pc := effective.GetPollCreationMessage(); pc != nil {
+		opts := make([]string, 0, len(pc.GetOptions()))
+		for _, o := range pc.GetOptions() {
+			opts = append(opts, o.GetOptionName())
+		}
+		msg["pollCreationMessage"] = map[string]any{
+			"name":    pc.GetName(),
+			"options": opts,
+		}
+	}
+	if pu := effective.GetPollUpdateMessage(); pu != nil {
+		key := pu.GetPollCreationMessageKey()
+		msg["pollUpdateMessage"] = map[string]any{
+			"pollChatID": key.GetRemoteJID(),
+			"pollMsgID":  key.GetID(),
+		}
+	} else if pu := raw.GetPollUpdateMessage(); pu != nil {
+		key := pu.GetPollCreationMessageKey()
+		msg["pollUpdateMessage"] = map[string]any{
+			"pollChatID": key.GetRemoteJID(),
+			"pollMsgID":  key.GetID(),
 		}
 	}
 	if protocol := protocolMessagePayload(raw, effective); protocol != nil {

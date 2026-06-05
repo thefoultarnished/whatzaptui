@@ -11,20 +11,23 @@ import (
 )
 
 type mainCacheKey struct {
-	active       string
-	themeName    string
-	msgCount     int
-	lastMsgID    string
-	scroll       int
-	w, h         int
-	atInput      string
-	replyToID    string
-	selectedMsg  string
-	contactCount int
-	identityVer  int
-	spinnerFrame int
-	inputH       int
-	pulseOn      bool
+	active          string
+	themeName       string
+	msgCount        int
+	lastMsgID       string
+	scroll          int
+	w, h            int
+	atInput         string
+	replyToID       string
+	selectedMsg     string
+	contactCount    int
+	identityVer     int
+	spinnerFrame    int
+	inputH          int
+	pulseOn         bool
+	timestampNewLine bool
+	mediaIconStyle  string
+	pointerIcon     string
 }
 type renderCache struct {
 	key    mainCacheKey
@@ -66,6 +69,7 @@ type Config struct {
 	NotificationsEnabled bool   `json:"notifications_enabled"`
 	TypingAnimationStyle string `json:"typing_animation_style,omitempty"`
 	MediaIconStyle       string `json:"media_icon_style,omitempty"`
+	TimestampNewLine     bool   `json:"timestamp_new_line,omitempty"`
 }
 
 var currentConfig Config

@@ -634,6 +634,38 @@ func renderMessageBody(m map[string]any) string {
 		}
 		return "[reaction]"
 	}
+	if v, ok := m["pollCreationMessage"].(map[string]any); ok {
+		name, _ := v["name"].(string)
+		tag := mediaTagStyle("poll").Render(mediaIconLabel("poll"))
+		if name != "" {
+			return tag + " " + name
+		}
+		return tag
+	}
+	if v, ok := m["pollUpdateMessage"].(map[string]any); ok {
+		names, hasNames := v["selectedOptionNames"]
+		if hasNames {
+			switch opts := names.(type) {
+			case []string:
+				if len(opts) == 0 {
+					return anomalyTagStyle.Render("[removed vote]")
+				}
+				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted: " + strings.Join(opts, ", ")
+			case []any:
+				strs := make([]string, 0, len(opts))
+				for _, o := range opts {
+					if s, ok := o.(string); ok {
+						strs = append(strs, s)
+					}
+				}
+				if len(strs) == 0 {
+					return anomalyTagStyle.Render("[removed vote]")
+				}
+				return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted: " + strings.Join(strs, ", ")
+			}
+		}
+		return mediaTagStyle("poll").Render(mediaIconLabel("poll")) + " voted"
+	}
 	if v, ok := m["protocolMessage"].(map[string]any); ok {
 		if label := renderProtocolMessage(v); label != "" {
 			return label

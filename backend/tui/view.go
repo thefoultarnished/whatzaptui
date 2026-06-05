@@ -153,21 +153,24 @@ func (x m) View() string {
 		replyToID = x.replyTo.Key.ID
 	}
 	cacheKey := mainCacheKey{
-		active:       x.active,
-		themeName:    currentConfig.ThemeName,
-		msgCount:     len(x.msgs[x.active]),
-		lastMsgID:    lastMsgID,
-		scroll:       x.scroll,
-		w:            x.w,
-		h:            x.h,
-		atInput:      "",
-		replyToID:    replyToID,
-		selectedMsg:  x.selectedMsgID,
-		contactCount: len(x.contacts) + len(x.names),
-		identityVer:  x.identityVersion,
-		spinnerFrame: x.spinnerFrame,
-		inputH:       extraInputH,
-		pulseOn:      x.replyPickMode && x.pulseOn,
+		active:           x.active,
+		themeName:        currentConfig.ThemeName,
+		msgCount:         len(x.msgs[x.active]),
+		lastMsgID:        lastMsgID,
+		scroll:           x.scroll,
+		w:                x.w,
+		h:                x.h,
+		atInput:          "",
+		replyToID:        replyToID,
+		selectedMsg:      x.selectedMsgID,
+		contactCount:     len(x.contacts) + len(x.names),
+		identityVer:      x.identityVersion,
+		spinnerFrame:     x.spinnerFrame,
+		inputH:           extraInputH,
+		pulseOn:          x.replyPickMode && x.pulseOn,
+		timestampNewLine: currentConfig.TimestampNewLine,
+		mediaIconStyle:   currentConfig.MediaIconStyle,
+		pointerIcon:      currentConfig.PointerIcon,
 	}
 	var main string
 	if x.themePicker.open {
@@ -1085,7 +1088,14 @@ func (x m) renderMain(w, h int) string {
 		}
 
 		isGroup := strings.HasSuffix(x.active, "@g.us")
+		isMediaMsg := isMediaWire(msg)
 		availableW := chatMessageWrapWidth(w, msgBody)
+		// In 2-line mode, non-media outgoing lines need room for the right icon.
+		// Reduce availableW so text wraps before the icon column; without this,
+		// long lines fill the full pane and indent collapses to 0 (left-aligned).
+		if msg.Key.FromMe && !isMediaMsg && currentConfig.TimestampNewLine {
+			availableW = max(8, availableW-runeDisplayWidth(receivedMsgIcon+" "))
+		}
 
 		wrappedSender := senderName
 		if !isGroup {
@@ -1097,7 +1107,6 @@ func (x m) renderMain(w, h int) string {
 		if !msg.Key.FromMe {
 			bodyColor = receivedText
 		}
-		isMediaMsg := isMediaWire(msg)
 
 		// For multi-line outgoing text messages, try re-wrapping at a slightly
 		// narrower width so the first (widest) line doesn't reach the right edge
@@ -1270,20 +1279,36 @@ func (x m) renderMain(w, h int) string {
 		}
 		outgoingBlockW := 0
 		outgoingBodyW := 0
+		// In 2-line mode the icon appears at a fixed right column on every body
+		// line and the timestamp line. Reserve its width in both suffix and body.
+		outgoingIconW := 0
+		if currentConfig.TimestampNewLine {
+			outgoingIconW = runeDisplayWidth(receivedMsgIcon + " ")
+		}
 		timeSuffixPlain := "  " + timeStr + receiptText + " "
+		if currentConfig.TimestampNewLine {
+			timeSuffixPlain += receivedMsgIcon + " "
+		}
 		timeSuffixW := runeDisplayWidth(timeSuffixPlain)
 		if msg.Key.FromMe {
 			for _, ln := range wrapped {
-				// Use lipgloss.Width to strip ANSI codes (media tag lines are pre-styled).
-				outgoingBodyW = max(outgoingBodyW, lipgloss.Width(ln)+1)
+				extra := outgoingIconW
+				if isMediaMsg {
+					extra = 0
+				}
+				spacing := 1
+				if currentConfig.TimestampNewLine && !isMediaMsg {
+					spacing = 2
+				}
+				outgoingBodyW = max(outgoingBodyW, lipgloss.Width(ln)+spacing+extra)
 			}
 			// Block must fit the widest text line OR the timestamp, whichever is wider.
 			lastLineW := runeDisplayWidth(wrapped[len(wrapped)-1] + " ")
-			if lastLineW+timeSuffixW <= max(1, w-2) {
-				// Timestamp fits on the last line.
+			if !currentConfig.TimestampNewLine && lastLineW+timeSuffixW <= max(1, w-2) {
+				// Timestamp fits on the last line (and 2-line mode is off).
 				outgoingBlockW = max(outgoingBodyW, lastLineW+timeSuffixW)
 			} else {
-				// Timestamp goes on its own line.
+				// Timestamp goes on its own line (too wide, or 2-line mode on).
 				outgoingBlockW = max(outgoingBodyW, timeSuffixW)
 			}
 			if reactionLinePlain != "" {
@@ -1346,14 +1371,17 @@ func (x m) renderMain(w, h int) string {
 					Bold(true)).
 					Render(senderName+": "))
 			} else if !msg.Key.FromMe && i == 0 && !isGroup {
+				isLast := i == len(wrapped)-1
 				lineParts = append(lineParts, applyBodyBG(lipgloss.NewStyle().
 					Foreground(receivedName)).
-					Render(receivedMsgIcon+" "))
+					Render(incomingLeftIcon(0, isLast)+" "))
 			} else if !msg.Key.FromMe && i > 0 && !isGroup {
+				isLast := i == len(wrapped)-1
 				var iconPad string
-				if receivedMsgIcon == "│" || receivedMsgIcon == "┃" || receivedMsgIcon == "║" {
-					iconPad = receivedMsgIcon + " "
-				} else {
+				switch receivedMsgIcon {
+				case "│", "┃", "║":
+					iconPad = incomingLeftIcon(i, isLast) + " "
+				default:
 					iconPad = strings.Repeat(" ", runeDisplayWidth(receivedMsgIcon+" "))
 				}
 				lineParts = append(lineParts, applyBodyBG(lipgloss.NewStyle().
@@ -1362,10 +1390,10 @@ func (x m) renderMain(w, h int) string {
 			}
 			lineParts = append(lineParts, renderStyledMessageText(ln, bodyStyle, tokenStyle, isMediaMsg, msgBody))
 			if msg.Key.FromMe && i == len(wrapped)-1 {
-				// Float timestamp to the right of the last line if it fits,
-				// otherwise it goes on its own line below.
+				// Float timestamp to the right of the last line if it fits and
+				// 2-line mode is off; otherwise it goes on its own line below.
 				lastW := runeDisplayWidth(ln + " ")
-				if lastW+timeSuffixW <= outgoingBlockW {
+				if !currentConfig.TimestampNewLine && lastW+timeSuffixW <= outgoingBlockW {
 					pad := outgoingBlockW - lastW - timeSuffixW
 					lineParts = append(lineParts, bodyStyle.Render(strings.Repeat(" ", pad+1)))
 					lineParts = append(lineParts, timeStyled)
@@ -1374,7 +1402,14 @@ func (x m) renderMain(w, h int) string {
 				lineParts = append(lineParts, timeStyled)
 			}
 			if msg.Key.FromMe {
-				lineParts = append(lineParts, " ")
+				if currentConfig.TimestampNewLine && !isMediaMsg {
+					contentW := lipgloss.Width(strings.Join(lineParts, ""))
+					fillW := max(0, outgoingBlockW-outgoingIconW-2-contentW)
+					lineParts = append([]string{strings.Repeat(" ", fillW)}, lineParts...)
+					lineParts = append(lineParts, "  ", lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, false)), " ")
+				} else {
+					lineParts = append(lineParts, " ")
+				}
 			}
 			bodyContent := strings.Join(lineParts, "")
 			if msg.Key.FromMe {
@@ -1386,17 +1421,23 @@ func (x m) renderMain(w, h int) string {
 					// with spaces (stripping ANSI for width measurement) to
 					// avoid lipgloss.Align quirks with pre-styled content.
 					visualW := lipgloss.Width(bodyContent)
-					targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1)
+					targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1-outgoingIconW)
 					if visualW < targetW {
 						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
+					}
+					if currentConfig.TimestampNewLine {
+						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, false)) + " "
 					}
 				} else if isMediaMsg {
 					// Last line of media (caption/name + timestamp):
 					// right-align within the full chat width.
 					visualW := lipgloss.Width(bodyContent)
-					targetW := max(1, w-2)
+					targetW := max(1, w-2-outgoingIconW)
 					if visualW < targetW {
 						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
+					}
+					if currentConfig.TimestampNewLine {
+						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, false)) + " "
 					}
 				} else {
 					bodyContent = indent + bodyContent
@@ -1411,11 +1452,16 @@ func (x m) renderMain(w, h int) string {
 			block = append(block, bodyContent)
 		}
 		// If timestamp didn't fit on the last line for outgoing, add it on its own line.
+		// In 2-line mode we always add it (inline was already skipped above).
 		if msg.Key.FromMe {
 			lastW := runeDisplayWidth(wrapped[len(wrapped)-1] + " ")
-			if lastW+timeSuffixW > outgoingBlockW {
+			if currentConfig.TimestampNewLine || lastW+timeSuffixW > outgoingBlockW {
 				pad := max(0, outgoingBlockW-timeSuffixW)
-				timeLine := indent + strings.Repeat(" ", pad) + timeStyled + " "
+				var iconRight string
+				if currentConfig.TimestampNewLine {
+					iconRight = lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(0, true)) + " "
+				}
+				timeLine := indent + strings.Repeat(" ", pad) + timeStyled + " " + iconRight
 				block = append(block, timeLine)
 			}
 		}
@@ -1720,6 +1766,76 @@ func padRight(s string, n int) string {
 		return b.String()
 	}
 	return s + strings.Repeat(" ", n-w)
+}
+
+// incomingLeftIcon returns the left-side icon glyph for a given line of a
+// received message. Pipe-like icons use half-height box-drawing chars so each
+// message forms a self-contained capsule: ╷ on the first line (open at top),
+// │ on middle lines, ╵ on the last body line (open at bottom). Single-line
+// messages use ╷ only — adjacent ╷ chars don't visually connect because each
+// leaves the cell's top half empty, creating a gap between messages.
+func incomingLeftIcon(lineIdx int, isLastLine bool) string {
+	switch receivedMsgIcon {
+	case "│":
+		if lineIdx == 0 {
+			return "╷"
+		}
+		if isLastLine {
+			return "╵"
+		}
+		return "│"
+	case "┃":
+		if lineIdx == 0 {
+			return "╻"
+		}
+		if isLastLine {
+			return "╹"
+		}
+		return "┃"
+	case "║":
+		if lineIdx == 0 {
+			return "╷"
+		}
+		if isLastLine {
+			return "╵"
+		}
+		return "║"
+	}
+	return receivedMsgIcon
+}
+
+// outgoingRightIcon returns the right-side icon glyph for a given line of an
+// outgoing message in 2-line mode. Pipe-like icons use half-height box-drawing
+// chars (╷ top, ╵ bottom) so each message forms a self-contained capsule and
+// adjacent messages' bars don't appear connected. Other icons are used as-is.
+func outgoingRightIcon(lineIdx int, isTimestamp bool) string {
+	switch receivedMsgIcon {
+	case "│":
+		if isTimestamp {
+			return "╵"
+		}
+		if lineIdx == 0 {
+			return "╷"
+		}
+		return "│"
+	case "┃":
+		if isTimestamp {
+			return "╹"
+		}
+		if lineIdx == 0 {
+			return "╻"
+		}
+		return "┃"
+	case "║":
+		if isTimestamp {
+			return "╵"
+		}
+		if lineIdx == 0 {
+			return "╷"
+		}
+		return "║"
+	}
+	return receivedMsgIcon
 }
 
 func renderShine(text string, baseStyle, shineStyle lipgloss.Style, frame int) string {

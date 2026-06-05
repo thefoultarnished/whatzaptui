@@ -20,6 +20,7 @@ var settingsDefs = []struct {
 	{"Taskbar flash", false, func() bool { return currentConfig.FlashTaskbar }, func(v bool) { currentConfig.FlashTaskbar = v }, nil},
 	{"Notifications", false, func() bool { return currentConfig.NotificationsEnabled }, func(v bool) { currentConfig.NotificationsEnabled = v }, nil},
 	{"Typing animation", true, nil, nil, func() string { return currentConfig.TypingAnimationStyle }},
+	{"Timestamp 2-line", false, func() bool { return currentConfig.TimestampNewLine }, func(v bool) { currentConfig.TimestampNewLine = v }, nil},
 	{"Media icons", true, nil, nil, func() string {
 		if currentConfig.MediaIconStyle == "nerd" {
 			return "nerd"
