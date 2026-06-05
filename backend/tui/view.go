@@ -1286,9 +1286,7 @@ func (x m) renderMain(w, h int) string {
 			outgoingIconW = runeDisplayWidth(receivedMsgIcon + " ")
 		}
 		timeSuffixPlain := "  " + timeStr + receiptText + " "
-		if currentConfig.TimestampNewLine {
-			timeSuffixPlain += receivedMsgIcon + " "
-		}
+
 		timeSuffixW := runeDisplayWidth(timeSuffixPlain)
 		if msg.Key.FromMe {
 			for _, ln := range wrapped {
@@ -1401,7 +1399,7 @@ func (x m) renderMain(w, h int) string {
 					lineParts = append(lineParts, bodyStyle.Render(strings.Repeat(" ", pad+1)))
 					lineParts = append(lineParts, timeStyled)
 				}
-			} else if !msg.Key.FromMe && i == len(wrapped)-1 {
+			} else if !msg.Key.FromMe && i == len(wrapped)-1 && !currentConfig.TimestampNewLine {
 				lineParts = append(lineParts, timeStyled)
 			}
 			if msg.Key.FromMe {
@@ -1409,7 +1407,7 @@ func (x m) renderMain(w, h int) string {
 					contentW := lipgloss.Width(strings.Join(lineParts, ""))
 					fillW := max(0, outgoingBlockW-outgoingIconW-2-contentW)
 					lineParts = append([]string{strings.Repeat(" ", fillW)}, lineParts...)
-					lineParts = append(lineParts, "  ", lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, false)), " ")
+					lineParts = append(lineParts, "  ", lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)), " ")
 				} else {
 					lineParts = append(lineParts, " ")
 				}
@@ -1425,11 +1423,14 @@ func (x m) renderMain(w, h int) string {
 					// avoid lipgloss.Align quirks with pre-styled content.
 					visualW := lipgloss.Width(bodyContent)
 					targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1-outgoingIconW)
+					if currentConfig.TimestampNewLine {
+						targetW = max(1, w-2-outgoingIconW)
+					}
 					if visualW < targetW {
 						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
 					}
 					if currentConfig.TimestampNewLine {
-						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, false)) + " "
+						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)) + " "
 					}
 				} else if isMediaMsg {
 					// Last line of media (caption/name + timestamp):
@@ -1440,7 +1441,7 @@ func (x m) renderMain(w, h int) string {
 						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
 					}
 					if currentConfig.TimestampNewLine {
-						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, false)) + " "
+						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)) + " "
 					}
 				} else {
 					bodyContent = indent + bodyContent
@@ -1454,19 +1455,24 @@ func (x m) renderMain(w, h int) string {
 			}
 			block = append(block, bodyContent)
 		}
-		// If timestamp didn't fit on the last line for outgoing, add it on its own line.
-		// In 2-line mode we always add it (inline was already skipped above).
 		if msg.Key.FromMe {
 			lastW := runeDisplayWidth(wrapped[len(wrapped)-1] + " ")
 			if currentConfig.TimestampNewLine || lastW+timeSuffixW > outgoingBlockW {
 				pad := max(0, outgoingBlockW-timeSuffixW)
-				var iconRight string
-				if currentConfig.TimestampNewLine {
-					iconRight = lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(0, true)) + " "
-				}
-				timeLine := indent + strings.Repeat(" ", pad) + timeStyled + " " + iconRight
+				timeLine := indent + strings.Repeat(" ", pad) + timeStyled + " "
 				block = append(block, timeLine)
 			}
+		} else if currentConfig.TimestampNewLine {
+			var prefix string
+			if isGroup {
+				prefixWidth := runeDisplayWidth(senderName + ": ")
+				prefix = strings.Repeat(" ", prefixWidth)
+			} else {
+				icon := strings.Repeat(" ", runeDisplayWidth(receivedMsgIcon+" "))
+				prefix = applyBodyBG(lipgloss.NewStyle().Foreground(receivedName)).Render(icon)
+			}
+			timeLine := prefix + timeStyled
+			block = append(block, timeLine)
 		}
 		if reactionLine != "" {
 			reactionOffset := max(0, lastBodyPlainW-runeDisplayWidth(reactionLinePlain))
