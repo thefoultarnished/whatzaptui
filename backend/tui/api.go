@@ -550,7 +550,7 @@ func getWhitelist(c *http.Client, base string) tea.Cmd {
 	}
 }
 
-func downloadMedia(c *http.Client, base, chatID, msgID string) tea.Cmd {
+func downloadMedia(c *http.Client, base, chatID, msgID string, isPreview bool) tea.Cmd {
 	return func() tea.Msg {
 		q := url.Values{}
 		q.Set("chatId", chatID)
@@ -560,23 +560,23 @@ func downloadMedia(c *http.Client, base, chatID, msgID string) tea.Cmd {
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
-			return mediaDownloadMsg{err: err}
+			return mediaDownloadMsg{chatID: chatID, msgID: msgID, err: err, isPreview: isPreview}
 		}
 		defer res.Body.Close()
 		if res.StatusCode/100 != 2 {
-			return mediaDownloadMsg{err: apiErrorFromResponse(res, "failed to download media")}
+			return mediaDownloadMsg{chatID: chatID, msgID: msgID, err: apiErrorFromResponse(res, "failed to download media"), isPreview: isPreview}
 		}
 		var out struct {
 			Path  string `json:"path"`
 			Error string `json:"error"`
 		}
 		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-			return mediaDownloadMsg{err: err}
+			return mediaDownloadMsg{chatID: chatID, msgID: msgID, err: err, isPreview: isPreview}
 		}
 		if out.Error != "" {
-			return mediaDownloadMsg{err: fmt.Errorf("%s", out.Error)}
+			return mediaDownloadMsg{chatID: chatID, msgID: msgID, err: fmt.Errorf("%s", out.Error), isPreview: isPreview}
 		}
-		return mediaDownloadMsg{path: out.Path}
+		return mediaDownloadMsg{chatID: chatID, msgID: msgID, path: out.Path, isPreview: isPreview}
 	}
 }
 

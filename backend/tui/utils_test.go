@@ -161,7 +161,7 @@ func TestAPICommandsSurfaceBackendErrors(t *testing.T) {
 	if msg := getWhitelist(client, srv.URL)(); !strings.Contains(msg.(whitelistLoadMsg).err.Error(), "500 Internal Server Error: db offline") {
 		t.Fatalf("unexpected whitelist error: %v", msg.(whitelistLoadMsg).err)
 	}
-	if msg := downloadMedia(client, srv.URL, "chat-1", "msg&1")(); !strings.Contains(msg.(mediaDownloadMsg).err.Error(), "404 Not Found: media not found") {
+	if msg := downloadMedia(client, srv.URL, "chat-1", "msg&1", false)(); !strings.Contains(msg.(mediaDownloadMsg).err.Error(), "404 Not Found: media not found") {
 		t.Fatalf("unexpected media error: %v", msg.(mediaDownloadMsg).err)
 	}
 	if msg := setName(client, srv.URL, "", "Alex")(); !strings.Contains(msg.(whitelistSetMsg).err.Error(), "400 Bad Request: phone is required") {

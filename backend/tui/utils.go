@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"image"
 	"io"
 	"log"
 	"net/http"
@@ -777,7 +778,7 @@ func renderUnknownTag(label string) string {
 // the glyph is a visual marker. In the default text mode it returns the
 // plain bracketed text (e.g. "[image]").
 func mediaIconLabel(kind string) string {
-	if currentConfig.MediaIconStyle == "nerd" {
+	if currentConfig.MediaIconStyle == "nerd" || currentConfig.MediaViewStyle == "glyph" || (currentConfig.MediaViewStyle == "pixel" && kind != "image") {
 		if g := nerdIconFor(kind); g != "" {
 			return g + " " + kind
 		}
@@ -1317,4 +1318,53 @@ func stripSnippetTags(snippet string, maxW int) string {
 		return string(runes[:maxW-1]) + "…"
 	}
 	return plain
+}
+
+func renderPixelArt(localPath string, maxW int) string {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return ""
+	}
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	if width == 0 || height == 0 {
+		return ""
+	}
+	w := maxW
+	if w > 36 {
+		w = 36
+	}
+	if w < 10 {
+		w = 10
+	}
+	h := (w * height) / width
+	h = (h / 2) * 2
+	if h < 2 {
+		h = 2
+	}
+	var sb strings.Builder
+	for cy := 0; cy < h/2; cy++ {
+		for cx := 0; cx < w; cx++ {
+			srcX := (cx * width) / w
+			srcYTop := (cy * 2 * height) / h
+			srcYBot := ((cy*2 + 1) * height) / h
+			cTop := img.At(bounds.Min.X+srcX, bounds.Min.Y+srcYTop)
+			cBot := img.At(bounds.Min.X+srcX, bounds.Min.Y+srcYBot)
+			r1, g1, b1, _ := cTop.RGBA()
+			r2, g2, b2, _ := cBot.RGBA()
+			r1, g1, b1 = r1/257, g1/257, b1/257
+			r2, g2, b2 = r2/257, g2/257, b2/257
+			sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m", r1, g1, b1, r2, g2, b2))
+		}
+		if cy < h/2-1 {
+			sb.WriteRune('\n')
+		}
+	}
+	return sb.String()
 }

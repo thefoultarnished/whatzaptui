@@ -14,6 +14,19 @@ import (
 )
 
 func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	resModel, cmd := x.updateInner(msg)
+	resM, ok := resModel.(m)
+	if !ok {
+		return resModel, cmd
+	}
+	var bgCmd tea.Cmd
+	if currentConfig.MediaViewStyle == "pixel" && resM.active != "" {
+		bgCmd = resM.triggerBackgroundDownloads()
+	}
+	return resM, tea.Batch(cmd, bgCmd)
+}
+
+func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		x.w, x.h = v.Width, v.Height
@@ -560,7 +573,21 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, x.setTopBar("Attached: " + label)
 	case mediaDownloadMsg:
 		if v.err != nil {
+			if x.downloadingMedia != nil {
+				delete(x.downloadingMedia, v.msgID)
+			}
 			return x, x.setTopBar(v.err.Error())
+		}
+		if x.downloadingMedia != nil {
+			delete(x.downloadingMedia, v.msgID)
+		}
+		if v.isPreview {
+			if x.downloadedMedia == nil {
+				x.downloadedMedia = make(map[string]string)
+			}
+			x.downloadedMedia[v.msgID] = v.path
+			x.mainCache.result = ""
+			return x, nil
 		}
 		return x, openFile(v.path)
 	case fileOpenMsg:
@@ -988,7 +1015,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.fontTestOpen {
+	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.fontTestOpen {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -1139,7 +1166,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if msgs[i].MediaProto != "" {
 					return x, tea.Batch(
 						x.setTopBar("Opening media..."),
-						downloadMedia(x.client, x.baseURL, x.active, msgs[i].Key.ID),
+						downloadMedia(x.client, x.baseURL, x.active, msgs[i].Key.ID, false),
 					)
 				}
 			}
@@ -1279,6 +1306,9 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				case "Media icons":
 					x.mediaIconPicker = picker{title: "Media Icons", items: buildMediaIconPickerItems()}
 					x.mediaIconPicker.Open(currentConfig.MediaIconStyle)
+				case "Media view":
+					x.mediaViewPicker = picker{title: "Media View", items: buildMediaViewPickerItems()}
+					x.mediaViewPicker.Open(currentConfig.MediaViewStyle)
 				default:
 					x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
 					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
@@ -1323,6 +1353,25 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.mainCache.result = ""
 		} else {
 			x.mediaIconPicker.Close(false)
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
+	if x.mediaViewPicker.open {
+		action, done := x.mediaViewPicker.Handle(k)
+		if !done {
+			currentConfig.MediaViewStyle = x.mediaViewPicker.SelectedKey()
+			x.mainCache.result = ""
+		} else if action == "confirm" {
+			currentConfig.MediaViewStyle = x.mediaViewPicker.Close(true)
+			saveConfig()
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		} else {
+			x.mediaViewPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
 			x.mainCache.result = ""
@@ -1602,7 +1651,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 						x.mainCache.result = ""
 						return x, tea.Batch(
 							x.setTopBar("Opening media..."),
-							downloadMedia(x.client, x.baseURL, x.active, cp.Key.ID),
+							downloadMedia(x.client, x.baseURL, x.active, cp.Key.ID, false),
 						)
 					}
 					return x, x.setTopBar("No media on this message")
@@ -2875,4 +2924,46 @@ func (x *m) maybeLoadOlder() tea.Cmd {
 	}
 	x.loadingOlder[chatID] = true
 	return getMsgsBefore(x.client, x.baseURL, chatID, 100, oldest)
+}
+
+func (x *m) triggerBackgroundDownloads() tea.Cmd {
+	if x.active == "" {
+		return nil
+	}
+	items := x.msgs[x.active]
+	needed := x.h + x.scroll
+	var cmds []tea.Cmd
+	if x.downloadingMedia == nil {
+		x.downloadingMedia = make(map[string]bool)
+	}
+	if x.downloadedMedia == nil {
+		x.downloadedMedia = make(map[string]string)
+	}
+	totalLines := 0
+	for i := len(items) - 1; i >= 0; i-- {
+		msg := items[i]
+		isImg := false
+		if msg.Message != nil {
+			if _, ok := msg.Message["imageMessage"]; ok {
+				isImg = true
+			}
+		}
+		if isImg {
+			msgID := msg.Key.ID
+			if _, downloaded := x.downloadedMedia[msgID]; !downloaded {
+				if _, downloading := x.downloadingMedia[msgID]; !downloading {
+					x.downloadingMedia[msgID] = true
+					cmds = append(cmds, downloadMedia(x.client, x.baseURL, x.active, msgID, true))
+				}
+			}
+		}
+		totalLines += msgRowHeight(msg, x.w)
+		if totalLines >= needed {
+			break
+		}
+	}
+	if len(cmds) > 0 {
+		return tea.Batch(cmds...)
+	}
+	return nil
 }

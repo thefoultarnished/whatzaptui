@@ -171,6 +171,7 @@ func (x m) View() string {
 		timestampNewLine: currentConfig.TimestampNewLine,
 		mediaIconStyle:   currentConfig.MediaIconStyle,
 		pointerIcon:      currentConfig.PointerIcon,
+		mediaViewStyle:   currentConfig.MediaViewStyle,
 	}
 	var main string
 	if x.themePicker.open {
@@ -181,6 +182,8 @@ func (x m) View() string {
 		main = x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH)
 	} else if x.mediaIconPicker.open {
 		main = x.mediaIconPicker.Render(rightW, mainH)
+	} else if x.mediaViewPicker.open {
+		main = x.mediaViewPicker.Render(rightW, mainH)
 	} else if x.helpPicker.open {
 		main = x.helpPicker.RenderHelp(rightW, mainH)
 	} else if x.settingsPicker.open {
@@ -1101,7 +1104,38 @@ func (x m) renderMain(w, h int) string {
 		if !isGroup {
 			wrappedSender = receivedMsgIcon
 		}
-		wrapped := wrapMessageLines(msgBody, availableW, msg.Key.FromMe, wrappedSender)
+		isImageMsg := false
+		var imgPayload map[string]any
+		if msg.Message != nil {
+			if p, ok := msg.Message["imageMessage"].(map[string]any); ok {
+				isImageMsg = true
+				imgPayload = p
+			}
+		}
+		numPixelLines := 0
+		var wrapped []string
+		if currentConfig.MediaViewStyle == "pixel" && isImageMsg {
+			localPath := x.downloadedMedia[msg.Key.ID]
+			if localPath != "" {
+				pixelArt := renderPixelArt(localPath, availableW)
+				var pixelLines []string
+				if pixelArt != "" {
+					pixelLines = strings.Split(pixelArt, "\n")
+				} else {
+					pixelLines = []string{"[image]"}
+				}
+				numPixelLines = len(pixelLines)
+				wrapped = pixelLines
+			} else {
+				wrapped = []string{"[downloading preview...]"}
+			}
+			if caption, _ := imgPayload["caption"].(string); caption != "" {
+				wrappedCaption := wrapMessageLines(caption, availableW, msg.Key.FromMe, wrappedSender)
+				wrapped = append(wrapped, wrappedCaption...)
+			}
+		} else {
+			wrapped = wrapMessageLines(msgBody, availableW, msg.Key.FromMe, wrappedSender)
+		}
 
 		bodyColor := sentText
 		if !msg.Key.FromMe {
@@ -1389,7 +1423,11 @@ func (x m) renderMain(w, h int) string {
 					Foreground(receivedName)).
 					Render(iconPad))
 			}
-			lineParts = append(lineParts, renderStyledMessageText(ln, bodyStyle, tokenStyle, isMediaMsg, msgBody))
+			if currentConfig.MediaViewStyle == "pixel" && isImageMsg && i < numPixelLines {
+				lineParts = append(lineParts, ln)
+			} else {
+				lineParts = append(lineParts, renderStyledMessageText(ln, bodyStyle, tokenStyle, isMediaMsg, msgBody))
+			}
 			if msg.Key.FromMe && i == len(wrapped)-1 {
 				// Float timestamp to the right of the last line if it fits and
 				// 2-line mode is off; otherwise it goes on its own line below.

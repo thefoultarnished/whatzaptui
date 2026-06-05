@@ -27,6 +27,12 @@ var settingsDefs = []struct {
 		}
 		return "text"
 	}},
+	{"Media view", true, nil, nil, func() string {
+		if currentConfig.MediaViewStyle == "" {
+			return "text"
+		}
+		return currentConfig.MediaViewStyle
+	}},
 }
 
 var mediaIconList = []struct {
@@ -36,9 +42,25 @@ var mediaIconList = []struct {
 	{"nerd", "Nerd  " + nerdIconFor("image") + " " + nerdIconFor("video") + " " + nerdIconFor("file") + " " + nerdIconFor("audio")},
 }
 
+var mediaViewList = []struct {
+	key, label string
+}{
+	{"text", "Text  [image]"},
+	{"glyph", "Glyph  " + nerdIconFor("image") + " image"},
+	{"pixel", "Pixel  inline art"},
+}
+
 func buildMediaIconPickerItems() []pickerItem {
 	items := make([]pickerItem, len(mediaIconList))
 	for i, e := range mediaIconList {
+		items[i] = pickerItem{key: e.key, label: e.label}
+	}
+	return items
+}
+
+func buildMediaViewPickerItems() []pickerItem {
+	items := make([]pickerItem, len(mediaViewList))
+	for i, e := range mediaViewList {
 		items[i] = pickerItem{key: e.key, label: e.label}
 	}
 	return items

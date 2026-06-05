@@ -28,6 +28,7 @@ type mainCacheKey struct {
 	timestampNewLine bool
 	mediaIconStyle  string
 	pointerIcon     string
+	mediaViewStyle  string
 }
 type renderCache struct {
 	key    mainCacheKey
@@ -70,6 +71,7 @@ type Config struct {
 	TypingAnimationStyle string `json:"typing_animation_style,omitempty"`
 	MediaIconStyle       string `json:"media_icon_style,omitempty"`
 	TimestampNewLine     bool   `json:"timestamp_new_line,omitempty"`
+	MediaViewStyle       string `json:"media_view_style,omitempty"`
 }
 
 var currentConfig Config
@@ -172,6 +174,7 @@ type m struct {
 	settingsPicker                           picker
 	typingAnimationPicker                    picker
 	mediaIconPicker                          picker
+	mediaViewPicker                          picker
 	fontTestOpen                             bool
 	fileBrowserOpen                          bool
 	fileBrowserDir                           string
@@ -219,6 +222,8 @@ type m struct {
 	mainCache                                *renderCache
 	inputBuf                                 string
 	inputFlushScheduled                      bool
+	downloadedMedia                          map[string]string
+	downloadingMedia                         map[string]bool
 }
 
 type initMsg struct {
@@ -310,8 +315,11 @@ type spinnerTickMsg struct{}
 type flushInputMsg struct{}
 type composerSendMsg struct{ seq int }
 type mediaDownloadMsg struct {
-	path string
-	err  error
+	chatID    string
+	msgID     string
+	path      string
+	err       error
+	isPreview bool
 }
 type fileOpenMsg struct {
 	path string
