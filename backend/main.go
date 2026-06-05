@@ -1629,6 +1629,14 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 	updated := 0
 	total := 0
 	a.mu.Lock()
+	a.state.Contacts = make(map[string]Contact)
+	_, _ = a.db.Exec(`DELETE FROM contacts`)
+	_, _ = a.db.Exec(`DELETE FROM chats WHERE conv_ts = 0 AND id NOT LIKE '%@g.us'`)
+	for id, ch := range a.state.Chats {
+		if ch.ConversationTimestamp == 0 && !strings.HasSuffix(id, "@g.us") {
+			delete(a.state.Chats, id)
+		}
+	}
 	for jid, info := range allContacts {
 		raw := strings.TrimSpace(jid.String())
 		if raw == "" {
@@ -1637,15 +1645,28 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 		total++
 		cid := a.canonicalizeChatID(raw)
 
-		name := strings.TrimSpace(info.PushName)
+		fullName := strings.TrimSpace(info.FullName)
+		firstName := strings.TrimSpace(info.FirstName)
+		businessName := strings.TrimSpace(info.BusinessName)
+		pushName := strings.TrimSpace(info.PushName)
+
+		ch, hasChat := a.state.Chats[cid]
+		if hasChat && ch.ConversationTimestamp == 0 {
+			hasChat = false
+		}
+		if fullName == "" && firstName == "" && businessName == "" && !hasChat {
+			continue
+		}
+
+		name := fullName
 		if name == "" {
-			name = strings.TrimSpace(info.FullName)
+			name = firstName
 		}
 		if name == "" {
-			name = strings.TrimSpace(info.FirstName)
+			name = businessName
 		}
 		if name == "" {
-			name = strings.TrimSpace(info.BusinessName)
+			name = pushName
 		}
 
 		oldContact := a.state.Contacts[cid]
@@ -3227,15 +3248,29 @@ func (a *App) bootstrapFromStore() {
 			continue
 		}
 		cid := a.canonicalizeChatID(raw)
-		name := strings.TrimSpace(info.PushName)
+
+		fullName := strings.TrimSpace(info.FullName)
+		firstName := strings.TrimSpace(info.FirstName)
+		businessName := strings.TrimSpace(info.BusinessName)
+		pushName := strings.TrimSpace(info.PushName)
+
+		ch, hasChat := a.state.Chats[cid]
+		if hasChat && ch.ConversationTimestamp == 0 {
+			hasChat = false
+		}
+		if fullName == "" && firstName == "" && businessName == "" && !hasChat {
+			continue
+		}
+
+		name := fullName
 		if name == "" {
-			name = strings.TrimSpace(info.FullName)
+			name = firstName
 		}
 		if name == "" {
-			name = strings.TrimSpace(info.FirstName)
+			name = businessName
 		}
 		if name == "" {
-			name = strings.TrimSpace(info.BusinessName)
+			name = pushName
 		}
 
 		ct := a.state.Contacts[cid]
@@ -3245,12 +3280,12 @@ func (a *App) bootstrapFromStore() {
 		}
 		a.state.Contacts[cid] = ct
 
-		ch := a.state.Chats[cid]
-		ch.ID = cid
-		if name != "" && ch.Name == "" {
-			ch.Name = name
+		if ch.ID != "" {
+			if name != "" && ch.Name == "" {
+				ch.Name = name
+				a.state.Chats[cid] = ch
+			}
 		}
-		a.state.Chats[cid] = ch
 		seeded++
 	}
 	a.mu.Unlock()

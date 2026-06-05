@@ -1036,6 +1036,9 @@ func (x m) renderMain(w, h int) string {
 				rIsMe := msg.Key.FromMe
 				sid := x.senderIDForMsg(msg)
 				fullName := x.nameFor(sid)
+				if fullName == num(sid) && msg.PushName != "" {
+					fullName = msg.PushName
+				}
 				senderNum := num(sid)
 				isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
 				if !msg.Key.FromMe {
@@ -1076,7 +1079,7 @@ func (x m) renderMain(w, h int) string {
 		}
 		senderName := "Me"
 		if !msg.Key.FromMe {
-			senderName = truncate(x.senderNameForMsg(msg), 12)
+			senderName = truncate(x.senderNameForMsg(msg), 40)
 		}
 
 		isFlashing := !msg.Key.FromMe && msg.Key.ID != "" && x.flashUntil[msg.Key.ID].After(time.Now())
@@ -1685,7 +1688,12 @@ func (x m) senderIDForMsg(msg wireMsg) string {
 }
 
 func (x m) senderNameForMsg(msg wireMsg) string {
-	return x.nameFor(x.senderIDForMsg(msg))
+	sid := x.senderIDForMsg(msg)
+	name := x.nameFor(sid)
+	if name == num(sid) && msg.PushName != "" {
+		return msg.PushName
+	}
+	return name
 }
 
 func (x m) msgIDAtLine(lineIdx, w, h int) string {
@@ -1713,7 +1721,7 @@ func (x m) msgIDAtLine(lineIdx, w, h int) string {
 		availableW := chatMessageWrapWidth(w, mb)
 		senderName := "Me"
 		if !msg.Key.FromMe {
-			senderName = truncate(x.senderNameForMsg(msg), 12)
+			senderName = truncate(x.senderNameForMsg(msg), 40)
 		}
 		wrapped := wrapMessageLines(mb, availableW, msg.Key.FromMe, senderName)
 		hasQuote := false

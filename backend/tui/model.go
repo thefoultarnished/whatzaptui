@@ -109,6 +109,7 @@ type wireMsg struct {
 	MessageTimestamp int64          `json:"messageTimestamp"`
 	MediaProto       string         `json:"mediaProto,omitempty"`
 	ReceiptStatus    string         `json:"receiptStatus,omitempty"`
+	PushName         string         `json:"pushName,omitempty"`
 }
 type env struct {
 	Type    string          `json:"type"`
