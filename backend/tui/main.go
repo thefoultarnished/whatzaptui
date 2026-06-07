@@ -40,6 +40,7 @@ func main() {
 			msgs:             map[string][]wireMsg{},
 			loadingOlder:     map[string]bool{},
 			noMoreOlder:      map[string]bool{},
+			uploadProgress:   map[string]int{},
 			whitelist:        map[string]string{},
 			names:            map[string]string{},
 			groupPreviews:    map[string]groupPreview{},

@@ -427,7 +427,24 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.mainCache != nil {
 			x.mainCache.result = ""
 		}
+	case fileProgressMsg:
+		if x.uploadProgress == nil {
+			x.uploadProgress = map[string]int{}
+		}
+		x.uploadProgress[v.pendingID] = v.pct
+		if x.uploadChans == nil {
+			x.uploadChans = map[string]chan fileProgressMsg{}
+		}
+		ch, ok := x.uploadChans[v.pendingID]
+		if !ok {
+			return x, nil
+		}
+		return x, listenFileProgress(ch)
 	case sentMsg:
+		if v.pendingID != "" {
+			delete(x.uploadProgress, v.pendingID)
+			delete(x.uploadChans, v.pendingID)
+		}
 		if v.err != nil {
 			if v.pendingID != "" {
 				if msgs, ok := x.msgs[v.chatID]; ok {
@@ -630,9 +647,35 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			path := x.pendingAttachmentPath
+			fileName := filepath.Base(path)
+			pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+			x.msgs[x.active] = append(x.msgs[x.active],
+				optimisticOutgoingMediaMessage(x.active, kind, fileName, txt, pendingID))
+			if x.mainCache != nil {
+				x.mainCache.result = ""
+			}
+			now := time.Now()
+			for i := range x.chats {
+				if x.chats[i].ID == x.active {
+					x.chats[i].ConversationTimestamp = now.Unix()
+					break
+				}
+			}
+			sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+			x.scroll = 0
+			x.msgActivityUntil = time.Now().Add(3 * time.Second)
+			x.msgActivityType = "sent"
 			x.clearPendingAttachment()
 			x.replyTo = nil
-			return x, sendFile(x.client, x.baseURL, x.active, kind, path, txt, "")
+			progressCh := make(chan fileProgressMsg, 16)
+			if x.uploadChans == nil {
+				x.uploadChans = map[string]chan fileProgressMsg{}
+			}
+			x.uploadChans[pendingID] = progressCh
+			return x, tea.Batch(
+				sendFile(x.client, x.baseURL, x.active, kind, path, txt, pendingID, progressCh),
+				listenFileProgress(progressCh),
+			)
 		}
 		if !hasVisibleText(txt) {
 			return x, nil
@@ -992,6 +1035,35 @@ func optimisticOutgoingMessage(chatID, text, pendingID string, replyTo *wireMsg)
 		return msg
 	}
 	msg.Message = map[string]any{"conversation": text}
+	return msg
+}
+
+// optimisticOutgoingMediaMessage builds the placeholder wireMsg shown in
+// the chat the moment the user hits send on an attachment. The TUI inserts
+// it before kicking off the multipart upload; the real response from
+// /messages/send-file replaces it by pendingID.
+func optimisticOutgoingMediaMessage(chatID, kind, fileName, caption, pendingID string) wireMsg {
+	payload := map[string]any{
+		"fileName": fileName,
+		"caption":  caption,
+	}
+	message := map[string]any{}
+	switch kind {
+	case "image":
+		message["imageMessage"] = payload
+	case "video":
+		message["videoMessage"] = payload
+	default:
+		message["documentMessage"] = payload
+	}
+	msg := wireMsg{
+		Message:          message,
+		MessageTimestamp: time.Now().Unix(),
+		ReceiptStatus:    "sending",
+	}
+	msg.Key.ID = pendingID
+	msg.Key.RemoteJID = chatID
+	msg.Key.FromMe = true
 	return msg
 }
 
@@ -1693,9 +1765,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return x, tea.Batch(
 						x.setTopBar("Message deleted"),
-						postJSON(x.client, x.baseURL+"/messages/delete", map[string]string{
+						postJSON(x.client, x.baseURL+"/messages/delete", map[string]any{
 							"chatId":    x.active,
 							"messageId": cp.Key.ID,
+							// A-16: backend's messages table PK is
+							// (chat_id, id, from_me); delete must
+							// include from_me or it would wipe both
+							// the incoming and outgoing row when the
+							// same chat has two messages with the
+							// same id. The TUI already gates on
+							// cp.Key.FromMe above, so this is always
+							// true at the call site.
+							"fromMe": cp.Key.FromMe,
 						}, nil),
 					)
 				}
@@ -2194,7 +2275,7 @@ func (x m) handleLeftInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.leftInput = ""
 		x.leftInputFocused = false
 	case tea.KeyBackspace:
-		if x.leftInput != "" {
+		if x.leftInput != "/" && x.leftInput != "" {
 			x.leftInput = graphemeDeleteLast(x.leftInput)
 		}
 	case tea.KeyEnter:
@@ -2392,8 +2473,34 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 				return x.setTopBar(err.Error()), true
 			}
 		}
+		fileName := filepath.Base(cmd.path)
+		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+		x.msgs[x.active] = append(x.msgs[x.active],
+			optimisticOutgoingMediaMessage(x.active, kind, fileName, cmd.caption, pendingID))
+		if x.mainCache != nil {
+			x.mainCache.result = ""
+		}
+		now := time.Now()
+		for i := range x.chats {
+			if x.chats[i].ID == x.active {
+				x.chats[i].ConversationTimestamp = now.Unix()
+				break
+			}
+		}
+		sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+		x.scroll = 0
+		x.msgActivityUntil = time.Now().Add(3 * time.Second)
+		x.msgActivityType = "sent"
 		x.replyTo = nil
-		return sendFile(x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, ""), true
+		progressCh := make(chan fileProgressMsg, 16)
+		if x.uploadChans == nil {
+			x.uploadChans = map[string]chan fileProgressMsg{}
+		}
+		x.uploadChans[pendingID] = progressCh
+		return tea.Batch(
+			sendFile(x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, pendingID, progressCh),
+			listenFileProgress(progressCh),
+		), true
 	case txt == "/emoji":
 		x.openEmojiPicker()
 		return nil, true

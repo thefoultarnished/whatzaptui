@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -318,6 +322,142 @@ func TestFileOpenMsgReportsFailure(t *testing.T) {
 	}
 }
 
+func TestSendFileBuildsMultipartCorrectly(t *testing.T) {
+	// Create a real file in a temp dir to be the "attachment".
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "photo.png")
+	wantContent := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x01, 0x02}
+	if err := os.WriteFile(filePath, wantContent, 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	// Stand up a fake backend that records what arrives.
+	var (
+		gotMethod      string
+		gotContentType string
+		gotFields      = map[string]string{}
+		gotFileName    string
+		gotFileContent []byte
+		gotFileMIME    string
+		hit            bool
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("Content-Type")
+
+		mediaType, params, err := mime.ParseMediaType(gotContentType)
+		if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+			http.Error(w, "expected multipart", http.StatusBadRequest)
+			return
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				http.Error(w, "parse part: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			formName := part.FormName()
+			if part.FileName() != "" {
+				gotFileName = part.FileName()
+				gotFileMIME = part.Header.Get("Content-Type")
+				gotFileContent, _ = io.ReadAll(part)
+			} else {
+				body, _ := io.ReadAll(part)
+				gotFields[formName] = string(body)
+			}
+		}
+		// Respond with the shape sendFile expects.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"id":"x","timestamp":1}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("WHATZAP_API_TOKEN", "test-token")
+
+	c := &http.Client{Timeout: 5 * time.Second}
+	progressCh := make(chan fileProgressMsg, 16)
+	cmd := sendFile(c, srv.URL, "15551230001@s.whatsapp.net", "image", filePath, "hello caption", "pending-1", progressCh)
+	if cmd == nil {
+		t.Fatal("sendFile returned nil cmd")
+	}
+	msg := cmd()
+	if !hit {
+		t.Fatal("fake backend was not hit")
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if !strings.HasPrefix(gotContentType, "multipart/form-data; boundary=") {
+		t.Fatalf("Content-Type = %q, want multipart/form-data with boundary", gotContentType)
+	}
+
+	// Fields.
+	if gotFields["chatId"] != "15551230001@s.whatsapp.net" {
+		t.Fatalf("chatId field = %q", gotFields["chatId"])
+	}
+	if gotFields["kind"] != "image" {
+		t.Fatalf("kind field = %q", gotFields["kind"])
+	}
+	if gotFields["caption"] != "hello caption" {
+		t.Fatalf("caption field = %q", gotFields["caption"])
+	}
+
+	// File part: filename is just the basename (no directory), and the bytes
+	// match what we wrote to disk.
+	if gotFileName != "photo.png" {
+		t.Fatalf("file part filename = %q, want photo.png", gotFileName)
+	}
+	if !bytes.Equal(gotFileContent, wantContent) {
+		t.Fatalf("file content = %v, want %v", gotFileContent, wantContent)
+	}
+	if gotFileMIME == "" {
+		t.Fatal("file part missing Content-Type")
+	}
+
+	// The sentMsg returned should be a success (no err).
+	sm, ok := msg.(sentMsg)
+	if !ok {
+		t.Fatalf("cmd result type = %T, want sentMsg", msg)
+	}
+	if sm.err != nil {
+		t.Fatalf("sentMsg.err = %v, want nil", sm.err)
+	}
+	if sm.pendingID != "pending-1" {
+		t.Fatalf("pendingID = %q, want pending-1", sm.pendingID)
+	}
+	if sm.chatID != "15551230001@s.whatsapp.net" {
+		t.Fatalf("chatID = %q", sm.chatID)
+	}
+}
+
+func TestSendFileRejectsMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist.png")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("backend should not be hit when local file is missing")
+	}))
+	defer srv.Close()
+
+	t.Setenv("WHATZAP_API_TOKEN", "test-token")
+	c := &http.Client{Timeout: 5 * time.Second}
+	progressCh := make(chan fileProgressMsg, 16)
+	cmd := sendFile(c, srv.URL, "15551230001@s.whatsapp.net", "image", missing, "", "pending-x", progressCh)
+	msg := cmd()
+	sm, ok := msg.(sentMsg)
+	if !ok {
+		t.Fatalf("cmd result type = %T, want sentMsg", msg)
+	}
+	if sm.err == nil {
+		t.Fatal("expected err for missing file, got nil")
+	}
+}
+
 func TestRenderMainQuoteUsesSentColorsWhenQuotingMe(t *testing.T) {
 	currentTheme = Monokai
 	rehashStyles()
@@ -501,7 +641,7 @@ func TestRenderMainOutgoingReactionKeepsMessageIndentedRight(t *testing.T) {
 
 	rendered := model.renderMain(100, 8)
 	reactionPrefix := lipgloss.NewStyle().Foreground(receivedName).Render("  ╰─ ")
-	reactionBody := lipgloss.NewStyle().Foreground(receivedName).Bold(true).Render("thumbs_up Shadu Mady")
+	reactionBody := lipgloss.NewStyle().Foreground(receivedName).Bold(true).Render("thumbs_up")
 	lines := strings.Split(rendered, "\n")
 	foundMsg := false
 	foundReaction := false
@@ -512,7 +652,7 @@ func TestRenderMainOutgoingReactionKeepsMessageIndentedRight(t *testing.T) {
 				t.Fatalf("outgoing reacted line lost right indent: %q", line)
 			}
 		}
-		if strings.Contains(line, "Shadu Mady") {
+		if strings.Contains(line, "thumbs_up") {
 			foundReaction = true
 			if !strings.Contains(line, "╰─") {
 				t.Fatalf("reaction line missing linked prefix: %q", line)
@@ -533,6 +673,52 @@ func TestRenderMainOutgoingReactionKeepsMessageIndentedRight(t *testing.T) {
 	}
 	if !strings.Contains(rendered, reactionBody) {
 		t.Fatalf("reaction body did not use reactor name color: %q", rendered)
+	}
+	// 1-to-1: reactor name should be suppressed — the other party is implicit.
+	if strings.Contains(rendered, "Shadu Mady") {
+		t.Fatalf("1-to-1 reaction should not show reactor name: %q", rendered)
+	}
+}
+
+func TestRenderMainGroupReactionShowsReactorName(t *testing.T) {
+	currentTheme = Monokai
+	rehashStyles()
+
+	groupID := "120363@g.us"
+	msg := wireMsg{
+		Message:          map[string]any{"conversation": "lunch?"},
+		MessageTimestamp: 1710000100,
+	}
+	msg.Key.ID = "m9"
+	msg.Key.RemoteJID = groupID
+
+	rxn := wireMsg{
+		Message: map[string]any{
+			"reactionMessage": map[string]any{
+				"targetMsgID": "m9",
+				"emoji":       "fire",
+			},
+		},
+		MessageTimestamp: 1710000101,
+	}
+	rxn.Key.ID = "r2"
+	rxn.Key.RemoteJID = groupID
+	rxn.Key.Participant = "15559998888@s.whatsapp.net"
+
+	model := m{
+		active: groupID,
+		msgs:   map[string][]wireMsg{groupID: {msg, rxn}},
+		contacts: map[string]contact{
+			"15559998888@s.whatsapp.net": {ID: "15559998888@s.whatsapp.net", Notify: "Casey"},
+		},
+		contactsByNumber: map[string]contact{
+			"15559998888": {ID: "15559998888@s.whatsapp.net", Notify: "Casey"},
+		},
+	}
+
+	rendered := model.renderMain(100, 8)
+	if !strings.Contains(rendered, "fire Casey") {
+		t.Fatalf("group reaction should include reactor name, got: %q", rendered)
 	}
 }
 
@@ -1564,6 +1750,78 @@ func TestStripSnippetTagsRemovesBoldMarkers(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("stripSnippetTags(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestRenderUploadProgress(t *testing.T) {
+	if got := renderUploadProgress(0, 30); !strings.HasPrefix(got, "[") || !strings.Contains(got, "0%") {
+		t.Fatalf("0%%: got %q, want bracket+0%%", got)
+	}
+	if got := renderUploadProgress(50, 30); !strings.Contains(got, "50%") {
+		t.Fatalf("50%%: got %q, want %%50", got)
+	}
+	if got := renderUploadProgress(100, 30); !strings.Contains(got, "100%") {
+		t.Fatalf("100%%: got %q, want 100%%", got)
+	}
+	// Out-of-range clamps.
+	if got := renderUploadProgress(150, 30); !strings.Contains(got, "100%") {
+		t.Fatalf("150 clamped: got %q", got)
+	}
+	if got := renderUploadProgress(-5, 30); !strings.Contains(got, "0%") {
+		t.Fatalf("negative clamped: got %q", got)
+	}
+	// Narrow width falls back to just the percent label.
+	if got := renderUploadProgress(50, 6); got != "50%" {
+		t.Fatalf("narrow: got %q, want 50%%", got)
+	}
+}
+
+func TestFileProgressMsgUpdatesModelAndReArmsListener(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+	model := baseModel(chatID)
+	model.uploadProgress = map[string]int{}
+	model.uploadChans = map[string]chan fileProgressMsg{}
+	progressCh := make(chan fileProgressMsg, 4)
+	model.uploadChans["pending-1"] = progressCh
+
+	next, cmd := model.Update(fileProgressMsg{chatID: chatID, pendingID: "pending-1", pct: 47})
+	got := next.(m)
+	if got.uploadProgress["pending-1"] != 47 {
+		t.Fatalf("uploadProgress[pending-1] = %d, want 47", got.uploadProgress["pending-1"])
+	}
+	if cmd == nil {
+		t.Fatal("expected listenFileProgress cmd to be returned for re-arming")
+	}
+	// Drive another event through the same cmd to make sure re-arm actually fires.
+	close(progressCh) // simulating upload done
+	msg := cmd()
+	if msg != nil {
+		t.Fatalf("expected nil msg after channel close, got %T", msg)
+	}
+}
+
+func TestSentMsgClearsUploadProgress(t *testing.T) {
+	chatID := "15551230001@s.whatsapp.net"
+	model := baseModel(chatID)
+	placeholder := wireMsg{MessageTimestamp: time.Now().Unix()}
+	placeholder.Key.ID = "local-1"
+	placeholder.Key.RemoteJID = chatID
+	placeholder.Key.FromMe = true
+	model.msgs[chatID] = []wireMsg{placeholder}
+	model.uploadProgress = map[string]int{"local-1": 33}
+	model.uploadChans = map[string]chan fileProgressMsg{"local-1": make(chan fileProgressMsg, 1)}
+
+	realMsg := wireMsg{MessageTimestamp: time.Now().Unix()}
+	realMsg.Key.ID = "real-id"
+	realMsg.Key.RemoteJID = chatID
+	realMsg.Key.FromMe = true
+	next, _ := model.Update(sentMsg{chatID: chatID, pendingID: "local-1", msg: realMsg})
+	got := next.(m)
+	if _, ok := got.uploadProgress["local-1"]; ok {
+		t.Fatalf("uploadProgress not cleared: %v", got.uploadProgress)
+	}
+	if _, ok := got.uploadChans["local-1"]; ok {
+		t.Fatalf("uploadChans not cleared: %v", got.uploadChans)
 	}
 }
 

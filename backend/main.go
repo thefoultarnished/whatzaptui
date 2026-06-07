@@ -12,9 +12,7 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -135,22 +133,144 @@ type App struct {
 	persistDirty       uint32 // atomic: 1 = needs persist
 	lidCacheMu sync.RWMutex
 	lidCache    map[string]string
+
+	// logoutMu serializes the /logout handler against itself so two
+	// concurrent calls can't race through the data-folder teardown.
+	// Kept separate from mu so a logout's network call to WhatsApp
+	// doesn't stall every other request that needs a read of a.state.
+	logoutMu sync.Mutex
 }
 
-const maxUploadBytes = 100 * 1024 * 1024
+var maxUploadBytes int64 = 100 * 1024 * 1024
+var maxHeaderBytes = 64 * 1024
+
+// S-4: the backend's own listen address. Used in two places: the
+// http.Server bind address (line ~174) and the CORS allowlist
+// (allowedBackendOrigin below). Keep them in lockstep — if you
+// change the bind address, the CORS allowlist changes too, so a
+// browser pointed at the new address still works.
+const backendHost = "127.0.0.1"
+const backendPort = "8787"
+
+// allowedBackendOrigin is the single browser origin allowed to
+// drive the backend. Pre-fix, any loopback origin was allowed
+// (any port, any hostname resolving to 127.0.0.0/8 or ::1) — a
+// malicious local page on localhost:3000 could do a CORS
+// preflight against the backend and learn that the API was alive.
+// Now only the backend's own URL is allowed.
+var allowedBackendOrigin = "http://" + backendHost + ":" + backendPort
+
+// A-2: HTTP server timeouts. ReadHeaderTimeout defends against
+// slowloris (a client that opens a connection and dribbles bytes
+// forever to hold a server goroutine). ReadTimeout caps the total
+// request-read time — generous enough for 100MB uploads on
+// localhost (which finish in <10s on LAN) but tight enough that
+// a stalled body can't pin a goroutine for minutes. WriteTimeout
+// caps a stuck response. IdleTimeout caps how long a keep-alive
+// connection can sit open doing nothing. All are package-level
+// vars (matching maxUploadBytes / maxHeaderBytes) so a future
+// /settings entry can override them.
+var httpReadHeaderTimeout = 10 * time.Second
+var httpReadTimeout = 30 * time.Second
+var httpWriteTimeout = 30 * time.Second
+var httpIdleTimeout = 2 * time.Minute
+
+// S-3: minimum log level for the whatsmeow loggers (both the
+// client and the sqlstore). Default is "WARN" — pre-fix was
+// "DEBUG" for the client, which spammed stdout with every
+// protobuf marshal/unmarshal, every retry, and every received
+// message body. Override at startup with WHATZAP_LOG_LEVEL=DEBUG
+// (or INFO/WARN/ERROR) for troubleshooting; main() prints the
+// active level to stdout so the user can verify the env var
+// took effect. Mutable var (not const) so tests can swap it.
+// Valid values per waLog/util/log/log.go:levelToInt are
+// "" (all), "DEBUG", "INFO", "WARN", "ERROR" (case-insensitive).
+var whatsmeowLogLevel = "WARN"
+
+// resolveWhatsmeowLogLevel returns the active log level string
+// for the whatsmeow loggers. Priority: WHATZAP_LOG_LEVEL env
+// var (if non-empty after trim+upper) > "WARN" default. Exposed
+// as a helper so main() and NewApp() use the same logic and
+// tests can exercise the resolution path without spinning up
+// the full NewApp() stack (which would try to talk to WhatsApp).
+func resolveWhatsmeowLogLevel() string {
+	if override := strings.TrimSpace(strings.ToUpper(os.Getenv("WHATZAP_LOG_LEVEL"))); override != "" {
+		return override
+	}
+	return "WARN"
+}
 const maxMessagesResponseLimit = 200
 const appDataDirName = "WhatZAP"
 const apiTokenEnvVar = "WHATZAP_API_TOKEN"
 const authHeaderName = "Authorization"
 
+// A-13: in-memory map caps for unbounded-growth maps. Trimmed on
+// a 30s ticker in main(). Set to 0 to disable cap.
+var maxChatCaps     = 1000
+var maxContactCaps  = 5000
+var maxLIDCacheCaps = 10000
+
+// cappedEvict is a generic helper that trims a map to at most max
+// entries by deleting random keys. Pass max <= 0 to disable. The
+// random-order iteration of Go maps provides a uniform distribution
+// for eviction — at a 1k/5k/10k cap the probability of hitting a
+// recently-used entry in any single tick is negligible.
+func cappedEvict[K comparable, V any](m map[K]V, max int) {
+	if max <= 0 {
+		return
+	}
+	for len(m) > max {
+		for k := range m {
+			delete(m, k)
+			break
+		}
+	}
+}
+
 func main() {
+	// S-3: print the active whatsmeow log level as the very first
+	// line so users can verify WHATZAP_LOG_LEVEL took effect. Goes
+	// to stdout (which the TUI's 8KB ring buffer also captures,
+	// so it shows up in startup-error messages). Uses the same
+	// helper as NewApp() so the printed value always matches the
+	// value the loggers will actually use.
+	log.Printf("[backend] log level: %s (set WHATZAP_LOG_LEVEL to change)", resolveWhatsmeowLogLevel())
+
 	app, err := NewApp()
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
 
-	addr := "127.0.0.1:8787"
-	srv := &http.Server{Addr: addr, Handler: app.handler()}
+	// A-13: periodic eviction of in-memory maps. Runs every 30s
+	// to keep Chats/Contacts/lidCache within their caps. Uses
+	// a background goroutine because the maps are not persisted
+	// as a batch anywhere we could piggyback on — lidCache in
+	// particular has no persistence path at all.
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			app.mu.Lock()
+			cappedEvict(app.state.Chats, maxChatCaps)
+			cappedEvict(app.state.Contacts, maxContactCaps)
+			app.mu.Unlock()
+			app.lidCacheMu.Lock()
+			cappedEvict(app.lidCache, maxLIDCacheCaps)
+			app.lidCacheMu.Unlock()
+		}
+	}()
+
+	addr := backendHost + ":" + backendPort
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           app.handler(),
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
+		ErrorLog:          log.New(os.Stderr, "[http] ", log.LstdFlags),
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -203,7 +323,7 @@ func resolveBackendCacheDir(workDir string) (string, error) {
 		return "", err
 	}
 	cacheDir := filepath.Join(dataRoot, "backend")
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return "", err
 	}
 
@@ -254,6 +374,21 @@ func copyDirContents(srcDir, dstDir string) error {
 		if err != nil {
 			return err
 		}
+		// S-8: skip symlinks. The legacy `.whatsmeow_cache` dir may
+		// contain a symlink the user (or an attacker with write access
+		// to the working dir) placed there pointing at, say,
+		// ~/.ssh/id_rsa — without this check we'd open the symlink
+		// and copy the target's contents into the live data folder.
+		// entry.Info() uses Lstat semantics so info.Mode() reflects
+		// the symlink itself, not its target; the IsRegular() check
+		// below would also skip, but being explicit makes the intent
+		// obvious and protects against an accidental IsRegular()
+		// edit later. Junctions (Windows directory reparse points)
+		// are not covered by this check and would still be recursed
+		// into — out of scope for S-8, see security_easy.md.
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		if entry.IsDir() {
 			if err := os.MkdirAll(dstPath, info.Mode().Perm()); err != nil {
 				return err
@@ -297,6 +432,13 @@ func NewApp() (*App, error) {
 	if apiToken == "" {
 		return nil, fmt.Errorf("%s must be set", apiTokenEnvVar)
 	}
+	// S-3: read the WHATZAP_LOG_LEVEL env var via the shared
+	// helper so main() and NewApp() see the same value (and tests
+	// can exercise the resolution logic in isolation). Must run
+	// before the waLog.Stdout calls a few hundred lines down so
+	// the value is in effect by the time the whatsmeow
+	// client/sqlstore loggers are constructed.
+	whatsmeowLogLevel = resolveWhatsmeowLogLevel()
 	workDir, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -328,7 +470,7 @@ func (a *App) initPersistentResources() error {
 	if cacheDir == "" {
 		return fmt.Errorf("cache directory is not configured")
 	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return err
 	}
 	a.cacheDir = cacheDir
@@ -348,7 +490,14 @@ func (a *App) initPersistentResources() error {
 		return err
 	}
 
-	container, err := sqlstore.New(context.Background(), "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", waLog.Stdout("db", "WARN", true))
+	// S-11: restrict the database file to owner-only. The PRAGMAs
+	// above guarantee the file exists (sql.Open creates it lazily
+	// on the first query). Ignore error — this is meaningful only
+	// on Unix; on Windows os.Chmod is a no-op and the error is
+	// always nil.
+	_ = os.Chmod(dbPath, 0o600)
+
+	container, err := sqlstore.New(context.Background(), "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", waLog.Stdout("db", whatsmeowLogLevel, true))
 	if err != nil {
 		_ = rawDB.Close()
 		return err
@@ -417,7 +566,7 @@ func (a *App) initPersistentResources() error {
 	a.db = rawDB
 	a.storeContainer = container
 	a.backfillFTS()
-	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", "DEBUG", true))
+	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", whatsmeowLogLevel, true))
 	a.bindEvents()
 	return nil
 }
@@ -478,6 +627,13 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		// Cap request bodies at 256 KB. Plenty of headroom for any JSON
+		// the TUI sends (the largest real payload, a 10,000-word message
+		// in a multi-byte language, is ~180 KB). The per-handler cap on
+		// /messages/send-file (100 MB+) is applied inside the handler and
+		// wins for that route. Without this, a multi-GB body to any other
+		// endpoint would be fully buffered into RAM before the handler ran.
+		r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -494,23 +650,15 @@ func (a *App) isAuthorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(a.apiToken)) == 1
 }
 
+// isAllowedOrigin returns true only for the backend's own URL.
+// Pre-fix, this accepted ANY loopback origin (any port, any
+// scheme, any hostname that resolved to 127.0.0.0/8 or ::1 or
+// matched "localhost"). S-4 closed that to a single fixed value.
+// TUI is unaffected because Go HTTP clients don't send an Origin
+// header, so this function is only called for browser-initiated
+// requests and WebSocket upgrades.
 func isAllowedOrigin(origin string) bool {
-	if strings.TrimSpace(origin) == "" {
-		return false
-	}
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	host := u.Hostname()
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return origin == allowedBackendOrigin
 }
 
 func (a *App) bindEvents() {
@@ -2209,32 +2357,32 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	if !a.requireConnectedClient(w) {
 		return
 	}
-	var req struct {
-		ChatID  string `json:"chatId"`
-		Path    string `json:"path"`
-		Caption string `json:"caption"`
-		Kind    string `json:"kind"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	req.ChatID = a.canonicalizeChatID(strings.TrimSpace(req.ChatID))
-	req.Path = filepath.Clean(strings.TrimSpace(req.Path))
-	req.Caption = strings.TrimSpace(sanitizeOutgoingText(req.Caption))
-	req.Kind = strings.ToLower(strings.TrimSpace(req.Kind))
-	if req.ChatID == "" || req.Path == "" {
-		writeErr(w, http.StatusBadRequest, "chatId and path are required")
+
+	// Reject overly large request bodies early. Allow some overhead for the
+	// multipart framing and form fields above the file size cap.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(64<<10))
+
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
 		return
 	}
 
-	jid, err := types.ParseJID(req.ChatID)
+	chatID := a.canonicalizeChatID(strings.TrimSpace(r.FormValue("chatId")))
+	kind := strings.ToLower(strings.TrimSpace(r.FormValue("kind")))
+	caption := strings.TrimSpace(sanitizeOutgoingText(r.FormValue("caption")))
+
+	if chatID == "" {
+		writeErr(w, http.StatusBadRequest, "chatId is required")
+		return
+	}
+
+	jid, err := types.ParseJID(chatID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid chatId")
 		return
 	}
 
-	allowed, err := a.isChatAllowed(req.ChatID)
+	allowed, err := a.isChatAllowed(chatID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2244,53 +2392,52 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(req.Path)
+	f, fileHeader, err := r.FormFile("file")
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "file not found")
+		writeErr(w, http.StatusBadRequest, "file part is required")
 		return
 	}
-	if info.IsDir() {
-		writeErr(w, http.StatusBadRequest, "path must be a file")
-		return
-	}
-	if !info.Mode().IsRegular() {
-		writeErr(w, http.StatusBadRequest, "path must be a regular file")
-		return
-	}
-	if info.Size() > maxUploadBytes {
+	defer f.Close()
+	if fileHeader.Size > maxUploadBytes {
 		writeErr(w, http.StatusBadRequest, "file too large: max 100 MB")
 		return
 	}
-	if err := validateSendFileInput(req.Path, req.Kind); err != nil {
+
+	filename := filepath.Base(fileHeader.Filename)
+	if filename == "" || filename == "." || filename == "/" {
+		writeErr(w, http.StatusBadRequest, "file must have a valid filename")
+		return
+	}
+
+	// LimitReader caps the read at maxUploadBytes+1 so we can detect overflow.
+	data, err := io.ReadAll(io.LimitReader(f, maxUploadBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read file: "+err.Error())
+		return
+	}
+	if int64(len(data)) > maxUploadBytes {
+		writeErr(w, http.StatusBadRequest, "file too large: max 100 MB")
+		return
+	}
+
+	if err := validateSendFileInput(filename, data, kind); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	mediaType, err := mediaTypeForSendKind(req.Kind)
+	mediaType, err := mediaTypeForSendKind(kind)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	f, err := os.Open(req.Path)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	data := make([]byte, info.Size())
-	if _, err := io.ReadFull(f, data); err != nil {
-		_ = f.Close()
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_ = f.Close()
 	upload, err := a.client.Upload(context.Background(), data, mediaType)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	msg, wireBody, err := buildOutgoingMediaMessage(req.Kind, req.Path, req.Caption, upload, data)
+	msg, wireBody, err := buildOutgoingMediaMessage(kind, filename, caption, upload, data)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -2309,7 +2456,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	wire := WireMessage{
 		Key: WireKey{
 			ID:        resp.ID,
-			RemoteJID: req.ChatID,
+			RemoteJID: chatID,
 			FromMe:    true,
 		},
 		Message:          wireBody,
@@ -2317,7 +2464,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 		MediaProto:       mediaProto,
 		ReceiptStatus:    "sent",
 	}
-	a.upsertMessage(req.ChatID, wire)
+	a.upsertMessage(chatID, wire)
 	writeJSON(w, http.StatusOK, map[string]any{"message": wire})
 }
 
@@ -2496,15 +2643,29 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !a.requireConnectedClient(w) {
-		return
-	}
 	var req struct {
 		ChatID    string `json:"chatId"`
 		MessageID string `json:"messageId"`
+		// FromMe is a *bool so we can distinguish "field absent"
+		// (nil → 400) from "field present, value false". The
+		// messages table's PRIMARY KEY is (chat_id, id, from_me);
+		// a delete using only (chat_id, id) would wipe both the
+		// incoming and outgoing row if the same chat ever has two
+		// messages with the same id (A-16). Old TUI binaries that
+		// send no fromMe field get a 400 — the TUI is rebuilt in
+		// lockstep with the backend, so this is a hard fail-fast
+		// rather than a silent regression.
+		FromMe *bool `json:"fromMe"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// Input validation (bad request shape) runs before any
+	// state-dependent check (not connected), so a malformed
+	// request always gets 400 — never 409.
+	if req.FromMe == nil {
+		writeErr(w, http.StatusBadRequest, "fromMe is required")
 		return
 	}
 	req.ChatID = strings.TrimSpace(req.ChatID)
@@ -2518,34 +2679,55 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid chatId")
 		return
 	}
-	_, err = a.client.RevokeMessage(context.Background(), chatJID, types.MessageID(req.MessageID))
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !a.requireConnectedClient(w) {
 		return
 	}
-	
-	if a.db != nil {
-		tx, err := a.db.Begin()
+	// RevokeMessage only works for the user's own messages; an
+	// incoming message can't be revoked.
+	if *req.FromMe {
+		_, err = a.client.RevokeMessage(context.Background(), chatJID, types.MessageID(req.MessageID))
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		defer tx.Rollback()
-		if _, err := tx.Exec(`DELETE FROM messages WHERE chat_id = ? AND id = ?`, req.ChatID, req.MessageID); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if _, err := tx.Exec(`DELETE FROM messages_fts WHERE chat_id = ? AND msg_id = ?`, req.ChatID, req.MessageID); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if err := tx.Commit(); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	}
+	if err := a.deleteMessageFromDB(req.ChatID, req.MessageID, *req.FromMe); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	a.persistState()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// deleteMessageFromDB removes a single message row (and its FTS
+// index entry) keyed on the full primary key (chat_id, id, from_me).
+// A-16: a delete using only (chat_id, id) would wipe both the
+// incoming and outgoing row when the same chat had two messages with
+// the same id but different from_me. Returns nil if a.db is nil
+// (no DB to delete from) so callers can use it unconditionally.
+func (a *App) deleteMessageFromDB(chatID, messageID string, fromMe bool) error {
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	fromMeInt := 0
+	if fromMe {
+		fromMeInt = 1
+	}
+	if _, err := tx.Exec(`DELETE FROM messages WHERE chat_id = ? AND id = ? AND from_me = ?`, chatID, messageID, fromMeInt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = ?`, chatID, messageID, fromMeInt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (a *App) handleProfilePicture(w http.ResponseWriter, r *http.Request) {
@@ -2575,23 +2757,74 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	a.mu.Lock()
+	// A-5: serialize the whole teardown against any other concurrent
+	// /logout so two callers can't race through os.RemoveAll + DB reopen.
+	// Held for the full body, not just the in-memory state mutation —
+	// the data-folder teardown is what corrupts under concurrency, and
+	// it's the part that needs the lock.
+	a.logoutMu.Lock()
+	defer a.logoutMu.Unlock()
+
+	// shuttingDown is also a "logout in flight" signal that other code
+	// paths (persistState, persistStateWithErr) already check. Cheap to
+	// set under the same lock.
+	if a.shuttingDown {
+		writeErr(w, http.StatusConflict, "logout already in progress")
+		return
+	}
 	a.shuttingDown = true
-	a.mu.Unlock()
 	defer func() {
-		a.mu.Lock()
 		a.shuttingDown = false
-		a.mu.Unlock()
 	}()
+
+	var backup []struct {
+		Phone   string
+		Name    string
+		Allowed int
+	}
+	dbPath := filepath.Join(a.cacheDir, "store.db")
+	var tempDB *sql.DB
+	a.mu.Lock()
+	targetDB := a.db
+	a.mu.Unlock()
+	if targetDB == nil {
+		if _, err := os.Stat(dbPath); err == nil {
+			tempDB, _ = sql.Open("sqlite", "file:"+dbPath)
+			targetDB = tempDB
+		}
+	}
+	if targetDB != nil {
+		rows, err := targetDB.Query(`SELECT phone, name, allowed FROM chat_permissions`)
+		if err == nil {
+			for rows.Next() {
+				var p struct {
+					Phone   string
+					Name    string
+					Allowed int
+				}
+				if err := rows.Scan(&p.Phone, &p.Name, &p.Allowed); err == nil {
+					backup = append(backup, p)
+				}
+			}
+			rows.Close()
+		}
+		if tempDB != nil {
+			_ = tempDB.Close()
+		}
+	}
+
 	hadRuntimeResources := a.client != nil || a.storeContainer != nil
 	var errs []string
-	// Remote logout is best-effort. Even if the server is unreachable, we want
-	// to tear down local state.
+	// Remote logout is best-effort. Even if the server is unreachable, we
+	// want to tear down local state. Cap the network call at 5s so a hung
+	// WhatsApp server can't hold logoutMu forever.
 	if a.client != nil {
 		if a.client.Store != nil && a.client.Store.ID != nil {
-			if err := a.client.Logout(context.Background()); err != nil {
+			logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := a.client.Logout(logoutCtx); err != nil {
 				errs = append(errs, fmt.Sprintf("remote logout failed: %v", err))
 			}
+			logoutCancel()
 		}
 		a.client.Disconnect()
 		if a.client.Store != nil && a.client.Store.ID != nil {
@@ -2601,6 +2834,10 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 				a.client.Store.ID = nil
 			}
 		}
+		// Nil out a.client so any racing reader (event handlers,
+		// other HTTP handlers) early-outs on their existing nil check
+		// instead of calling methods on a Disconnected client.
+		a.client = nil
 	}
 	a.mu.Lock()
 	a.started = false
@@ -2634,6 +2871,40 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
 			} else if err := os.MkdirAll(a.cacheDir, 0o755); err != nil {
 				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+			}
+		}
+		if len(backup) > 0 {
+			var restoreDB *sql.DB
+			var tempRestoreDB *sql.DB
+			a.mu.Lock()
+			if a.db != nil {
+				restoreDB = a.db
+			}
+			a.mu.Unlock()
+			if restoreDB == nil {
+				if err := os.MkdirAll(a.cacheDir, 0o755); err == nil {
+					tempRestoreDB, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+					if err == nil {
+						restoreDB = tempRestoreDB
+					}
+				}
+			}
+			if restoreDB != nil {
+				_, _ = restoreDB.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
+					phone   TEXT PRIMARY KEY,
+					name    TEXT NOT NULL DEFAULT '',
+					allowed INTEGER NOT NULL DEFAULT 0
+				)`)
+				tx, err := restoreDB.Begin()
+				if err == nil {
+					for _, p := range backup {
+						_, _ = tx.Exec(`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`, p.Phone, p.Name, p.Allowed)
+					}
+					_ = tx.Commit()
+				}
+				if tempRestoreDB != nil {
+					_ = tempRestoreDB.Close()
+				}
 			}
 		}
 		if err := a.persistStateWithErr(); err != nil {
@@ -3710,6 +3981,29 @@ func (a *App) handleGetWhitelist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": result})
 }
 
+// normalizeWhitelistPhone validates and normalizes a phone string
+// for chat_permissions. Accepts digits only (e.g. "15551230001")
+// or digits + @server suffix (e.g. "15551230001@s.whatsapp.net",
+// "120363040000001234@g.us") — the suffix is stripped to the
+// local part that phoneFromJID would extract from a chat ID.
+// Returns an error if the input is empty, contains non-digit
+// characters, or is a bare @server with no local part.
+func normalizeWhitelistPhone(phone string) (string, error) {
+	local := phone
+	if idx := strings.IndexByte(phone, '@'); idx >= 0 {
+		local = phone[:idx]
+	}
+	if local == "" {
+		return "", fmt.Errorf("phone is required")
+	}
+	for _, r := range local {
+		if r < '0' || r > '9' {
+			return "", fmt.Errorf("phone must be digits only")
+		}
+	}
+	return local, nil
+}
+
 func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -3724,14 +4018,15 @@ func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if req.Phone == "" {
-		writeErr(w, http.StatusBadRequest, "phone is required")
+	phone, err := normalizeWhitelistPhone(req.Phone)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	err := a.withPermissionDB(func(db *sql.DB) error {
+	err = a.withPermissionDB(func(db *sql.DB) error {
 		_, err := db.Exec(
 			`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`,
-			req.Phone, req.Name, req.Allowed,
+			phone, req.Name, req.Allowed,
 		)
 		return err
 	})
@@ -3878,9 +4173,9 @@ func mediaTypeForSendKind(kind string) (whatsmeow.MediaType, error) {
 	}
 }
 
-func validateSendFileInput(path, kind string) error {
-	if path == "" {
-		return fmt.Errorf("path is required")
+func validateSendFileInput(filename string, data []byte, kind string) error {
+	if filename == "" {
+		return fmt.Errorf("filename is required")
 	}
 	if kind == "" {
 		return fmt.Errorf("kind is required")
@@ -3889,21 +4184,9 @@ func validateSendFileInput(path, kind string) error {
 		return nil
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("failed to open file")
-	}
-	defer f.Close()
-
-	header := make([]byte, 512)
-	n, err := f.Read(header)
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("failed to inspect file")
-	}
-
-	sniffedType := http.DetectContentType(header[:n])
+	sniffedType := http.DetectContentType(data)
 	extType := ""
-	if ext := strings.ToLower(filepath.Ext(path)); ext != "" {
+	if ext := strings.ToLower(filepath.Ext(filename)); ext != "" {
 		extType = mime.TypeByExtension(ext)
 	}
 
@@ -3927,8 +4210,8 @@ func isExpectedMediaType(actual, prefix string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(actual)), prefix)
 }
 
-func detectMIMEType(path string, data []byte, fallback string) string {
-	if ext := strings.ToLower(filepath.Ext(path)); ext != "" {
+func detectMIMEType(filename string, data []byte, fallback string) string {
+	if ext := strings.ToLower(filepath.Ext(filename)); ext != "" {
 		if t := mime.TypeByExtension(ext); t != "" {
 			return t
 		}
@@ -3939,9 +4222,9 @@ func detectMIMEType(path string, data []byte, fallback string) string {
 	return fallback
 }
 
-func buildOutgoingMediaMessage(kind, path, caption string, upload whatsmeow.UploadResponse, data []byte) (*waE2E.Message, map[string]any, error) {
-	mimeType := detectMIMEType(path, data, "application/octet-stream")
-	fileName := filepath.Base(path)
+func buildOutgoingMediaMessage(kind, filename, caption string, upload whatsmeow.UploadResponse, data []byte) (*waE2E.Message, map[string]any, error) {
+	mimeType := detectMIMEType(filename, data, "application/octet-stream")
+	fileName := filepath.Base(filename)
 	switch kind {
 	case "image":
 		msg := &waE2E.Message{
@@ -4199,6 +4482,7 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("content-type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

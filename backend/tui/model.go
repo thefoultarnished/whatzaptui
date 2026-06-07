@@ -72,6 +72,7 @@ type Config struct {
 	MediaIconStyle       string `json:"media_icon_style,omitempty"`
 	TimestampNewLine     bool   `json:"timestamp_new_line,omitempty"`
 	MediaViewStyle       string `json:"media_view_style,omitempty"`
+	Borderless           bool   `json:"borderless,omitempty"`
 }
 
 var currentConfig Config
@@ -139,6 +140,8 @@ type m struct {
 	msgs                                     map[string][]wireMsg
 	loadingOlder                             map[string]bool // chatID → fetch in flight
 	noMoreOlder                              map[string]bool // chatID → backend exhausted
+	uploadProgress                           map[string]int  // pendingID → 0..100 percent of in-flight file upload
+	uploadChans                              map[string]chan fileProgressMsg // pendingID → channel that emits fileProgressMsg (for re-arming the listener)
 	msgSearchInput                           string
 	msgSearchResults                         []searchHit
 	msgSearchSel                             int

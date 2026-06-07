@@ -33,6 +33,7 @@ var settingsDefs = []struct {
 		}
 		return currentConfig.MediaViewStyle
 	}},
+	{"Borderless", false, func() bool { return currentConfig.Borderless }, func(v bool) { currentConfig.Borderless = v }, nil},
 }
 
 var mediaIconList = []struct {

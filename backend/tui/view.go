@@ -19,13 +19,30 @@ func (x m) View() string {
 	if x.w == 0 || x.h == 0 {
 		return "loading..."
 	}
-	frameW := max(1, x.w-2)
+	var frameW int
+	if currentConfig.Borderless {
+		frameW = x.w
+	} else {
+		frameW = max(1, x.w-2)
+	}
 	// Success Loading Screen: shown after login until status becomes "ready".
 	if x.status != "ready" {
-		outerW := frameW
-		outerH := max(3, x.h-2)
-		innerW := max(1, outerW-2)
-		innerH := max(1, outerH-2)
+		var outerW, outerH int
+		if currentConfig.Borderless {
+			outerW = x.w
+			outerH = x.h
+		} else {
+			outerW = frameW
+			outerH = max(3, x.h-2)
+		}
+		var innerW, innerH int
+		if currentConfig.Borderless {
+			innerW = outerW
+			innerH = outerH
+		} else {
+			innerW = max(1, outerW-2)
+			innerH = max(1, outerH-2)
+		}
 		statusBody := x.status
 		title := logoStyle.Render("WhatZap")
 		subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
@@ -52,6 +69,9 @@ func (x m) View() string {
 					hint,
 				)
 				content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
+				if currentConfig.Borderless {
+					return lipgloss.NewStyle().Width(outerW).Height(outerH).Render(content)
+				}
 				return lipgloss.NewStyle().
 					Width(outerW).
 					Height(outerH).
@@ -76,6 +96,9 @@ func (x m) View() string {
 			pulse := x.loadingPulse()
 			body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
 			content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
+			if currentConfig.Borderless {
+				return lipgloss.NewStyle().Width(outerW).Height(outerH).Render(content)
+			}
 			return lipgloss.NewStyle().
 				Width(outerW).
 				Height(outerH).
@@ -85,6 +108,9 @@ func (x m) View() string {
 		}
 		msg := statusMsgTemplate(statusBody, "")
 		content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, msg)
+		if currentConfig.Borderless {
+			return lipgloss.NewStyle().Width(outerW).Height(outerH).Render(content)
+		}
 		return lipgloss.NewStyle().
 			Width(outerW).
 			Height(outerH).
@@ -93,7 +119,12 @@ func (x m) View() string {
 			Render(content)
 	}
 	outerW := frameW
-	outerH := x.h - 2
+	var outerH int
+	if currentConfig.Borderless {
+		outerH = x.h
+	} else {
+		outerH = x.h - 2
+	}
 	contentW := outerW
 	leftW := min(28, max(24, contentW/3))
 	rightW := contentW - leftW
@@ -217,12 +248,20 @@ func (x m) View() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, rightCol)
 	inner := lipgloss.JoinVertical(lipgloss.Left, head, body)
-	frame := lipgloss.NewStyle().
-		Width(outerW).
-		Height(outerH).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(muted).
-		Render(inner)
+	var frame string
+	if currentConfig.Borderless {
+		frame = lipgloss.NewStyle().
+			Width(outerW).
+			Height(outerH).
+			Render(inner)
+	} else {
+		frame = lipgloss.NewStyle().
+			Width(outerW).
+			Height(outerH).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(muted).
+			Render(inner)
+	}
 	if x.mode == "msgsearch" {
 		return x.renderSearchOverlay(frame, outerW, outerH)
 	}
@@ -940,6 +979,40 @@ func outgoingMessageIndent(paneW int, blockW int, fromMe bool) string {
 	return strings.Repeat(" ", max(0, paneW-blockW))
 }
 
+// renderUploadProgress draws a horizontal progress bar of the form
+// "████████░░░░░░░░░ 47%". availableW caps the total width; the bar
+// shrinks on narrow panes and the percent label is dropped if even
+// that doesn't fit.
+func renderUploadProgress(pct, availableW int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	// Reserve " 100%" worst-case (5 chars).
+	barW := 16
+	if availableW > 0 {
+		// Total = 1 ('[') + barW + 1 (']') + 1 (space) + 4 ("100%") = barW + 7
+		maxBarW := availableW - 7
+		if maxBarW < 4 {
+			// No room for a bar; fall back to "47%".
+			return fmt.Sprintf("%d%%", pct)
+		}
+		if maxBarW < barW {
+			barW = maxBarW
+		}
+	}
+	filled := pct * barW / 100
+	if filled > barW {
+		filled = barW
+	}
+	empty := barW - filled
+	filledStr := strings.Repeat("█", filled)
+	emptyStr := strings.Repeat("░", empty)
+	return "[" + filledStr + emptyStr + "] " + fmt.Sprintf("%d%%", pct)
+}
+
 func (x m) renderWelcomePane(w, h int) string {
 	keyStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
 	descStyle := lipgloss.NewStyle().Foreground(text)
@@ -1220,7 +1293,21 @@ func (x m) renderMain(w, h int) string {
 		}
 
 		timeStyled := mutedStyle.Copy().Foreground(timeColor).Render("  " + timeStr)
-		if receiptText != "" {
+		progressActive := false
+		if msg.Key.FromMe && isMediaMsg {
+			if _, ok := x.uploadProgress[msg.Key.ID]; ok {
+				progressActive = true
+				// During upload, replace the timestamp slot with a live
+				// progress bar. Same gutter width as the timestamp+receipt
+				// it stands in for, so the right edge stays anchored.
+				progressW := runeDisplayWidth(timeStr + receiptText) + 2
+				if progressW < 4 {
+					progressW = 16
+				}
+				timeStyled = mutedStyle.Copy().Foreground(timeColor).Render(renderUploadProgress(x.uploadProgress[msg.Key.ID], progressW))
+			}
+		}
+		if receiptText != "" && !progressActive {
 			receiptColor := muted
 			if msg.ReceiptStatus == "read" || msg.ReceiptStatus == "played" {
 				receiptColor = accent
@@ -1255,9 +1342,16 @@ func (x m) renderMain(w, h int) string {
 				if i == 0 {
 					firstReactionColor = reactionColor
 				}
-				reactionPlainParts = append(reactionPlainParts, rxn.emoji+" "+rxn.name)
+				// 1-to-1 chats: emoji alone is enough; the other party is
+				// implicit. Groups keep the reactor's name so multiple
+				// reactions from different people stay distinguishable.
+				label := rxn.emoji
+				if isGroup {
+					label = rxn.emoji + " " + rxn.name
+				}
+				reactionPlainParts = append(reactionPlainParts, label)
 				reactionStyledParts = append(reactionStyledParts,
-					applySelectedBG(lipgloss.NewStyle().Foreground(reactionColor).Bold(true)).Render(rxn.emoji+" "+rxn.name))
+					applySelectedBG(lipgloss.NewStyle().Foreground(reactionColor).Bold(true)).Render(label))
 			}
 
 			// Build summary for non-contact reactions.
@@ -1653,6 +1747,9 @@ func (x m) renderMain(w, h int) string {
 }
 
 func (x m) name(c chat) string {
+	if n, ok := x.names[num(c.ID)]; ok && strings.TrimSpace(n) != "" {
+		return n
+	}
 	if strings.HasSuffix(c.ID, "@g.us") {
 		if c.Name != "" {
 			return c.Name
@@ -1661,9 +1758,6 @@ func (x m) name(c chat) string {
 			return c.Subject
 		}
 		return num(c.ID)
-	}
-	if n, ok := x.names[num(c.ID)]; ok && strings.TrimSpace(n) != "" {
-		return n
 	}
 	if n, ok := x.whitelist[num(c.ID)]; ok && strings.TrimSpace(n) != "" {
 		return n

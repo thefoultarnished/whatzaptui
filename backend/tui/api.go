@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -467,19 +468,126 @@ func send(c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID
 	}
 }
 
-func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingID string) tea.Cmd {
+type fileProgressMsg struct {
+	chatID    string
+	pendingID string
+	pct       int // 0..100
+}
+
+// listenFileProgress returns a tea.Cmd that reads the next progress event
+// from ch and returns it as a fileProgressMsg. When ch is closed, the cmd
+// returns nil and the subscription dies naturally.
+func listenFileProgress(ch <-chan fileProgressMsg) tea.Cmd {
 	return func() tea.Msg {
-		payload := map[string]any{
-			"chatId":  chatID,
-			"kind":    kind,
-			"path":    path,
-			"caption": caption,
+		msg, ok := <-ch
+		if !ok {
+			return nil
 		}
-		b, _ := json.Marshal(payload)
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/messages/send-file", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
+		return msg
+	}
+}
+
+// progressWriter wraps an io.Writer and emits throttled progress callbacks
+// as bytes flow through. Used to drive the upload progress bar in the TUI.
+type progressWriter struct {
+	inner      io.Writer
+	total      int64
+	written    int64
+	lastPct    int
+	lastTime   time.Time
+	onProgress func(uploaded, total int64, pct int)
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n, err := pw.inner.Write(p)
+	pw.written += int64(n)
+	pct := 0
+	if pw.total > 0 {
+		pct = int(pw.written * 100 / pw.total)
+		if pct > 100 {
+			pct = 100
+		}
+	}
+	now := time.Now()
+	if pct != pw.lastPct && (pw.lastTime.IsZero() || now.Sub(pw.lastTime) > 80*time.Millisecond || pct == 100) {
+		if pw.onProgress != nil {
+			pw.onProgress(pw.written, pw.total, pct)
+		}
+		pw.lastPct = pct
+		pw.lastTime = now
+	}
+	return n, err
+}
+
+func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingID string, progressCh chan fileProgressMsg) tea.Cmd {
+	return func() tea.Msg {
+		// The outer cmd owns closing the progress channel. The inner
+		// writer goroutine is joined via doneCh before we return, so
+		// closing the channel here is race-free.
+		defer close(progressCh)
+
+		f, err := os.Open(path)
+		if err != nil {
+			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
+		}
+		defer f.Close()
+
+		info, err := f.Stat()
+		if err != nil {
+			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
+		}
+		if info.IsDir() {
+			return sentMsg{chatID: chatID, pendingID: pendingID, err: fmt.Errorf("path must be a file")}
+		}
+
+		pr, pw := io.Pipe()
+		mw := multipart.NewWriter(pw)
+		doneCh := make(chan struct{})
+		go func() {
+			defer close(doneCh)
+			defer pw.Close()
+			defer mw.Close()
+
+			if err := mw.WriteField("chatId", chatID); err != nil {
+				return
+			}
+			if err := mw.WriteField("kind", kind); err != nil {
+				return
+			}
+			if err := mw.WriteField("caption", caption); err != nil {
+				return
+			}
+			fw, err := mw.CreateFormFile("file", filepath.Base(path))
+			if err != nil {
+				return
+			}
+			pw2 := &progressWriter{
+				inner: fw,
+				total: info.Size(),
+				onProgress: func(uploaded, total int64, pct int) {
+					select {
+					case progressCh <- fileProgressMsg{chatID: chatID, pendingID: pendingID, pct: pct}:
+					default:
+						// drop; the next tick will replace this one
+					}
+				},
+			}
+			if _, err := io.Copy(pw2, f); err != nil {
+				return
+			}
+		}()
+
+		// Per-call client with no timeout — 100MB uploads over slow links can
+		// easily exceed the shared 12s default.
+		uploadClient := &http.Client{Timeout: 0}
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/messages/send-file", pr)
+		if err != nil {
+			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
 		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+
+		res, err := uploadClient.Do(req)
 		if err != nil {
 			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
 		}
@@ -494,6 +602,7 @@ func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingI
 		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
 		}
+		<-doneCh // wait for the writer goroutine; safe to close progressCh after
 		return sentMsg{chatID: chatID, pendingID: pendingID, msg: out.Message}
 	}
 }

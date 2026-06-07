@@ -23,6 +23,8 @@ var themeList = []struct {
 	{"aurora", "Aurora", Aurora},
 	{"sakura", "Sakura", Sakura},
 	{"abyssal", "Abyssal", Abyssal},
+	{"cyberpunk", "Cyberpunk", Cyberpunk},
+	{"lilac", "Lilac", Lilac},
 	{"ember", "Ember", Ember},
 	{"glacier", "Glacier", Glacier},
 	{"verdant", "Verdant", Verdant},
@@ -43,6 +45,7 @@ var themeGroupOrder = []struct {
 	{"charcoal", "Charcoal", Charcoal},
 	{"aurora", "Aurora", Aurora},
 	{"abyssal", "Abyssal", Abyssal},
+	{"cyberpunk", "Cyberpunk", Cyberpunk},
 	// Warm
 	{"ember", "Ember", Ember},
 	{"sakura", "Sakura", Sakura},
@@ -54,15 +57,16 @@ var themeGroupOrder = []struct {
 	{"halo", "Halo", Halo},
 	{"cornflower", "Cornflower", Cornflower},
 	{"linen", "Linen", Linen},
+	{"lilac", "Lilac", Lilac},
 }
 
 var themeGroupDefs = []struct {
 	name  string
 	count int
 }{
-	{"Dark", 7},
+	{"Dark", 8},
 	{"Warm", 4},
-	{"Cool", 5},
+	{"Cool", 6},
 }
 
 func applyThemeByName(name string) {
