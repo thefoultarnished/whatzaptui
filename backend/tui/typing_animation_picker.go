@@ -37,7 +37,7 @@ func getTypingIcons(style string) []string {
 	return typingAnimationList[2].icons
 }
 
-func (p *picker) RenderTypingAnimation(w, h int) string {
+func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 80)
@@ -84,40 +84,52 @@ func (p *picker) RenderTypingAnimation(w, h int) string {
 		rowHasActive := false
 
 		leftIdx := r
-		item := p.items[leftIdx]
+		leftDef := typingAnimationList[leftIdx]
+		leftLabel := ""
 		dotColor := muted
-		dot := "✨ "
+		dot := "\U000F0C52 "
 
 		var leftCell string
 		if leftIdx == p.idx {
+			leftIcon := leftDef.icons[shineFrame%len(leftDef.icons)]
+			leftLabel = fmt.Sprintf("%s  %s", leftIcon, leftDef.displayName)
 			rowHasActive = true
 			dotColor = accent
 			dotSt := activeBg.Foreground(dotColor).Bold(true)
-			nameSt := activeBg.Foreground(accent).Bold(true).Underline(true)
-			leftCell = colFill.Render(activeIndent + dotSt.Render(dot) + nameSt.Render(item.label))
+			baseSt := activeBg.Foreground(muted).Bold(true).Underline(true)
+			shineSt := activeBg.Foreground(accent).Bold(true).Underline(true)
+			renderedLabel := renderShine(leftLabel, baseSt, shineSt, shineFrame)
+			leftCell = colFill.Render(activeIndent + dotSt.Render(dot) + renderedLabel)
 		} else {
+			leftLabel = fmt.Sprintf("%s  %s", leftDef.icons[0], leftDef.displayName)
 			dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
 			nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
-			leftCell = colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(item.label))
+			leftCell = colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(leftLabel))
 		}
 
 		var rightCell string
 		if r < rightLen {
 			rightIdx := p.fromColRow(1, r)
-			item2 := p.items[rightIdx]
+			rightDef := typingAnimationList[rightIdx]
+			rightLabel := ""
 			dotColor2 := muted
-			dot2 := "✨ "
+			dot2 := "\U000F0C52 "
 
 			if rightIdx == p.idx {
+				rightIcon := rightDef.icons[shineFrame%len(rightDef.icons)]
+				rightLabel = fmt.Sprintf("%s  %s", rightIcon, rightDef.displayName)
 				rowHasActive = true
 				dotColor2 = accent
 				dotSt := activeBg.Foreground(dotColor2).Bold(true)
-				nameSt := activeBg.Foreground(accent).Bold(true).Underline(true)
-				rightCell = colFill.Render(activeIndent + dotSt.Render(dot2) + nameSt.Render(item2.label))
+				baseSt := activeBg.Foreground(muted).Bold(true).Underline(true)
+				shineSt := activeBg.Foreground(accent).Bold(true).Underline(true)
+				renderedLabel := renderShine(rightLabel, baseSt, shineSt, shineFrame)
+				rightCell = colFill.Render(activeIndent + dotSt.Render(dot2) + renderedLabel)
 			} else {
+				rightLabel = fmt.Sprintf("%s  %s", rightDef.icons[0], rightDef.displayName)
 				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor2).Bold(true))
 				nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
-				rightCell = colFill.Render(indent + dotSt.Render(dot2) + nameSt.Render(item2.label))
+				rightCell = colFill.Render(indent + dotSt.Render(dot2) + nameSt.Render(rightLabel))
 			}
 		}
 

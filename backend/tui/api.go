@@ -577,7 +577,7 @@ func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingI
 			}
 		}()
 
-		// Per-call client with no timeout — 100MB uploads over slow links can
+		// Per-call client with no timeout — 150MB uploads over slow links can
 		// easily exceed the shared 12s default.
 		uploadClient := &http.Client{Timeout: 0}
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/messages/send-file", pr)

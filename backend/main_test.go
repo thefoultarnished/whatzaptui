@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -606,6 +607,55 @@ func TestWithAuthAllowsSmallBody(t *testing.T) {
 	// written. The cap is not in the way for small bodies.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("small body unexpectedly rejected: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// S-2 regression: http.MaxBytesReader wraps r.Body, so an outer cap can't
+// loosen an inner one. /messages/send-file applies its own 150 MB+ cap
+// inside the handler, so withAuth's 256 KB JSON cap must not also apply
+// to that route — otherwise every file over 256 KB would fail with
+// "http: request body too large" despite the 150 MB limit.
+func TestWithAuthExemptsSendFileFromBodyCap(t *testing.T) {
+	app := newTestApp(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/messages/send-file", func(w http.ResponseWriter, r *http.Request) {
+		// Mirror handleSendFile: re-wrap r.Body with the larger cap.
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(64<<10))
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "read: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"bytes": len(data)})
+	})
+	handler := withCORS(app.withAuth(mux))
+
+	big := bytes.Repeat([]byte("a"), 300*1024) // 300 KB > the 256 KB JSON cap
+	req := authorizedRequest(
+		httptest.NewRequest(http.MethodPost, "/messages/send-file", bytes.NewReader(big)),
+		app,
+	)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("300 KB body to /messages/send-file rejected: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Companion to TestWithAuthExemptsSendFileFromBodyCap: confirms the 256 KB
+// cap still applies to ordinary JSON routes.
+func TestWithAuthStillCapsOtherRoutesAt256KB(t *testing.T) {
+	app := newTestApp(t)
+	big := bytes.Repeat([]byte("a"), 300*1024) // 300 KB > the 256 KB cap
+	req := authorizedRequest(
+		httptest.NewRequest(http.MethodPost, "/whitelist/set", bytes.NewReader(big)),
+		app,
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("300 KB body to /whitelist/set unexpectedly accepted: %s", rec.Body.String())
 	}
 }
 
@@ -3699,5 +3749,25 @@ func TestDBFileChmod0600(t *testing.T) {
 		t.Fatalf("file perm = %o, want 0600", perm)
 	}
 }
-
-
+func TestMigrateLIDPermissions(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('12345', 'LID User', 1)`)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	app.migrateLIDPermissions("12345", "67890")
+	var name string
+	var allowed int
+	err = app.db.QueryRow(`SELECT name, allowed FROM chat_permissions WHERE phone = '67890'`).Scan(&name, &allowed)
+	if err != nil {
+		t.Fatalf("query migrated: %v", err)
+	}
+	if name != "LID User" || allowed != 1 {
+		t.Errorf("got name=%q, allowed=%d, want LID User and 1", name, allowed)
+	}
+	var count int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM chat_permissions WHERE phone = '12345'`).Scan(&count)
+	if count != 0 {
+		t.Errorf("LID row was not deleted")
+	}
+}

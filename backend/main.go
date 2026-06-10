@@ -141,7 +141,7 @@ type App struct {
 	logoutMu sync.Mutex
 }
 
-var maxUploadBytes int64 = 100 * 1024 * 1024
+var maxUploadBytes int64 = 150 * 1024 * 1024
 var maxHeaderBytes = 64 * 1024
 
 // S-4: the backend's own listen address. Used in two places: the
@@ -163,7 +163,7 @@ var allowedBackendOrigin = "http://" + backendHost + ":" + backendPort
 // A-2: HTTP server timeouts. ReadHeaderTimeout defends against
 // slowloris (a client that opens a connection and dribbles bytes
 // forever to hold a server goroutine). ReadTimeout caps the total
-// request-read time — generous enough for 100MB uploads on
+// request-read time — generous enough for 150MB uploads on
 // localhost (which finish in <10s on LAN) but tight enough that
 // a stalled body can't pin a goroutine for minutes. WriteTimeout
 // caps a stuck response. IdleTimeout caps how long a keep-alive
@@ -629,11 +629,15 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 		}
 		// Cap request bodies at 256 KB. Plenty of headroom for any JSON
 		// the TUI sends (the largest real payload, a 10,000-word message
-		// in a multi-byte language, is ~180 KB). The per-handler cap on
-		// /messages/send-file (100 MB+) is applied inside the handler and
-		// wins for that route. Without this, a multi-GB body to any other
-		// endpoint would be fully buffered into RAM before the handler ran.
-		r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+		// in a multi-byte language, is ~180 KB). /messages/send-file is
+		// excluded: http.MaxBytesReader wraps the existing r.Body, so a
+		// 256 KB cap here would shadow the handler's own 150 MB+ cap and
+		// reject any file over 256 KB. Without this cap, a multi-GB body
+		// to any other endpoint would be fully buffered into RAM before
+		// the handler ran.
+		if r.URL.Path != "/messages/send-file" {
+			r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -2399,7 +2403,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	if fileHeader.Size > maxUploadBytes {
-		writeErr(w, http.StatusBadRequest, "file too large: max 100 MB")
+		writeErr(w, http.StatusBadRequest, "file too large: max 150 MB")
 		return
 	}
 
@@ -2416,7 +2420,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if int64(len(data)) > maxUploadBytes {
-		writeErr(w, http.StatusBadRequest, "file too large: max 100 MB")
+		writeErr(w, http.StatusBadRequest, "file too large: max 150 MB")
 		return
 	}
 
@@ -3795,12 +3799,37 @@ func (a *App) getPNForLID(lid types.JID) (types.JID, error) {
 	if err == nil && pn.User != "" {
 		a.lidCache[key] = pn.String()
 		a.lidCache[pn.String()] = pn.String()
+		go a.migrateLIDPermissions(lid.User, pn.User)
 	} else {
 		a.lidCache[key] = ""
 	}
 	a.lidCacheMu.Unlock()
 
 	return pn, err
+}
+
+func (a *App) migrateLIDPermissions(lidUser, pnUser string) {
+	if a == nil || a.db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
+		return
+	}
+	_ = a.withPermissionDB(func(db *sql.DB) error {
+		var name string
+		var allowed int
+		err := db.QueryRow(`SELECT name, allowed FROM chat_permissions WHERE phone = ?`, lidUser).Scan(&name, &allowed)
+		if err != nil {
+			return nil
+		}
+		_, err = db.Exec(`
+			INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)
+			ON CONFLICT(phone) DO UPDATE SET name=excluded.name, allowed=excluded.allowed
+		`, pnUser, name, allowed)
+		if err != nil {
+			log.Printf("migrateLIDPermissions db update: %v", err)
+			return err
+		}
+		_, _ = db.Exec(`DELETE FROM chat_permissions WHERE phone = ?`, lidUser)
+		return nil
+	})
 }
 
 func (a *App) canonicalizeChatID(chatID string) string {
@@ -4025,7 +4054,9 @@ func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 	}
 	err = a.withPermissionDB(func(db *sql.DB) error {
 		_, err := db.Exec(
-			`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`,
+			`INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)
+			 ON CONFLICT(phone) DO UPDATE SET allowed=excluded.allowed,
+			                                  name=CASE WHEN excluded.name != '' THEN excluded.name ELSE chat_permissions.name END`,
 			phone, req.Name, req.Allowed,
 		)
 		return err

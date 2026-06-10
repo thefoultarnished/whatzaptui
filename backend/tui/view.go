@@ -210,7 +210,7 @@ func (x m) View() string {
 	} else if x.pointerPicker.open {
 		main = x.pointerPicker.Render(rightW, mainH)
 	} else if x.typingAnimationPicker.open {
-		main = x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH)
+		main = x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH, x.shineFrame)
 	} else if x.mediaIconPicker.open {
 		main = x.mediaIconPicker.Render(rightW, mainH)
 	} else if x.mediaViewPicker.open {
@@ -801,11 +801,11 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		bg := lipgloss.Color("")
 		fg := lipgloss.Color("")
 		if highlighted {
-			bg = brand
+			bg = sidebarWhitelistActiveBg
 			fg = buttonInk
 			if !whitelisted {
-				bg = red
-				fg = lipgloss.Color("15")
+				bg = sidebarBlacklistActiveBg
+				fg = buttonInk
 			}
 			rowBase = rowBase.Background(bg).Foreground(fg).Bold(isSel && navActive)
 		} else if isActive {
@@ -1236,9 +1236,9 @@ func (x m) renderMain(w, h int) string {
 			wrapped = wrapMessageLines(msgBody, availableW, msg.Key.FromMe, wrappedSender)
 		}
 
-		bodyColor := sentText
+		bodyColor := accent
 		if !msg.Key.FromMe {
-			bodyColor = receivedText
+			bodyColor = anomalyTag
 		}
 
 		// For multi-line outgoing text messages, try re-wrapping at a slightly
