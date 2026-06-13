@@ -447,11 +447,13 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 
 	centerStr := lipgloss.NewStyle().Width(centerW).Render(centerContent)
 	headLine := leftStr + centerStr + rightStr
-	return lipgloss.NewStyle().
-		Width(contentW).
-		Border(lipgloss.NormalBorder(), false, false, true, false).
-		BorderForeground(muted).
-		Render(headLine)
+	headBlock := lipgloss.NewStyle().Width(contentW).Render(headLine)
+	// Use a "┬" junction where the sidebar's right border meets the header's
+	// bottom border, so the vertical divider reads as continuous rather than
+	// breaking into a plain "─" for this one row.
+	borderRow := lipgloss.NewStyle().Foreground(muted).
+		Render(strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, contentW-leftW-1)))
+	return lipgloss.JoinVertical(lipgloss.Left, headBlock, borderRow)
 }
 
 func renderHeaderAvatar(name, id string) string {
@@ -527,12 +529,18 @@ func (x m) renderCommandBox(leftW int) string {
 	if x.leftInputFocused {
 		leftBorderColor = accent
 	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, true, false, false).
+	// Use a "┤" junction for the top-right corner, so the sidebar's right
+	// border continues straight down into this box's right border instead
+	// of breaking at a plain "┐" corner.
+	topRow := lipgloss.NewStyle().Foreground(leftBorderColor).
+		Render(strings.Repeat("─", leftW) + "┤")
+	contentRow := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, true, false, false).
 		BorderForeground(leftBorderColor).
 		Width(leftW).
 		Foreground(text).
 		Render(cmdContent)
+	return lipgloss.JoinVertical(lipgloss.Left, topRow, contentRow)
 }
 
 func (x m) renderChatInput(rightW int, typedInput string) string {
