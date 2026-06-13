@@ -311,7 +311,6 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		x.spinnerFrame = (x.spinnerFrame + 1) % len(spinnerFrames)
 		x.shineFrame++
-		x.advanceSidebarHighlight()
 		x.advanceSidebarMarquee()
 		return x, nextSpinnerTick()
 	case chatsMsg:
@@ -1185,7 +1184,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.fontTestOpen {
+	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.userlistIconPicker.open || x.fontTestOpen {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -1572,6 +1571,13 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				case "Media view":
 					x.mediaViewPicker = picker{title: "Media View", items: buildMediaViewPickerItems()}
 					x.mediaViewPicker.Open(currentConfig.MediaViewStyle)
+				case "Userlist icons":
+					x.userlistIconPicker = picker{title: "Userlist Icons", items: buildUserlistIconPickerItems()}
+					style := currentConfig.UserlistIconStyle
+					if style == "" {
+						style = "numbers"
+					}
+					x.userlistIconPicker.Open(style)
 				default:
 					x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
 					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
@@ -1635,6 +1641,25 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.mainCache.result = ""
 		} else {
 			x.mediaViewPicker.Close(false)
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		}
+		return x, nil
+	}
+	if x.userlistIconPicker.open {
+		action, done := x.userlistIconPicker.Handle(k)
+		if !done {
+			currentConfig.UserlistIconStyle = x.userlistIconPicker.SelectedKey()
+			x.mainCache.result = ""
+		} else if action == "confirm" {
+			currentConfig.UserlistIconStyle = x.userlistIconPicker.Close(true)
+			saveConfig()
+			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker.Open("")
+			x.mainCache.result = ""
+		} else {
+			x.userlistIconPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
 			x.mainCache.result = ""
@@ -3079,29 +3104,6 @@ func (x m) currentSidebarMarqueeKey() string {
 	return ""
 }
 
-func (x *m) syncSidebarHighlight() {
-	key := x.currentSidebarMarqueeKey()
-	if key == "" {
-		x.sidebarHighlightKey = ""
-		x.sidebarHighlightInset = 0
-		return
-	}
-	if key != x.sidebarHighlightKey {
-		x.sidebarHighlightKey = key
-		x.sidebarHighlightInset = 0
-	}
-}
-
-func (x *m) advanceSidebarHighlight() {
-	x.syncSidebarHighlight()
-	if x.sidebarHighlightKey == "" {
-		return
-	}
-	if x.sidebarHighlightInset < 1 {
-		x.sidebarHighlightInset++
-	}
-}
-
 func (x m) currentSidebarMarqueeLabel() (string, int) {
 	f := x.filtered()
 	if len(f) == 0 {
@@ -3153,7 +3155,6 @@ func (x *m) resetSidebarMarquee() {
 }
 
 func (x *m) advanceSidebarMarquee() {
-	x.syncSidebarHighlight()
 	key := x.currentSidebarMarqueeKey()
 	if key == "" {
 		x.sidebarMarqueeKey = ""

@@ -929,26 +929,6 @@ func TestUserListActiveBlacklistedRowUsesBlacklistActiveBg(t *testing.T) {
 	}
 }
 
-func TestSidebarHighlightInsetAnimatesToOne(t *testing.T) {
-	model := m{
-		mode:           "nav",
-		sidebarFocused: true,
-		sidebarTab:     "chats",
-		sel:            0,
-		chats:          []chat{{ID: "15551230001@s.whatsapp.net", ConversationTimestamp: 1710000000}},
-	}
-
-	model.syncSidebarHighlight()
-	if model.sidebarHighlightInset != 0 {
-		t.Fatalf("initial sidebarHighlightInset = %d, want 0", model.sidebarHighlightInset)
-	}
-
-	model.advanceSidebarHighlight()
-	if model.sidebarHighlightInset != 1 {
-		t.Fatalf("animated sidebarHighlightInset = %d, want 1", model.sidebarHighlightInset)
-	}
-}
-
 func TestChatEnterSchedulesDeferredSend(t *testing.T) {
 	model := m{
 		status:    "ready",

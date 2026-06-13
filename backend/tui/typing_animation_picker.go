@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -35,6 +36,27 @@ func getTypingIcons(style string) []string {
 		}
 	}
 	return typingAnimationList[2].icons
+}
+
+// userlistIconPrefix returns the static icon glyph (plus trailing space) used
+// in place of the row number when UserlistIconStyle names a sparkle icon
+// (e.g. "sparkle-2"). Returns "" for "numbers" (or unset), which keeps the
+// existing numbering.
+func userlistIconPrefix(style string) string {
+	idx, ok := strings.CutPrefix(style, "sparkle-")
+	if !ok {
+		return ""
+	}
+	i, err := strconv.Atoi(idx)
+	if err != nil {
+		return ""
+	}
+	for _, a := range typingAnimationList {
+		if a.key == "sparkle" && i >= 0 && i < len(a.icons) {
+			return a.icons[i] + " "
+		}
+	}
+	return ""
 }
 
 func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {

@@ -215,6 +215,8 @@ func (x m) View() string {
 		main = x.mediaIconPicker.Render(rightW, mainH)
 	} else if x.mediaViewPicker.open {
 		main = x.mediaViewPicker.Render(rightW, mainH)
+	} else if x.userlistIconPicker.open {
+		main = x.userlistIconPicker.Render(rightW, mainH)
 	} else if x.helpPicker.open {
 		main = x.helpPicker.RenderHelp(rightW, mainH)
 	} else if x.settingsPicker.open {
@@ -431,6 +433,13 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 				if previewLimit > 0 {
 					centerContent += mutedStyle.Render(sep + truncate(preview, previewLimit))
 				}
+			}
+		} else if phone := num(x.active); !currentConfig.HidePhoneNumber && displayName != phone {
+			const sep = "  · "
+			phoneText := "+" + phone
+			previewLimit := centerW - lipgloss.Width(centerContent) - len([]rune(sep))
+			if previewLimit > 0 {
+				centerContent += mutedStyle.Render(sep + truncate(phoneText, previewLimit))
 			}
 		}
 	}
@@ -828,17 +837,21 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		}
 
 		rowWidth := max(1, w-2)
-		nameWidth := max(1, rowWidth-1)
+		nameWidth := max(1, rowWidth-2)
 
 		n := i + 1
 		var numLabel string
-		switch {
-		case n >= 100:
-			numLabel = fmt.Sprintf("%d ", n)
-		case n >= 10:
-			numLabel = fmt.Sprintf("%d. ", n)
-		default:
-			numLabel = fmt.Sprintf("0%d. ", n)
+		if icon := userlistIconPrefix(currentConfig.UserlistIconStyle); icon != "" {
+			numLabel = icon
+		} else {
+			switch {
+			case n >= 100:
+				numLabel = fmt.Sprintf("%d ", n)
+			case n >= 10:
+				numLabel = fmt.Sprintf("%d. ", n)
+			default:
+				numLabel = fmt.Sprintf("0%d. ", n)
+			}
 		}
 		nameText := numLabel + x.name(c)
 		isMarqueeRow := highlighted || (isActive && x.mode == "chat" && !x.sidebarFocused)
@@ -854,9 +867,6 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			nameText = graphemeWindow(nameText, offset, nameWidth)
 		} else {
 			nameText = truncate(nameText, nameWidth)
-		}
-		if highlighted {
-			nameText = strings.Repeat(" ", x.sidebarHighlightInset) + nameText
 		}
 		var content string
 		switch {
@@ -906,7 +916,11 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		} else {
 			content += unreadStyle.Render(" ")
 		}
-		line := rowBase.Width(rowWidth).Render(content)
+		leftPad := " "
+		if highlighted || isActive {
+			leftPad = lipgloss.NewStyle().Background(bg).Render(" ")
+		}
+		line := rowBase.Width(rowWidth).Render(leftPad + content)
 		lines = append(lines, line)
 	}
 	return lines

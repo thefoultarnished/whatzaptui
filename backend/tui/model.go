@@ -73,6 +73,8 @@ type Config struct {
 	TimestampNewLine     bool   `json:"timestamp_new_line,omitempty"`
 	MediaViewStyle       string `json:"media_view_style,omitempty"`
 	Borderless           bool   `json:"borderless,omitempty"`
+	UserlistIconStyle    string `json:"userlist_icon_style,omitempty"`
+	HidePhoneNumber      bool   `json:"hide_phone_number,omitempty"`
 }
 
 var currentConfig Config
@@ -228,6 +230,7 @@ type m struct {
 	typingAnimationPicker                    picker
 	mediaIconPicker                          picker
 	mediaViewPicker                          picker
+	userlistIconPicker                       picker
 	confirmDialog                            confirmDialog
 	fontTestOpen                             bool
 	fileBrowserOpen                          bool
@@ -269,8 +272,6 @@ type m struct {
 	sidebarMarqueeDir                        int
 	sidebarMarqueeKey                        string
 	sidebarMarqueeTick                       int
-	sidebarHighlightKey                      string
-	sidebarHighlightInset                    int
 	windowTitle                              string
 	sidebarCache                             *sidebarCache
 	mainCache                                *renderCache

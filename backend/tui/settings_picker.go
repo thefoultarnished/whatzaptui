@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,6 +35,13 @@ var settingsDefs = []struct {
 		return currentConfig.MediaViewStyle
 	}},
 	{"Borderless", false, func() bool { return currentConfig.Borderless }, func(v bool) { currentConfig.Borderless = v }, nil},
+	{"Userlist icons", true, nil, nil, func() string {
+		if currentConfig.UserlistIconStyle == "" {
+			return "numbers"
+		}
+		return currentConfig.UserlistIconStyle
+	}},
+	{"Header phone number", false, func() bool { return !currentConfig.HidePhoneNumber }, func(v bool) { currentConfig.HidePhoneNumber = !v }, nil},
 }
 
 var mediaIconList = []struct {
@@ -63,6 +71,18 @@ func buildMediaViewPickerItems() []pickerItem {
 	items := make([]pickerItem, len(mediaViewList))
 	for i, e := range mediaViewList {
 		items[i] = pickerItem{key: e.key, label: e.label}
+	}
+	return items
+}
+
+func buildUserlistIconPickerItems() []pickerItem {
+	items := []pickerItem{{key: "numbers", label: "Numbers"}}
+	for _, a := range typingAnimationList {
+		if a.key == "sparkle" {
+			for i, icon := range a.icons {
+				items = append(items, pickerItem{key: fmt.Sprintf("sparkle-%d", i), label: icon})
+			}
+		}
 	}
 	return items
 }
