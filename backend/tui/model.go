@@ -94,11 +94,41 @@ type chat struct {
 	ConversationTimestamp int64  `json:"conversationTimestamp"`
 	UnreadCount           int    `json:"unreadCount"`
 }
+
+// UnmarshalJSON sanitizes wire-derived display text (Name, Subject) to strip
+// terminal control characters before they ever reach the TUI renderer.
+func (c *chat) UnmarshalJSON(data []byte) error {
+	type alias chat
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	a.Name = sanitizeIncomingText(a.Name)
+	a.Subject = sanitizeIncomingText(a.Subject)
+	*c = chat(a)
+	return nil
+}
+
 type contact struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Notify string `json:"notify"`
 }
+
+// UnmarshalJSON sanitizes wire-derived display text (Name, Notify) to strip
+// terminal control characters before they ever reach the TUI renderer.
+func (c *contact) UnmarshalJSON(data []byte) error {
+	type alias contact
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	a.Name = sanitizeIncomingText(a.Name)
+	a.Notify = sanitizeIncomingText(a.Notify)
+	*c = contact(a)
+	return nil
+}
+
 type wireMsg struct {
 	Key struct {
 		ID          string `json:"id"`
@@ -111,6 +141,22 @@ type wireMsg struct {
 	MediaProto       string         `json:"mediaProto,omitempty"`
 	ReceiptStatus    string         `json:"receiptStatus,omitempty"`
 	PushName         string         `json:"pushName,omitempty"`
+}
+
+// UnmarshalJSON sanitizes wire-derived display text (PushName and every
+// string nested in Message — conversation, extendedTextMessage.text,
+// quotedText, captions, poll text, reaction emoji, file names, etc.) to
+// strip terminal control characters before they ever reach the TUI renderer.
+func (w *wireMsg) UnmarshalJSON(data []byte) error {
+	type alias wireMsg
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	a.PushName = sanitizeIncomingText(a.PushName)
+	sanitizeWireValue(a.Message)
+	*w = wireMsg(a)
+	return nil
 }
 type env struct {
 	Type    string          `json:"type"`
@@ -165,6 +211,9 @@ type m struct {
 	selectedMsgID                            string            // message ID highlighted via mouse click or reply pick
 	replyPickMode                            bool              // Alt+R reply pick mode active
 	replyPickIndex                           int               // index into visible messages during reply pick
+	editingMsgID                             string            // message ID being edited, empty if none
+	editPickMode                             bool              // Alt+A edit pick mode active (own messages only)
+	editPickIndex                            int               // index into editPickCandidates() during edit pick
 	lastClickY                               int
 	lastClickTime                            time.Time
 	mouseEnabled                             bool
@@ -179,6 +228,7 @@ type m struct {
 	typingAnimationPicker                    picker
 	mediaIconPicker                          picker
 	mediaViewPicker                          picker
+	confirmDialog                            confirmDialog
 	fontTestOpen                             bool
 	fileBrowserOpen                          bool
 	fileBrowserDir                           string
@@ -287,6 +337,19 @@ type searchHit struct {
 	FromMe    bool   `json:"fromMe"`
 	Timestamp int64  `json:"timestamp"`
 	Snippet   string `json:"snippet"`
+}
+
+// UnmarshalJSON sanitizes the wire-derived search snippet to strip terminal
+// control characters before they ever reach the TUI renderer.
+func (h *searchHit) UnmarshalJSON(data []byte) error {
+	type alias searchHit
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	a.Snippet = sanitizeIncomingText(a.Snippet)
+	*h = searchHit(a)
+	return nil
 }
 
 type searchResultsMsg struct {

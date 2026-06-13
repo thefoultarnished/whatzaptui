@@ -1193,6 +1193,174 @@ func TestRunCommandSoundProfileAndToggle(t *testing.T) {
 	}
 }
 
+// A-6: /logout, /whitelistall, /blacklistall must open a confirm dialog
+// instead of acting immediately.
+
+func TestRunCommandLogoutOpensConfirmDialog(t *testing.T) {
+	model := m{whitelist: map[string]string{}}
+
+	cmd, ok := model.runCommand("/logout", true)
+	if !ok {
+		t.Fatalf("expected /logout to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected /logout to defer the logout cmd until confirmed, got non-nil cmd")
+	}
+	if !model.confirmDialog.open || model.confirmDialog.action != "logout" {
+		t.Fatalf("confirmDialog = %+v, want open with action=logout", model.confirmDialog)
+	}
+}
+
+func TestRunCommandWhitelistAllOpensConfirmDialog(t *testing.T) {
+	model := m{
+		whitelist: map[string]string{},
+		chats: []chat{
+			{ID: "15551230001@s.whatsapp.net", Name: "Alice"},
+			{ID: "15551230002@s.whatsapp.net", Name: "Bob"},
+		},
+	}
+
+	cmd, ok := model.runCommand("/whitelistall", true)
+	if !ok {
+		t.Fatalf("expected /whitelistall to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected /whitelistall to defer the mutation until confirmed, got non-nil cmd")
+	}
+	if !model.confirmDialog.open || model.confirmDialog.action != "whitelistall" {
+		t.Fatalf("confirmDialog = %+v, want open with action=whitelistall", model.confirmDialog)
+	}
+	if len(model.whitelist) != 0 {
+		t.Fatalf("whitelist = %v, want unchanged (empty) until confirmed", model.whitelist)
+	}
+}
+
+func TestRunCommandWhitelistAllNoChatsSkipsDialog(t *testing.T) {
+	model := m{whitelist: map[string]string{}}
+
+	cmd, ok := model.runCommand("/whitelistall", true)
+	if !ok || cmd == nil {
+		t.Fatalf("expected /whitelistall with no chats to return the 'no chats loaded' topbar cmd")
+	}
+	if model.confirmDialog.open {
+		t.Fatalf("confirmDialog should stay closed when there's nothing to confirm")
+	}
+}
+
+func TestRunCommandBlacklistAllOpensConfirmDialog(t *testing.T) {
+	model := m{
+		whitelist: map[string]string{"15551230001": "Alice", "15551230002": "Bob"},
+	}
+
+	cmd, ok := model.runCommand("/blacklistall", true)
+	if !ok {
+		t.Fatalf("expected /blacklistall to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected /blacklistall to defer the mutation until confirmed, got non-nil cmd")
+	}
+	if !model.confirmDialog.open || model.confirmDialog.action != "blacklistall" {
+		t.Fatalf("confirmDialog = %+v, want open with action=blacklistall", model.confirmDialog)
+	}
+	if len(model.whitelist) != 2 {
+		t.Fatalf("whitelist = %v, want unchanged until confirmed", model.whitelist)
+	}
+}
+
+func TestRunCommandBlacklistAllEmptySkipsDialog(t *testing.T) {
+	model := m{whitelist: map[string]string{}}
+
+	cmd, ok := model.runCommand("/blacklistall", true)
+	if !ok || cmd == nil {
+		t.Fatalf("expected /blacklistall with empty whitelist to return the 'already empty' topbar cmd")
+	}
+	if model.confirmDialog.open {
+		t.Fatalf("confirmDialog should stay closed when there's nothing to confirm")
+	}
+}
+
+func TestKeyConfirmDialogYesRunsWhitelistAll(t *testing.T) {
+	model := m{
+		status:    "ready",
+		demoMode:  true,
+		whitelist: map[string]string{},
+		chats: []chat{
+			{ID: "15551230001@s.whatsapp.net", Name: "Alice"},
+		},
+	}
+	model.confirmDialog.Open("Whitelist all chats?", "Allows sending messages to all 1 chats.", "whitelistall")
+
+	next, _ := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := next.(m)
+
+	if got.confirmDialog.open {
+		t.Fatalf("confirmDialog should be closed after confirming")
+	}
+	if _, ok := got.whitelist["15551230001"]; !ok {
+		t.Fatalf("whitelist = %v, want 15551230001 added after confirm", got.whitelist)
+	}
+}
+
+func TestKeyConfirmDialogYesRunsBlacklistAll(t *testing.T) {
+	model := m{
+		status:   "ready",
+		demoMode: true,
+		whitelist: map[string]string{
+			"15551230001": "Alice",
+		},
+	}
+	model.confirmDialog.Open("Clear the whitelist?", "Removes 1 contact(s) from the whitelist.", "blacklistall")
+
+	next, _ := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := next.(m)
+
+	if got.confirmDialog.open {
+		t.Fatalf("confirmDialog should be closed after confirming")
+	}
+	if len(got.whitelist) != 0 {
+		t.Fatalf("whitelist = %v, want empty after confirming blacklistall", got.whitelist)
+	}
+}
+
+func TestKeyConfirmDialogYesRunsLogout(t *testing.T) {
+	model := m{status: "ready", whitelist: map[string]string{}}
+	model.confirmDialog.Open("Log out?", "Ends your session.", "logout")
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := next.(m)
+
+	if got.confirmDialog.open {
+		t.Fatalf("confirmDialog should be closed after confirming")
+	}
+	if cmd == nil {
+		t.Fatalf("expected confirming logout to return the logout cmd, got nil")
+	}
+}
+
+func TestKeyConfirmDialogNoCancelsWithoutMutation(t *testing.T) {
+	model := m{
+		status:   "ready",
+		demoMode: true,
+		whitelist: map[string]string{
+			"15551230001": "Alice",
+		},
+	}
+	model.confirmDialog.Open("Clear the whitelist?", "Removes 1 contact(s) from the whitelist.", "blacklistall")
+
+	next, _ := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	got := next.(m)
+
+	if got.confirmDialog.open {
+		t.Fatalf("confirmDialog should be closed after cancelling")
+	}
+	if len(got.whitelist) != 1 {
+		t.Fatalf("whitelist = %v, want unchanged after cancelling", got.whitelist)
+	}
+	if !strings.Contains(got.topBarMsg, "Cancelled") {
+		t.Fatalf("topBarMsg = %q, want it to mention Cancelled", got.topBarMsg)
+	}
+}
+
 func TestNavListWrapAround(t *testing.T) {
 	model := m{
 		status: "ready",

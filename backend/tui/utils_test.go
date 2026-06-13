@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,6 +90,197 @@ func TestSanitizeOutgoingTextPreservesNewlines(t *testing.T) {
 	want := "hello\nworld\nagain"
 	if got != want {
 		t.Fatalf("sanitizeOutgoingText() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeIncomingTextStripsEscapeSequences(t *testing.T) {
+	got := sanitizeIncomingText("\x1b[31mred\x1b[0m")
+	want := "[31mred[0m"
+	if got != want {
+		t.Fatalf("sanitizeIncomingText() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeIncomingTextStripsOSCSequence(t *testing.T) {
+	got := sanitizeIncomingText("\x1b]0;evil title\x07hi")
+	want := "]0;evil titlehi"
+	if got != want {
+		t.Fatalf("sanitizeIncomingText() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeIncomingTextStripsC1Controls(t *testing.T) {
+	got := sanitizeIncomingText("abc")
+	want := "abc"
+	if got != want {
+		t.Fatalf("sanitizeIncomingText() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeIncomingTextPreservesEmojiAndZWJ(t *testing.T) {
+	for _, s := range []string{
+		"👨‍👩‍👧‍👦", // family emoji built from ZWJ joiners
+		"❤️",                // heart + variation selector
+	} {
+		if got := sanitizeIncomingText(s); got != s {
+			t.Fatalf("sanitizeIncomingText(%q) = %q, want unchanged", s, got)
+		}
+	}
+}
+
+func TestSanitizeIncomingTextPreservesCombiningMarks(t *testing.T) {
+	s := "زَرٰ"
+	if got := sanitizeIncomingText(s); got != s {
+		t.Fatalf("sanitizeIncomingText(%q) = %q, want unchanged", s, got)
+	}
+}
+
+func TestSanitizeIncomingTextNormalizesCRLF(t *testing.T) {
+	got := sanitizeIncomingText("hello\r\nworld\ragain")
+	want := "hello\nworld\nagain"
+	if got != want {
+		t.Fatalf("sanitizeIncomingText() = %q, want %q", got, want)
+	}
+}
+
+func TestWireMsgUnmarshalJSONSanitizesMessageFields(t *testing.T) {
+	esc := "\x1b"
+	type wireKeyJSON struct {
+		ID        string `json:"id"`
+		RemoteJID string `json:"remoteJid"`
+		FromMe    bool   `json:"fromMe"`
+	}
+	type wireMsgJSON struct {
+		Key              wireKeyJSON    `json:"key"`
+		MessageTimestamp int64          `json:"messageTimestamp"`
+		PushName         string         `json:"pushName"`
+		Message          map[string]any `json:"message"`
+	}
+	src := wireMsgJSON{
+		Key:              wireKeyJSON{ID: "ABC123", RemoteJID: "123@s.whatsapp.net"},
+		MessageTimestamp: 1700000000,
+		PushName:         "evil" + esc + "[31mname",
+		Message: map[string]any{
+			"conversation": "hi" + esc + "[31mthere",
+			"extendedTextMessage": map[string]any{
+				"text":       "fancy" + esc + "[0mtext",
+				"quotedText": "quoted" + esc + "]0;pwnedtext",
+			},
+		},
+	}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var w wireMsg
+	if err := json.Unmarshal(raw, &w); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if w.PushName != "evil[31mname" {
+		t.Fatalf("PushName = %q", w.PushName)
+	}
+	if got := w.Message["conversation"]; got != "hi[31mthere" {
+		t.Fatalf("conversation = %q", got)
+	}
+	ext, _ := w.Message["extendedTextMessage"].(map[string]any)
+	if got := ext["text"]; got != "fancy[0mtext" {
+		t.Fatalf("extendedTextMessage.text = %q", got)
+	}
+	if got := ext["quotedText"]; got != "quoted]0;pwnedtext" {
+		t.Fatalf("quotedText = %q", got)
+	}
+}
+
+func TestWireMsgUnmarshalJSONPreservesNonStringFields(t *testing.T) {
+	raw := `{
+		"key": {"id": "ABC123", "remoteJid": "123@s.whatsapp.net", "fromMe": true, "participant": "456@s.whatsapp.net"},
+		"messageTimestamp": 1700000000,
+		"message": {"conversation": "hello"}
+	}`
+	var w wireMsg
+	if err := json.Unmarshal([]byte(raw), &w); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if w.Key.ID != "ABC123" || w.Key.RemoteJID != "123@s.whatsapp.net" || w.Key.Participant != "456@s.whatsapp.net" {
+		t.Fatalf("Key = %+v", w.Key)
+	}
+	if !w.Key.FromMe {
+		t.Fatalf("FromMe = false, want true")
+	}
+	if w.MessageTimestamp != 1700000000 {
+		t.Fatalf("MessageTimestamp = %d", w.MessageTimestamp)
+	}
+}
+
+func TestChatUnmarshalJSONSanitizesNameAndSubject(t *testing.T) {
+	esc := "\x1b"
+	src := struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Subject string `json:"subject"`
+	}{ID: "123@g.us", Name: "evil" + esc + "[31mname", Subject: "evil" + esc + "[32msubject"}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var c chat
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if c.Name != "evil[31mname" {
+		t.Fatalf("Name = %q", c.Name)
+	}
+	if c.Subject != "evil[32msubject" {
+		t.Fatalf("Subject = %q", c.Subject)
+	}
+}
+
+func TestContactUnmarshalJSONSanitizesNameAndNotify(t *testing.T) {
+	esc := "\x1b"
+	src := struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Notify string `json:"notify"`
+	}{ID: "123@s.whatsapp.net", Name: "evil" + esc + "[31mname", Notify: "evil" + esc + "[32mnotify"}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var c contact
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if c.Name != "evil[31mname" {
+		t.Fatalf("Name = %q", c.Name)
+	}
+	if c.Notify != "evil[32mnotify" {
+		t.Fatalf("Notify = %q", c.Notify)
+	}
+}
+
+func TestSearchHitUnmarshalJSONSanitizesSnippet(t *testing.T) {
+	esc := "\x1b"
+	src := struct {
+		ChatID    string `json:"chatId"`
+		MessageID string `json:"messageId"`
+		FromMe    bool   `json:"fromMe"`
+		Timestamp int64  `json:"timestamp"`
+		Snippet   string `json:"snippet"`
+	}{ChatID: "123@s.whatsapp.net", MessageID: "ABC", Timestamp: 1700000000, Snippet: "evil" + esc + "[31msnippet"}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var h searchHit
+	if err := json.Unmarshal(raw, &h); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if h.Snippet != "evil[31msnippet" {
+		t.Fatalf("Snippet = %q", h.Snippet)
 	}
 }
 

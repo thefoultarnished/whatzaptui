@@ -167,6 +167,56 @@ func hasVisibleText(s string) bool {
 	return strings.TrimSpace(sanitizeOutgoingText(s)) != ""
 }
 
+// sanitizeIncomingText strips Unicode Cc-category control characters
+// (ESC, BEL, DEL, C0/C1 controls — the bytes needed to start ANSI/OSC/CSI
+// terminal escape sequences) from wire-derived text, while preserving all
+// printable Unicode (emoji, ZWJ joiners, variation selectors, combining
+// marks, RTL text). Newlines are preserved; \r\n and lone \r are normalized
+// to \n.
+func sanitizeIncomingText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if !strings.ContainsFunc(s, unicode.IsControl) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\n' {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// sanitizeWireValue recursively sanitizes every string found in a decoded
+// JSON value (map[string]any / []any), in place, via sanitizeIncomingText.
+func sanitizeWireValue(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, vv := range t {
+			if s, ok := vv.(string); ok {
+				t[k] = sanitizeIncomingText(s)
+				continue
+			}
+			sanitizeWireValue(vv)
+		}
+	case []any:
+		for i, vv := range t {
+			if s, ok := vv.(string); ok {
+				t[i] = sanitizeIncomingText(s)
+				continue
+			}
+			sanitizeWireValue(vv)
+		}
+	}
+}
+
 func appendComposerText(base, extra string) string {
 	if extra == "" {
 		return base

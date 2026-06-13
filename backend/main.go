@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"mime"
 	"net/http"
 	"os"
@@ -204,6 +206,45 @@ const appDataDirName = "WhatZAP"
 const apiTokenEnvVar = "WHATZAP_API_TOKEN"
 const authHeaderName = "Authorization"
 
+// redactPlaceholder is what a leaked secret is replaced with in logs.
+const redactPlaceholder = "[REDACTED]"
+
+// redactingWriter wraps an io.Writer and scrubs a secret string out of
+// every write before it reaches the underlying sink. It is the S-16
+// defense: even if some future code path does log.Printf("%v", r) and
+// dumps an *http.Request (whose Header map holds "Authorization: Bearer
+// <token>"), the token value is replaced with [REDACTED] before it
+// touches stderr. The stdlib logger buffers a full line and calls Write
+// once per entry, so a token never straddles two Write calls.
+type redactingWriter struct {
+	w      io.Writer
+	secret []byte
+}
+
+func newRedactingWriter(w io.Writer, secret string) io.Writer {
+	s := strings.TrimSpace(secret)
+	if s == "" {
+		// Nothing to scrub — don't pay the bytes.Replace cost on every
+		// log line. Return the raw writer so behavior is unchanged.
+		return w
+	}
+	return &redactingWriter{w: w, secret: []byte(s)}
+}
+
+func (rw *redactingWriter) Write(p []byte) (int, error) {
+	if !bytes.Contains(p, rw.secret) {
+		return rw.w.Write(p)
+	}
+	cleaned := bytes.ReplaceAll(p, rw.secret, []byte(redactPlaceholder))
+	// Report len(p) as written, not len(cleaned): callers expect the
+	// number of input bytes consumed, and a short count would trip the
+	// stdlib logger into thinking the write failed.
+	if _, err := rw.w.Write(cleaned); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 // A-13: in-memory map caps for unbounded-growth maps. Trimmed on
 // a 30s ticker in main(). Set to 0 to disable cap.
 var maxChatCaps     = 1000
@@ -228,6 +269,14 @@ func cappedEvict[K comparable, V any](m map[K]V, max int) {
 }
 
 func main() {
+	// S-16: route the default logger through a redactor before anything
+	// is logged, so the bearer token can never leak into stderr even if
+	// a future code path logs a raw *http.Request. The token is read
+	// from the same env var NewApp() uses; if it's unset, the redactor
+	// is a transparent pass-through (newRedactingWriter returns the raw
+	// writer), so dev runs without a token are unaffected.
+	log.SetOutput(newRedactingWriter(os.Stderr, os.Getenv(apiTokenEnvVar)))
+
 	// S-3: print the active whatsmeow log level as the very first
 	// line so users can verify WHATZAP_LOG_LEVEL took effect. Goes
 	// to stdout (which the TUI's 8KB ring buffer also captures,
@@ -269,7 +318,10 @@ func main() {
 		WriteTimeout:      httpWriteTimeout,
 		IdleTimeout:       httpIdleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
-		ErrorLog:          log.New(os.Stderr, "[http] ", log.LstdFlags),
+		// S-16: same redactor as the default logger. The stdlib http
+		// server can log request details here on malformed input; route
+		// it through the scrubber so a token can't leak via that path.
+		ErrorLog: log.New(newRedactingWriter(os.Stderr, os.Getenv(apiTokenEnvVar)), "[http] ", log.LstdFlags),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -611,6 +663,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/typing", a.handleTyping)
 	mux.HandleFunc("/messages/react", a.handleReact)
 	mux.HandleFunc("/messages/delete", a.handleDeleteMessage)
+	mux.HandleFunc("/messages/edit", a.handleEditMessage)
 	mux.HandleFunc("/search", a.handleSearch)
 	mux.HandleFunc("/block", a.handleBlock)
 	mux.HandleFunc("/group/members", a.handleGroupMembers)
@@ -707,6 +760,26 @@ func (a *App) bindEvents() {
 			}
 			chatID := a.canonicalizeChatID(v.Info.Chat.String())
 			if chatID == "" || chatID == "status@broadcast" {
+				return
+			}
+			if pm := v.Message.GetProtocolMessage(); pm != nil && pm.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT && pm.GetEditedMessage() != nil {
+				targetID := pm.GetKey().GetID()
+				if targetID == "" {
+					return
+				}
+				edited := pm.GetEditedMessage()
+				newMsg, _ := a.wireMessagePayload(edited, effectiveMessage(edited), chatID, v.Info.IsGroup)
+				wire, ok, err := a.editMessageInDB(chatID, targetID, v.Info.IsFromMe, func(m map[string]any) {
+					clear(m)
+					maps.Copy(m, newMsg)
+				})
+				if err != nil {
+					log.Printf("edit message: %v", err)
+					return
+				}
+				if ok {
+					a.broadcast(EventEnvelope{Type: "message:edited", Payload: wire})
+				}
 				return
 			}
 			msg := a.toWireMessage(v)
@@ -1596,7 +1669,7 @@ func (a *App) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.startSession(); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -1774,7 +1847,7 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 	allContacts, err := a.client.Store.Contacts.GetAllContacts(storeCtx)
 	storeCancel()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 
@@ -1984,7 +2057,7 @@ func (a *App) handleSyncGroups(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := a.client.GetJoinedGroups(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 
@@ -2026,7 +2099,7 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 		rows, err = a.db.Query(fmt.Sprintf(q, ""), chatID, fetch)
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	defer rows.Close()
@@ -2080,7 +2153,7 @@ func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, 
 		chatID, anchorTS, half,
 	)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	var older []WireMessage
@@ -2103,7 +2176,7 @@ func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, 
 		chatID, msgID, anchorFromMe,
 	)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	var anchor []WireMessage
@@ -2124,7 +2197,7 @@ func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, 
 		chatID, anchorTS, half,
 	)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	var newer []WireMessage
@@ -2206,7 +2279,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		rows, err = a.db.Query(fmt.Sprintf(baseQ, ""), matchExpr, limit)
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	defer rows.Close()
@@ -2293,7 +2366,7 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	allowed, err := a.isChatAllowed(req.ChatID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	if !allowed {
@@ -2324,7 +2397,7 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 
@@ -2388,7 +2461,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 
 	allowed, err := a.isChatAllowed(chatID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	if !allowed {
@@ -2416,7 +2489,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	// LimitReader caps the read at maxUploadBytes+1 so we can detect overflow.
 	data, err := io.ReadAll(io.LimitReader(f, maxUploadBytes+1))
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "read file: "+err.Error())
+		writeInternalErr(w, fmt.Errorf("read file: %w", err))
 		return
 	}
 	if int64(len(data)) > maxUploadBytes {
@@ -2437,7 +2510,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 
 	upload, err := a.client.Upload(context.Background(), data, mediaType)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 
@@ -2449,7 +2522,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 
@@ -2574,6 +2647,15 @@ func (a *App) handleTyping(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid chatId")
 		return
 	}
+	allowed, err := a.isChatAllowed(req.ChatID)
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	if !allowed {
+		writeErr(w, http.StatusForbidden, "chat not whitelisted")
+		return
+	}
 	state := types.ChatPresenceComposing
 	if req.State == "paused" {
 		state = types.ChatPresencePaused
@@ -2611,6 +2693,15 @@ func (a *App) handleReact(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid chatId")
 		return
 	}
+	allowed, err := a.isChatAllowed(req.ChatID)
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	if !allowed {
+		writeErr(w, http.StatusForbidden, "chat not whitelisted")
+		return
+	}
 	senderJID := types.EmptyJID
 	if req.Sender != "" {
 		senderJID, _ = types.ParseJID(a.canonicalizeChatID(req.Sender))
@@ -2618,7 +2709,7 @@ func (a *App) handleReact(w http.ResponseWriter, r *http.Request) {
 	msg := a.client.BuildReaction(chatJID, senderJID, types.MessageID(req.MessageID), req.Reaction)
 	resp, err := a.client.SendMessage(context.Background(), chatJID, msg)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	now := time.Now().Unix()
@@ -2691,12 +2782,12 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	if *req.FromMe {
 		_, err = a.client.RevokeMessage(context.Background(), chatJID, types.MessageID(req.MessageID))
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			writeInternalErr(w, err)
 			return
 		}
 	}
 	if err := a.deleteMessageFromDB(req.ChatID, req.MessageID, *req.FromMe); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	a.persistState()
@@ -2732,6 +2823,131 @@ func (a *App) deleteMessageFromDB(chatID, messageID string, fromMe bool) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (a *App) handleEditMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		ChatID    string `json:"chatId"`
+		MessageID string `json:"messageId"`
+		Text      string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.ChatID = a.canonicalizeChatID(strings.TrimSpace(req.ChatID))
+	req.MessageID = strings.TrimSpace(req.MessageID)
+	req.Text = sanitizeOutgoingText(req.Text)
+	if req.ChatID == "" || req.MessageID == "" || !hasVisibleText(req.Text) {
+		writeErr(w, http.StatusBadRequest, "chatId, messageId and text are required")
+		return
+	}
+	chatJID, err := types.ParseJID(req.ChatID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid chatId")
+		return
+	}
+	if !a.requireConnectedClient(w) {
+		return
+	}
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		writeErr(w, http.StatusInternalServerError, "no database")
+		return
+	}
+	var ts int64
+	err = db.QueryRow(`SELECT ts FROM messages WHERE chat_id = ? AND id = ? AND from_me = 1`, req.ChatID, req.MessageID).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "message not found")
+		return
+	}
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	if time.Since(time.Unix(ts, 0)) > whatsmeow.EditWindow {
+		writeErr(w, http.StatusConflict, "edit window expired")
+		return
+	}
+	newContent := &waE2E.Message{Conversation: proto.String(req.Text)}
+	editMsg := a.client.BuildEdit(chatJID, types.MessageID(req.MessageID), newContent)
+	if _, err := a.client.SendMessage(context.Background(), chatJID, editMsg); err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	wire, ok, err := a.editMessageInDB(req.ChatID, req.MessageID, true, func(m map[string]any) {
+		if ext, ok := m["extendedTextMessage"].(map[string]any); ok {
+			ext["text"] = req.Text
+			m["extendedTextMessage"] = ext
+		} else {
+			m["conversation"] = req.Text
+		}
+	})
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	if ok {
+		a.broadcast(EventEnvelope{Type: "message:edited", Payload: wire})
+	}
+	a.persistState()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": wire})
+}
+
+// editMessageInDB applies mutate to the stored message_json for (chatID, msgID, fromMe),
+// marks it edited, persists the change and FTS index, and returns the updated WireMessage.
+// ok is false if no matching row exists.
+func (a *App) editMessageInDB(chatID, msgID string, fromMe bool, mutate func(map[string]any)) (WireMessage, bool, error) {
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return WireMessage{}, false, nil
+	}
+	fromMeInt := 0
+	if fromMe {
+		fromMeInt = 1
+	}
+	var participant, pushName, receipt, messageJSON string
+	var ts int64
+	err := db.QueryRow(
+		`SELECT participant, ts, push_name, receipt, message_json FROM messages WHERE chat_id = ? AND id = ? AND from_me = ?`,
+		chatID, msgID, fromMeInt,
+	).Scan(&participant, &ts, &pushName, &receipt, &messageJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WireMessage{}, false, nil
+	}
+	if err != nil {
+		return WireMessage{}, false, err
+	}
+	var msgMap map[string]any
+	if err := json.Unmarshal([]byte(messageJSON), &msgMap); err != nil || msgMap == nil {
+		msgMap = map[string]any{}
+	}
+	mutate(msgMap)
+	msgMap["edited"] = true
+	newJSON, err := json.Marshal(msgMap)
+	if err != nil {
+		return WireMessage{}, false, err
+	}
+	if _, err := db.Exec(`UPDATE messages SET message_json = ? WHERE chat_id = ? AND id = ? AND from_me = ?`, string(newJSON), chatID, msgID, fromMeInt); err != nil {
+		return WireMessage{}, false, err
+	}
+	a.upsertMessageFTS(chatID, msgID, fromMeInt, extractSearchableText(msgMap))
+	wire := WireMessage{
+		Key:              WireKey{ID: msgID, RemoteJID: chatID, FromMe: fromMe, Participant: participant},
+		Message:          msgMap,
+		MessageTimestamp: ts,
+		PushName:         pushName,
+		ReceiptStatus:    receipt,
+	}
+	return wire, true, nil
 }
 
 func (a *App) handleProfilePicture(w http.ResponseWriter, r *http.Request) {
@@ -2818,7 +3034,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hadRuntimeResources := a.client != nil || a.storeContainer != nil
-	var errs []string
+	var errs []error
 	// Remote logout is best-effort. Even if the server is unreachable, we
 	// want to tear down local state. Cap the network call at 5s so a hung
 	// WhatsApp server can't hold logoutMu forever.
@@ -2826,14 +3042,14 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		if a.client.Store != nil && a.client.Store.ID != nil {
 			logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := a.client.Logout(logoutCtx); err != nil {
-				errs = append(errs, fmt.Sprintf("remote logout failed: %v", err))
+				errs = append(errs, fmt.Errorf("remote logout failed: %w", err))
 			}
 			logoutCancel()
 		}
 		a.client.Disconnect()
 		if a.client.Store != nil && a.client.Store.ID != nil {
 			if err := a.client.Store.Delete(context.Background()); err != nil {
-				errs = append(errs, fmt.Sprintf("store delete failed: %v", err))
+				errs = append(errs, fmt.Errorf("store delete failed: %w", err))
 			} else {
 				a.client.Store.ID = nil
 			}
@@ -2854,13 +3070,13 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Close all DB connections before deleting files (required on Windows to release file locks).
 	if a.storeContainer != nil {
 		if err := a.storeContainer.Close(); err != nil {
-			errs = append(errs, fmt.Sprintf("store container close failed: %v", err))
+			errs = append(errs, fmt.Errorf("store container close failed: %w", err))
 		}
 		a.storeContainer = nil
 	}
 	if a.db != nil {
 		if err := a.db.Close(); err != nil {
-			errs = append(errs, fmt.Sprintf("db close failed: %v", err))
+			errs = append(errs, fmt.Errorf("db close failed: %w", err))
 		}
 		a.db = nil
 	}
@@ -2868,13 +3084,13 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(a.cacheDir) != "" {
 		if hadRuntimeResources {
 			if err := a.resetPersistentStorage(); err != nil {
-				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
 			}
 		} else {
 			if err := os.RemoveAll(a.cacheDir); err != nil {
-				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
 			} else if err := os.MkdirAll(a.cacheDir, 0o755); err != nil {
-				errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
 			}
 		}
 		if len(backup) > 0 {
@@ -2912,13 +3128,13 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := a.persistStateWithErr(); err != nil {
-			errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+			errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
 		}
 	} else if err := a.persistStateWithErr(); err != nil {
-		errs = append(errs, fmt.Sprintf("state cleanup failed: %v", err))
+		errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
 	}
 	if len(errs) > 0 {
-		writeErr(w, http.StatusInternalServerError, strings.Join(errs, "; "))
+		writeInternalErr(w, errors.Join(errs...))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Logged out successfully"})
@@ -3104,6 +3320,48 @@ func phoneIdentity(jid string) string {
 	}, local)
 }
 
+// quotedStanzaFromMe looks up a quoted message by its stanza (message) ID
+// in our own DB and reports whether we authored it. The second return is
+// false when the message isn't in our store (so the caller can fall back
+// to a heuristic). This is the authoritative source for "is this quote
+// mine" because it reads our recorded from_me flag, independent of whether
+// WhatsApp populated the ContextInfo participant field.
+func (a *App) quotedStanzaFromMe(chatID, stanzaID string) (bool, bool) {
+	stanzaID = strings.TrimSpace(stanzaID)
+	if a == nil || stanzaID == "" {
+		return false, false
+	}
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return false, false
+	}
+	var fromMe int
+	err := db.QueryRow(
+		`SELECT from_me FROM messages WHERE chat_id = ? AND id = ? ORDER BY from_me DESC LIMIT 1`,
+		chatID, stanzaID,
+	).Scan(&fromMe)
+	if err != nil {
+		return false, false
+	}
+	return fromMe == 1, true
+}
+
+// quotedMessageFromMe decides whether a quoted message was authored by us,
+// which the TUI uses to pick the quote's color (sent vs received palette).
+// normalized is the output of normalizeQuotedParticipant, which returns ""
+// precisely when the quoted author is self. So a raw participant that was
+// present but normalized away is the unambiguous "this is my message"
+// signal — and it works in groups too, where the elimination heuristic
+// below can't. If it wasn't self, fall back to the 1-to-1 elimination check.
+func quotedMessageFromMe(chatID, rawParticipant, normalized string, isGroup bool) bool {
+	if strings.TrimSpace(rawParticipant) != "" && strings.TrimSpace(normalized) == "" {
+		return true
+	}
+	return quotedFromMeForChat(chatID, normalized, isGroup)
+}
+
 func quotedFromMeForChat(chatID, quotedParticipant string, isGroup bool) bool {
 	quotedParticipant = strings.TrimSpace(quotedParticipant)
 	if quotedParticipant == "" {
@@ -3129,13 +3387,24 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 			if a != nil && a.client != nil && a.client.Store != nil && a.client.Store.ID != nil {
 				selfID = a.client.Store.ID.String()
 			}
-			entry["quotedParticipant"] = normalizeQuotedParticipant(ctx.GetParticipant(), selfID, func(id string) string {
+			rawParticipant := strings.TrimSpace(ctx.GetParticipant())
+			normalized := normalizeQuotedParticipant(rawParticipant, selfID, func(id string) string {
 				if a == nil {
 					return strings.TrimSpace(id)
 				}
 				return a.canonicalizeChatID(id)
 			})
-			entry["quotedFromMe"] = quotedFromMeForChat(chatID, fmt.Sprint(entry["quotedParticipant"]), isGroup)
+			entry["quotedParticipant"] = normalized
+			// Prefer the authoritative signal: if the quoted message is in
+			// our own DB marked from_me=1, the quote is mine — regardless of
+			// whether WhatsApp populated the participant field (it often
+			// doesn't for 1-to-1 quotes). Fall back to the participant
+			// heuristic when the quoted message isn't in our store yet.
+			if fromMe, ok := a.quotedStanzaFromMe(chatID, ctx.GetStanzaID()); ok {
+				entry["quotedFromMe"] = fromMe
+			} else {
+				entry["quotedFromMe"] = quotedMessageFromMe(chatID, rawParticipant, normalized, isGroup)
+			}
 		}
 		msg["extendedTextMessage"] = entry
 	}
@@ -4000,7 +4269,7 @@ func (a *App) handleGetWhitelist(w http.ResponseWriter, r *http.Request) {
 		if err.Error() == "permission store unavailable" {
 			writeErr(w, http.StatusConflict, err.Error())
 		} else {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			writeInternalErr(w, err)
 		}
 		return
 	}
@@ -4012,12 +4281,16 @@ func (a *App) handleGetWhitelist(w http.ResponseWriter, r *http.Request) {
 
 // normalizeWhitelistPhone validates and normalizes a phone string
 // for chat_permissions. Accepts digits only (e.g. "15551230001")
-// or digits + @server suffix (e.g. "15551230001@s.whatsapp.net",
-// "120363040000001234@g.us") — the suffix is stripped to the
-// local part that phoneFromJID would extract from a chat ID.
-// Returns an error if the input is empty, contains non-digit
-// characters, or is a bare @server with no local part.
+// or digits + @s.whatsapp.net suffix (e.g. "15551230001@s.whatsapp.net")
+// — the suffix is stripped to the local part that phoneFromJID would
+// extract from a chat ID. Returns an error if the input is empty,
+// contains non-digit characters, is a bare @server with no local
+// part, or (A-9) is a group JID (@g.us) — the whitelist is a
+// phone-number allowlist, not a group allowlist.
 func normalizeWhitelistPhone(phone string) (string, error) {
+	if strings.HasSuffix(phone, "@g.us") {
+		return "", fmt.Errorf("group chats cannot be whitelisted")
+	}
 	local := phone
 	if idx := strings.IndexByte(phone, '@'); idx >= 0 {
 		local = phone[:idx]
@@ -4065,7 +4338,7 @@ func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 		if err.Error() == "permission store unavailable" {
 			writeErr(w, http.StatusConflict, err.Error())
 		} else {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			writeInternalErr(w, err)
 		}
 		return
 	}
@@ -4102,7 +4375,7 @@ func (a *App) handleSetName(w http.ResponseWriter, r *http.Request) {
 		if err.Error() == "permission store unavailable" {
 			writeErr(w, http.StatusConflict, err.Error())
 		} else {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			writeInternalErr(w, err)
 		}
 		return
 	}
@@ -4139,7 +4412,7 @@ func (a *App) handleMediaDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := a.client.DownloadAny(context.Background(), &msg)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeInternalErr(w, err)
 		return
 	}
 	ext := mediaExtension(&msg)
@@ -4453,7 +4726,7 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	info, err := a.client.GetGroupInfo(r.Context(), jid)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed to get group info: "+err.Error())
+		writeInternalErr(w, fmt.Errorf("get group info: %w", err))
 		return
 	}
 
@@ -4520,6 +4793,24 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
+}
+
+// nextInternalErrID returns a short opaque ID used to correlate a client-facing
+// "internal error" response with the real error in the server log, without
+// exposing the real error text (which may contain SQL/file/library internals).
+var internalErrCounter atomic.Uint64
+
+func nextInternalErrID() string {
+	return fmt.Sprintf("err-%d", internalErrCounter.Add(1))
+}
+
+// writeInternalErr logs err server-side (redacted by the writer set up in
+// main()) under an opaque ID, then returns that ID to the client instead of
+// the raw error text.
+func writeInternalErr(w http.ResponseWriter, err error) {
+	id := nextInternalErrID()
+	log.Printf("[%s] %v", id, err)
+	writeErr(w, http.StatusInternalServerError, fmt.Sprintf("internal error (ref: %s)", id))
 }
 
 func sanitizeOutgoingText(s string) string {

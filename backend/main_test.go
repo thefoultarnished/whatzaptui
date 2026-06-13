@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -912,7 +913,12 @@ func TestHandleLogoutFailsWhenCacheDirCannotBeRecreated(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "state cleanup failed") {
+	// S-7: the response must not leak the underlying "state cleanup failed: ..."
+	// error text — only an opaque ref ID.
+	if strings.Contains(rec.Body.String(), "state cleanup failed") {
+		t.Fatalf("response leaked internal error text: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "internal error (ref: err-") {
 		t.Fatalf("unexpected error body: %s", rec.Body.String())
 	}
 }
@@ -1306,7 +1312,7 @@ func TestNormalizeWhitelistPhone(t *testing.T) {
 	}{
 		{name: "plain digits", input: "15551230001", want: "15551230001"},
 		{name: "with @s.whatsapp.net suffix", input: "15551230001@s.whatsapp.net", want: "15551230001"},
-		{name: "with @g.us suffix", input: "120363040000001234@g.us", want: "120363040000001234"},
+		{name: "rejects @g.us group JID", input: "120363040000001234@g.us", wantErr: "group chats cannot be whitelisted"},
 		{name: "rejects plus prefix", input: "+15551230001", wantErr: "digits only"},
 		{name: "rejects letters", input: "abc123", wantErr: "digits only"},
 		{name: "rejects hyphens", input: "123-456-7890", wantErr: "digits only"},
@@ -1385,6 +1391,23 @@ func TestHandleSetWhitelistRejectsInvalidPhone(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "digits only") {
 		t.Fatalf("body = %s, want error containing 'digits only'", rec.Body.String())
+	}
+}
+
+// A-9: /whitelist/set must reject group JIDs (@g.us) — the whitelist is a
+// phone-number allowlist, not a group allowlist.
+func TestHandleSetWhitelistRejectsGroupJID(t *testing.T) {
+	app := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/whitelist/set", bytes.NewBufferString(`{"phone":"120363040000001234@g.us","name":"Group","allowed":1}`))
+	rec := httptest.NewRecorder()
+	app.handleSetWhitelist(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "group chats cannot be whitelisted") {
+		t.Fatalf("body = %s, want error containing 'group chats cannot be whitelisted'", rec.Body.String())
 	}
 }
 
@@ -1549,6 +1572,79 @@ func TestQuotedFromMeForOneToOneChatTreatsNonRemoteAsSelf(t *testing.T) {
 	}
 	if quotedFromMeForChat("15551230001@s.whatsapp.net", "", true) {
 		t.Fatalf("expected empty quoted participant in group to default to non-self")
+	}
+}
+
+// TestQuotedMessageFromMe covers the fix for the bug where a reply quoting
+// my own message rendered the quote in the received (other-party) color.
+// normalizeQuotedParticipant returns "" when the quoted author is self, so
+// "raw present + normalized empty" must be read as "from me".
+func TestQuotedMessageFromMe(t *testing.T) {
+	const chat = "15551230001@s.whatsapp.net"
+
+	// The bug case: B quotes my message in a 1:1. WhatsApp sets the raw
+	// participant to my JID; normalizeQuotedParticipant blanks it to "".
+	// raw present + normalized "" ⇒ from me.
+	if !quotedMessageFromMe(chat, "15559990000@s.whatsapp.net", "", false) {
+		t.Fatalf("self-authored quote (raw present, normalized empty) should be from me")
+	}
+
+	// Same signal must hold in a group, where the elimination heuristic
+	// can't help (chatID is the group JID, not a person).
+	if !quotedMessageFromMe("120363040000001234@g.us", "15559990000@s.whatsapp.net", "", true) {
+		t.Fatalf("self-authored quote in a group should be from me")
+	}
+
+	// B quotes B's own message in a 1:1: raw and normalized both = the chat
+	// partner. Not from me.
+	if quotedMessageFromMe(chat, chat, chat, false) {
+		t.Fatalf("partner quoting their own message should NOT be from me")
+	}
+
+	// Genuinely absent participant (WhatsApp omitted it): raw "" ⇒ no
+	// self signal, falls through to elimination, which yields non-self.
+	if quotedMessageFromMe(chat, "", "", false) {
+		t.Fatalf("absent participant should default to non-self")
+	}
+}
+
+// TestQuotedStanzaFromMe verifies the authoritative DB lookup: a quote of a
+// message we sent (from_me=1) reports true even when WhatsApp omitted the
+// participant; a quote of a received message reports false; and a quote of a
+// message not in our store reports found=false so the caller can fall back.
+func TestQuotedStanzaFromMe(t *testing.T) {
+	app := newTestApp(t)
+	const chat = "15551230001@s.whatsapp.net"
+
+	// Seed one outgoing and one incoming message in the same chat.
+	if _, err := app.db.Exec(
+		`INSERT INTO messages (id, chat_id, from_me, ts, message_json) VALUES (?, ?, 1, 1, ?)`,
+		"mine-1", chat, `{"conversation":"my message"}`,
+	); err != nil {
+		t.Fatalf("seed outgoing: %v", err)
+	}
+	if _, err := app.db.Exec(
+		`INSERT INTO messages (id, chat_id, from_me, ts, message_json) VALUES (?, ?, 0, 2, ?)`,
+		"theirs-1", chat, `{"conversation":"their message"}`,
+	); err != nil {
+		t.Fatalf("seed incoming: %v", err)
+	}
+
+	// Quote of my own message ⇒ from me, found.
+	if fromMe, ok := app.quotedStanzaFromMe(chat, "mine-1"); !ok || !fromMe {
+		t.Fatalf("quote of own message: got fromMe=%v ok=%v, want true true", fromMe, ok)
+	}
+	// Quote of their message ⇒ not from me, found.
+	if fromMe, ok := app.quotedStanzaFromMe(chat, "theirs-1"); !ok || fromMe {
+		t.Fatalf("quote of their message: got fromMe=%v ok=%v, want false true", fromMe, ok)
+	}
+	// Quote of an unknown message ⇒ found=false (caller falls back).
+	if _, ok := app.quotedStanzaFromMe(chat, "ghost-99"); ok {
+		t.Fatalf("quote of unknown message should report found=false")
+	}
+	// Empty stanza ID ⇒ found=false.
+	if _, ok := app.quotedStanzaFromMe(chat, ""); ok {
+		t.Fatalf("empty stanza id should report found=false")
 	}
 }
 
@@ -2141,6 +2237,178 @@ func TestHandleDeleteMessageAcceptsFromMeFalse(t *testing.T) {
 	_ = app.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE id = 'in-only'`).Scan(&n)
 	if n != 0 {
 		t.Errorf("incoming row not deleted: n=%d, want 0", n)
+	}
+}
+
+// --- Message edit tests ---
+
+func TestEditMessageInDBUpdatesConversationText(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:              WireKey{ID: "edit1", RemoteJID: chatID, FromMe: true},
+		Message:          map[string]any{"conversation": "original"},
+		MessageTimestamp: 1000,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	wire, ok, err := app.editMessageInDB(chatID, "edit1", true, func(m map[string]any) {
+		m["conversation"] = "edited text"
+	})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, want true")
+	}
+	if got, _ := wire.Message["conversation"].(string); got != "edited text" {
+		t.Errorf("conversation = %q, want %q", got, "edited text")
+	}
+	if edited, _ := wire.Message["edited"].(bool); !edited {
+		t.Errorf("edited flag not set")
+	}
+	if wire.MessageTimestamp != 1000 {
+		t.Errorf("timestamp changed: got %d, want 1000", wire.MessageTimestamp)
+	}
+
+	// Verify the DB row itself was updated.
+	var messageJSON string
+	if err := app.db.QueryRow(`SELECT message_json FROM messages WHERE chat_id = ? AND id = ? AND from_me = 1`, chatID, "edit1").Scan(&messageJSON); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal([]byte(messageJSON), &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got, _ := stored["conversation"].(string); got != "edited text" {
+		t.Errorf("stored conversation = %q, want %q", got, "edited text")
+	}
+	if edited, _ := stored["edited"].(bool); !edited {
+		t.Errorf("stored edited flag not set")
+	}
+}
+
+func TestEditMessageInDBPreservesQuoteFields(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key: WireKey{ID: "edit2", RemoteJID: chatID, FromMe: true},
+		Message: map[string]any{
+			"extendedTextMessage": map[string]any{
+				"text":              "original",
+				"quotedText":        "quoted msg",
+				"quotedParticipant": "15559999999@s.whatsapp.net",
+				"quotedFromMe":      false,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	wire, ok, err := app.editMessageInDB(chatID, "edit2", true, func(m map[string]any) {
+		ext, _ := m["extendedTextMessage"].(map[string]any)
+		ext["text"] = "edited text"
+		m["extendedTextMessage"] = ext
+	})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, want true")
+	}
+	ext, ok := wire.Message["extendedTextMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("extendedTextMessage missing after edit")
+	}
+	if got, _ := ext["text"].(string); got != "edited text" {
+		t.Errorf("text = %q, want %q", got, "edited text")
+	}
+	if got, _ := ext["quotedText"].(string); got != "quoted msg" {
+		t.Errorf("quotedText = %q, want preserved %q", got, "quoted msg")
+	}
+}
+
+func TestEditMessageInDBNoMatchingRow(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	_, ok, err := app.editMessageInDB(chatID, "does-not-exist", true, func(m map[string]any) {
+		m["conversation"] = "x"
+	})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if ok {
+		t.Errorf("ok = true, want false for missing row")
+	}
+}
+
+func TestEditMessageInDBUpdatesFTS(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230001@s.whatsapp.net"
+
+	if err := app.insertMessageToDB(chatID, WireMessage{
+		Key:     WireKey{ID: "edit3", RemoteJID: chatID, FromMe: true},
+		Message: map[string]any{"conversation": "searchable original"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, ok, err := app.editMessageInDB(chatID, "edit3", true, func(m map[string]any) {
+		m["conversation"] = "searchable replacement"
+	}); err != nil || !ok {
+		t.Fatalf("edit: ok=%v err=%v", ok, err)
+	}
+
+	var n int
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = 1 AND body MATCH 'replacement'`, chatID, "edit3").Scan(&n); err != nil {
+		t.Fatalf("fts query: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("FTS not updated to new text: n=%d, want 1", n)
+	}
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = 1 AND body MATCH 'original'`, chatID, "edit3").Scan(&n); err != nil {
+		t.Fatalf("fts query: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("stale FTS row for old text remains: n=%d, want 0", n)
+	}
+}
+
+// Without a connected client, /messages/edit must fail fast with 409
+// before touching the DB or attempting BuildEdit/SendMessage.
+func TestHandleEditMessageRequiresConnectedClient(t *testing.T) {
+	app := newTestApp(t)
+	body := `{"chatId":"15551230001@s.whatsapp.net","messageId":"m1","text":"new text"}`
+	req := authorizedRequest(
+		httptest.NewRequest(http.MethodPost, "/messages/edit", strings.NewReader(body)),
+		app,
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleEditMessageRejectsEmptyText(t *testing.T) {
+	app := newTestApp(t)
+	body := `{"chatId":"15551230001@s.whatsapp.net","messageId":"m1","text":""}`
+	req := authorizedRequest(
+		httptest.NewRequest(http.MethodPost, "/messages/edit", strings.NewReader(body)),
+		app,
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -2868,6 +3136,34 @@ func TestHandleReactNotConnected(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "not connected") {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+// A-10: /messages/react must be gated by the whitelist, same as
+// /messages/send. With no real client connected, requireConnectedClient
+// fires first (409); both 409 and 403 are correct rejections for a
+// non-whitelisted chat — anything else is a regression.
+func TestHandleReactRejectsNonWhitelistedChat(t *testing.T) {
+	app := newTestApp(t)
+	req := authorizedRequest(httptest.NewRequest(http.MethodPost, "/messages/react", bytes.NewBufferString(`{"chatId":"15551239999@s.whatsapp.net","messageId":"m1","reaction":"🔥"}`)), app)
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict && rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 409 or 403, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// A-11: /typing must be gated by the whitelist, same as /messages/send.
+// With no real client connected, requireConnectedClient fires first (409);
+// both 409 and 403 are correct rejections for a non-whitelisted chat —
+// anything else is a regression.
+func TestHandleTypingRejectsNonWhitelistedChat(t *testing.T) {
+	app := newTestApp(t)
+	req := authorizedRequest(httptest.NewRequest(http.MethodPost, "/typing", bytes.NewBufferString(`{"chatId":"15551239999@s.whatsapp.net","state":"composing"}`)), app)
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict && rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 409 or 403, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -3705,6 +4001,62 @@ func TestWriteErrSetsNoStoreCacheControl(t *testing.T) {
 	}
 }
 
+// S-7: writeInternalErr must never put the raw error text in the response —
+// only an opaque "ref: err-N" ID that can be correlated with the server log.
+func TestWriteInternalErrReturnsOpaqueID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeInternalErr(rec, errors.New("sql: connection refused at /home/user/.local/share/whatzap/store.db"))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v, body=%s", err, rec.Body.String())
+	}
+	if strings.Contains(payload.Error, "store.db") || strings.Contains(payload.Error, "connection refused") {
+		t.Fatalf("response leaked internal error text: %q", payload.Error)
+	}
+	if !strings.Contains(payload.Error, "ref: err-") {
+		t.Fatalf("response missing opaque ref ID: %q", payload.Error)
+	}
+}
+
+// S-7: the real error text must still land in the server log, keyed by the
+// same ref ID returned to the client, so an operator can correlate them.
+func TestWriteInternalErrLogsOriginalError(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	rec := httptest.NewRecorder()
+	writeInternalErr(rec, errors.New("disk failure on /data/store.db"))
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v, body=%s", err, rec.Body.String())
+	}
+	idx := strings.Index(payload.Error, "err-")
+	if idx == -1 {
+		t.Fatalf("response missing ref ID: %q", payload.Error)
+	}
+	refID := strings.TrimSuffix(payload.Error[idx:], ")")
+
+	logged := buf.String()
+	if !strings.Contains(logged, refID) {
+		t.Fatalf("log output %q missing ref ID %q", logged, refID)
+	}
+	if !strings.Contains(logged, "disk failure on /data/store.db") {
+		t.Fatalf("log output %q missing original error text", logged)
+	}
+}
+
 // S-11: verify that os.MkdirAll with 0o700 creates a directory
 // with owner-only permissions. On Windows this test is skipped
 // because Windows does not enforce Unix file permission bits.
@@ -3769,5 +4121,106 @@ func TestMigrateLIDPermissions(t *testing.T) {
 	_ = app.db.QueryRow(`SELECT COUNT(*) FROM chat_permissions WHERE phone = '12345'`).Scan(&count)
 	if count != 0 {
 		t.Errorf("LID row was not deleted")
+	}
+}
+
+// TestRedactingWriterScrubsSecret is the core S-16 test: a log line that
+// contains the bearer token must come out the other side with the token
+// replaced by [REDACTED] and everything else intact.
+func TestRedactingWriterScrubsSecret(t *testing.T) {
+	var buf bytes.Buffer
+	w := newRedactingWriter(&buf, "supersecrettoken")
+
+	// Simulate a leaked request dump: the kind of string log.Printf("%v", r)
+	// would produce, with the Authorization header inline.
+	in := "method=GET path=/chats Authorization=[Bearer supersecrettoken] done"
+	n, err := w.Write([]byte(in))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	// Write must report the input length, not the (shorter) scrubbed length,
+	// or the stdlib logger treats it as a short write / failure.
+	if n != len(in) {
+		t.Fatalf("Write returned n=%d, want %d (input length)", n, len(in))
+	}
+	got := buf.String()
+	if strings.Contains(got, "supersecrettoken") {
+		t.Fatalf("token leaked into output: %q", got)
+	}
+	if !strings.Contains(got, redactPlaceholder) {
+		t.Fatalf("expected %q in output, got %q", redactPlaceholder, got)
+	}
+	// Non-secret content must survive unchanged.
+	if !strings.Contains(got, "path=/chats") || !strings.Contains(got, "method=GET") {
+		t.Fatalf("non-secret content was mangled: %q", got)
+	}
+}
+
+// TestRedactingWriterMultipleOccurrences confirms every occurrence of the
+// secret in a single write is scrubbed, not just the first.
+func TestRedactingWriterMultipleOccurrences(t *testing.T) {
+	var buf bytes.Buffer
+	w := newRedactingWriter(&buf, "tok123")
+	in := "first tok123 middle tok123 last tok123"
+	if _, err := w.Write([]byte(in)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "tok123") {
+		t.Fatalf("a token occurrence leaked: %q", got)
+	}
+	if c := strings.Count(got, redactPlaceholder); c != 3 {
+		t.Fatalf("expected 3 redactions, got %d: %q", c, got)
+	}
+}
+
+// TestRedactingWriterEmptySecretIsPassthrough confirms that with no token
+// set (dev runs), newRedactingWriter returns the raw writer untouched — no
+// allocation, no behavior change, content passes through verbatim.
+func TestRedactingWriterEmptySecretIsPassthrough(t *testing.T) {
+	var buf bytes.Buffer
+	w := newRedactingWriter(&buf, "")
+	if w != &buf {
+		t.Fatalf("empty secret should return the raw writer unchanged")
+	}
+	if w := newRedactingWriter(&buf, "   "); w != &buf {
+		t.Fatalf("whitespace-only secret should also be treated as empty")
+	}
+	in := "no secret here, pass through verbatim"
+	if _, err := w.Write([]byte(in)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := buf.String(); got != in {
+		t.Fatalf("passthrough mangled content: got %q, want %q", got, in)
+	}
+}
+
+// TestRedactingWriterCleanLineUnchanged confirms a log line with no secret
+// in it is written through untouched (the common case — most log lines).
+func TestRedactingWriterCleanLineUnchanged(t *testing.T) {
+	var buf bytes.Buffer
+	w := newRedactingWriter(&buf, "secret")
+	in := "upsertMessage: begin tx: connection refused"
+	if _, err := w.Write([]byte(in)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := buf.String(); got != in {
+		t.Fatalf("clean line was altered: got %q, want %q", got, in)
+	}
+}
+
+// TestRedactingWriterViaLogger is the end-to-end test: a *log.Logger wired
+// to the redactor, like main() sets up, must scrub the token from a real
+// log.Printf call.
+func TestRedactingWriterViaLogger(t *testing.T) {
+	var buf bytes.Buffer
+	lg := log.New(newRedactingWriter(&buf, "live-token-xyz"), "[http] ", 0)
+	lg.Printf("rejected request with header Authorization: Bearer live-token-xyz")
+	got := buf.String()
+	if strings.Contains(got, "live-token-xyz") {
+		t.Fatalf("token leaked through logger: %q", got)
+	}
+	if !strings.Contains(got, redactPlaceholder) {
+		t.Fatalf("expected redaction marker, got %q", got)
 	}
 }

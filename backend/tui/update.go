@@ -187,6 +187,21 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, titleCmd)
 				}
 			}
+		case "message:edited":
+			var wm wireMsg
+			if err := json.Unmarshal(v.evt.Payload, &wm); err == nil {
+				msgs := x.msgs[wm.Key.RemoteJID]
+				for i := range msgs {
+					if msgs[i].Key.ID == wm.Key.ID && msgs[i].Key.FromMe == wm.Key.FromMe {
+						msgs[i].Message = wm.Message
+						break
+					}
+				}
+				x.msgs[wm.Key.RemoteJID] = msgs
+				if x.mainCache != nil {
+					x.mainCache.result = ""
+				}
+			}
 		case "receipt":
 			var rm receiptMsg
 			if err := json.Unmarshal(v.evt.Payload, &rm); err == nil {
@@ -630,6 +645,32 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.active == "" {
 			return x, nil
 		}
+		if x.editingMsgID != "" {
+			msgID := x.editingMsgID
+			x.editingMsgID = ""
+			if !hasVisibleText(txt) {
+				return x, x.setTopBar("Edit cancelled: text cannot be empty")
+			}
+			chatID := x.active
+			msgs := x.msgs[chatID]
+			for i := range msgs {
+				if msgs[i].Key.ID == msgID && msgs[i].Key.FromMe {
+					if ext, ok := msgs[i].Message["extendedTextMessage"].(map[string]any); ok {
+						ext["text"] = txt
+						msgs[i].Message["extendedTextMessage"] = ext
+					} else {
+						msgs[i].Message["conversation"] = txt
+					}
+					msgs[i].Message["edited"] = true
+					break
+				}
+			}
+			x.msgs[chatID] = msgs
+			if x.mainCache != nil {
+				x.mainCache.result = ""
+			}
+			return x, postJSON(x.client, x.baseURL+"/messages/edit", map[string]string{"chatId": chatID, "messageId": msgID, "text": txt}, nil)
+		}
 		if x.pendingAttachmentPath != "" {
 			if _, ok := x.whitelist[num(x.active)]; !ok {
 				return x, x.setTopBar("Not whitelisted - use /whitelist to enable")
@@ -983,6 +1024,29 @@ func (x m) replyPickCandidates() []wireMsg {
 	return out
 }
 
+// editPickCandidates returns the user's own text messages sent within the
+// last 20 minutes (whatsmeow's EditWindow), eligible for Alt+A editing.
+func (x m) editPickCandidates() []wireMsg {
+	msgs := x.msgs[x.active]
+	out := make([]wireMsg, 0, len(msgs))
+	cutoff := time.Now().Add(-20 * time.Minute).Unix()
+	for _, msg := range msgs {
+		if !msg.Key.FromMe {
+			continue
+		}
+		if msg.MessageTimestamp < cutoff {
+			continue
+		}
+		if _, ok := msg.Message["conversation"]; !ok {
+			if _, ok2 := msg.Message["extendedTextMessage"]; !ok2 {
+				continue
+			}
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
 func msgRowHeight(msg wireMsg, w int) int {
 	rows := 0
 	// quote line
@@ -1141,6 +1205,53 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	)
 }
 
+// doWhitelistAll whitelists every loaded chat. Confirmed via the A-6
+// confirm dialog before this runs.
+func (x *m) doWhitelistAll() tea.Cmd {
+	added := 0
+	cmds := []tea.Cmd{}
+	for _, c := range x.chats {
+		if strings.HasSuffix(c.ID, "@g.us") {
+			continue // groups can't be whitelisted (A-9/A-10/A-11)
+		}
+		n := num(c.ID)
+		if _, exists := x.whitelist[n]; !exists {
+			added++
+		}
+		name := x.nameFor(c.ID)
+		x.whitelist[n] = name
+		cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, name, 1))
+	}
+	x.markIdentityChanged()
+	msg := fmt.Sprintf("Whitelisted %d chats (%d new)", len(x.whitelist), added)
+	if x.demoMode {
+		return x.setTopBar(msg)
+	}
+	cmds = append(cmds, x.setTopBar(msg))
+	return tea.Batch(cmds...)
+}
+
+// doBlacklistAll removes every contact from the whitelist. Confirmed via
+// the A-6 confirm dialog before this runs.
+func (x *m) doBlacklistAll() tea.Cmd {
+	count := len(x.whitelist)
+	cmds := []tea.Cmd{}
+	for n := range x.whitelist {
+		cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], 0))
+	}
+	x.whitelist = map[string]string{}
+	x.markIdentityChanged()
+	if x.active != "" {
+		x.clearChatComposer()
+	}
+	msg := fmt.Sprintf("Removed %d from whitelist", count)
+	if x.demoMode {
+		return x.setTopBar(msg)
+	}
+	cmds = append(cmds, x.setTopBar(msg))
+	return tea.Batch(cmds...)
+}
+
 func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	markPasteLikeInput := func() {
 		x.lastPasteLikeAt = time.Now()
@@ -1167,6 +1278,33 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if x.fileBrowserOpen {
 		return x.handleFileBrowser(k)
+	}
+
+	if x.confirmDialog.open {
+		action, done := x.confirmDialog.Handle(k)
+		if !done {
+			if x.mainCache != nil {
+				x.mainCache.result = ""
+			}
+			return x, nil
+		}
+		pending := x.confirmDialog.action
+		x.confirmDialog.Close()
+		if x.mainCache != nil {
+			x.mainCache.result = ""
+		}
+		if action != "confirm" {
+			return x, x.setTopBar("Cancelled")
+		}
+		switch pending {
+		case "logout":
+			return x, logout(x.client, x.baseURL)
+		case "whitelistall":
+			return x, x.doWhitelistAll()
+		case "blacklistall":
+			return x, x.doBlacklistAll()
+		}
+		return x, nil
 	}
 
 	switch k.String() {
@@ -1264,6 +1402,26 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.openEmojiPicker()
 		}
 		return x, nil
+	case "alt+a":
+		if x.status == "ready" && x.mode == "chat" && x.active != "" && !x.chatInputLocked() {
+			if x.editPickMode {
+				x.editPickMode = false
+				x.selectedMsgID = ""
+				x.mainCache.result = ""
+				return x, nil
+			}
+			cands := x.editPickCandidates()
+			if len(cands) == 0 {
+				return x, x.setTopBar("No editable messages (own, text, last 20 min)")
+			}
+			x.replyPickMode = false
+			x.editPickMode = true
+			x.editPickIndex = len(cands) - 1
+			x.selectedMsgID = cands[x.editPickIndex].Key.ID
+			x.mainCache.result = ""
+			return x, nil
+		}
+		return x, nil
 	case "alt+r":
 		if x.status == "ready" && x.mode == "chat" && x.active != "" && !x.chatInputLocked() {
 			if x.replyPickMode {
@@ -1275,6 +1433,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(cands) == 0 {
 				return x, x.setTopBar("No messages to reply to")
 			}
+			x.editPickMode = false
 			x.replyPickMode = true
 			// find the last visible candidate based on current scroll
 			if x.scroll == 0 {
@@ -1523,7 +1682,8 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			q := strings.TrimSpace(x.searchInput)
 			if q == "/logout" {
-				return x, logout(x.client, x.baseURL)
+				x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
+				return x, nil
 			}
 			x.sidebarFocused = false
 			x.search = q
@@ -1783,6 +1943,59 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return x, nil
 			}
 		}
+		if x.editPickMode {
+			cands := x.editPickCandidates()
+			if len(cands) == 0 {
+				x.editPickMode = false
+				x.selectedMsgID = ""
+				return x, nil
+			}
+			if x.editPickIndex >= len(cands) {
+				x.editPickIndex = len(cands) - 1
+			}
+			switch k.Type {
+			case tea.KeyUp:
+				if x.editPickIndex > 0 {
+					x.editPickIndex--
+				}
+				x.selectedMsgID = cands[x.editPickIndex].Key.ID
+				x.mainCache.result = ""
+				return x, nil
+			case tea.KeyDown:
+				if x.editPickIndex < len(cands)-1 {
+					x.editPickIndex++
+				}
+				x.selectedMsgID = cands[x.editPickIndex].Key.ID
+				x.mainCache.result = ""
+				return x, nil
+			case tea.KeyEnter:
+				cp := cands[x.editPickIndex]
+				x.editingMsgID = cp.Key.ID
+				x.input = renderMessageBody(cp.Message)
+				x.inputBuf = ""
+				x.editPickMode = false
+				x.selectedMsgID = ""
+				x.mainCache.result = ""
+				return x, nil
+			case tea.KeyEsc, tea.KeyTab:
+				x.editPickMode = false
+				x.selectedMsgID = ""
+				x.mainCache.result = ""
+				return x, nil
+			default:
+				if k.String() == "a" {
+					cp := cands[x.editPickIndex]
+					x.editingMsgID = cp.Key.ID
+					x.input = renderMessageBody(cp.Message)
+					x.inputBuf = ""
+					x.editPickMode = false
+					x.selectedMsgID = ""
+					x.mainCache.result = ""
+					return x, nil
+				}
+				return x, nil
+			}
+		}
 		if k.Alt && (k.Type == tea.KeyUp || k.Type == tea.KeyDown) {
 			f := x.filtered()
 			if len(f) == 0 {
@@ -1867,6 +2080,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				)
 			}
 		case tea.KeyEsc:
+			if x.editingMsgID != "" {
+				x.editingMsgID = ""
+				x.input = ""
+				x.inputBuf = ""
+				return x, nil
+			}
 			if x.inputAllSelected {
 				x.inputAllSelected = false
 				return x, nil
@@ -2315,7 +2534,8 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		x.restartRequested = true
 		return tea.Quit, true
 	case txt == "/logout":
-		return logout(x.client, x.baseURL), true
+		x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
+		return nil, true
 	case includeGlobal && txt == "/synccontacts":
 		if x.demoMode {
 			return x.setTopBar("Demo mode: contacts already fake"), true
@@ -2336,44 +2556,17 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 			x.err = "no chats loaded yet"
 			return nil, true
 		}
-		added := 0
-		cmds := []tea.Cmd{}
-		for _, c := range x.chats {
-			n := num(c.ID)
-			if _, exists := x.whitelist[n]; !exists {
-				added++
-			}
-			name := x.nameFor(c.ID)
-			x.whitelist[n] = name
-			cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, name, 1))
-		}
-		x.markIdentityChanged()
-		msg := fmt.Sprintf("Whitelisted %d chats (%d new)", len(x.whitelist), added)
-		if x.demoMode {
-			return x.setTopBar(msg), true
-		}
-		cmds = append(cmds, x.setTopBar(msg))
-		return tea.Batch(cmds...), true
+		x.confirmDialog.Open("Whitelist all chats?",
+			"Are you sure you want to whitelist all contacts?", "whitelistall")
+		return nil, true
 	case txt == "/blacklistall":
 		count := len(x.whitelist)
 		if count == 0 {
 			return x.setTopBar("Whitelist already empty"), true
 		}
-		cmds := []tea.Cmd{}
-		for n := range x.whitelist {
-			cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], 0))
-		}
-		x.whitelist = map[string]string{}
-		x.markIdentityChanged()
-		if x.active != "" {
-			x.clearChatComposer()
-		}
-		msg := fmt.Sprintf("Removed %d from whitelist", count)
-		if x.demoMode {
-			return x.setTopBar(msg), true
-		}
-		cmds = append(cmds, x.setTopBar(msg))
-		return tea.Batch(cmds...), true
+		x.confirmDialog.Open("Clear the whitelist?",
+			"Are you sure you want to blacklist all contacts?", "blacklistall")
+		return nil, true
 	case txt == "/whitelist":
 		if includeGlobal && x.active == "" {
 			return x.setTopBar("No active chat"), true

@@ -198,7 +198,7 @@ func (x m) View() string {
 		identityVer:      x.identityVersion,
 		spinnerFrame:     x.spinnerFrame,
 		inputH:           extraInputH,
-		pulseOn:          x.replyPickMode && x.pulseOn,
+		pulseOn:          (x.replyPickMode || x.editPickMode) && x.pulseOn,
 		timestampNewLine: currentConfig.TimestampNewLine,
 		mediaIconStyle:   currentConfig.MediaIconStyle,
 		pointerIcon:      currentConfig.PointerIcon,
@@ -219,6 +219,8 @@ func (x m) View() string {
 		main = x.helpPicker.RenderHelp(rightW, mainH)
 	} else if x.settingsPicker.open {
 		main = x.settingsPicker.RenderSettings(rightW, mainH)
+	} else if x.confirmDialog.open {
+		main = x.confirmDialog.Render(rightW, mainH)
 	} else if x.fontTestOpen {
 		main = renderFontTest(rightW, mainH)
 	} else if x.fileBrowserOpen {
@@ -595,6 +597,13 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 			lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Esc") +
 			lipgloss.NewStyle().Foreground(text).Render("/") +
 			lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Alt") +
+			lipgloss.NewStyle().Foreground(text).Render(" cancel")
+	} else if x.editPickMode {
+		inputDisplay = lipgloss.NewStyle().Foreground(accent).Bold(true).Render(" A") +
+			lipgloss.NewStyle().Foreground(text).Render("/") +
+			lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Enter") +
+			lipgloss.NewStyle().Foreground(text).Render(" edit message  ") +
+			lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Esc") +
 			lipgloss.NewStyle().Foreground(text).Render(" cancel")
 	} else if x.mode == "nav" && x.active == "" {
 		inputDisplay = lipgloss.NewStyle().Foreground(muted).Render(" Press Enter/Tab to start chatting")
@@ -1139,6 +1148,9 @@ func (x m) renderMain(w, h int) string {
 		}
 
 		timeStr := formatExactTime(msg.MessageTimestamp)
+		if edited, _ := msg.Message["edited"].(bool); edited {
+			timeStr += " (edited)"
+		}
 		receiptText := ""
 		if msg.Key.FromMe {
 			switch msg.ReceiptStatus {
@@ -1236,9 +1248,9 @@ func (x m) renderMain(w, h int) string {
 			wrapped = wrapMessageLines(msgBody, availableW, msg.Key.FromMe, wrappedSender)
 		}
 
-		bodyColor := accent
+		bodyColor := sentText
 		if !msg.Key.FromMe {
-			bodyColor = anomalyTag
+			bodyColor = receivedText
 		}
 
 		// For multi-line outgoing text messages, try re-wrapping at a slightly
@@ -1263,7 +1275,7 @@ func (x m) renderMain(w, h int) string {
 
 		isClickedSelected := x.selectedMsgID != "" && msg.Key.ID == x.selectedMsgID
 		selectColor := lipgloss.Color("")
-		if isClickedSelected && x.replyPickMode {
+		if isClickedSelected && (x.replyPickMode || x.editPickMode) {
 			if x.pulseOn {
 				selectColor = accent
 			} else {
@@ -1272,7 +1284,7 @@ func (x m) renderMain(w, h int) string {
 		} else if isClickedSelected {
 			selectColor = brand
 		}
-		replySelected := isClickedSelected && x.replyPickMode
+		replySelected := isClickedSelected && (x.replyPickMode || x.editPickMode)
 		applySelectedBG := func(st lipgloss.Style) lipgloss.Style {
 			if selectColor != "" {
 				st = st.Foreground(selectColor)
@@ -1414,11 +1426,11 @@ func (x m) renderMain(w, h int) string {
 				if len([]rune(qText)) > 50 {
 					qText = string([]rune(qText)[:50]) + "..."
 				}
-				qSenderColor := receivedName
-				qTextColor := receivedText
+				qSenderColor := sentName
+				qTextColor := sentText
 				if qFromMe {
-					qSenderColor = sentName
-					qTextColor = sentText
+					qSenderColor = receivedName
+					qTextColor = receivedText
 				}
 				quotePrefix := "  ╭─ "
 				quoteSuffix := " ─╮ "

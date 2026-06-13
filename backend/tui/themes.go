@@ -689,7 +689,7 @@ var (
 		ContactTag:            "#ff007f",
 		PollTag:               "#fff000",
 		LocationTag:           "#00f0ff",
-		AnomalyTag:            "#ff003c",
+		AnomalyTag:            "#ff007f", // pink MOOD badge
 		SentText:              "#ff5599",
 		ReceivedText:          "#00e0ff",
 		SentName:              "#ff007f",
