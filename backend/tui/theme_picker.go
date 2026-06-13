@@ -30,6 +30,7 @@ var themeList = []struct {
 	{"verdant", "Verdant", Verdant},
 	{"dusk", "Dusk", Dusk},
 	{"fossil", "Fossil", Fossil},
+	{"nord", "Nord", Nord},
 }
 
 var themeGroupOrder = []struct {
@@ -58,6 +59,7 @@ var themeGroupOrder = []struct {
 	{"cornflower", "Cornflower", Cornflower},
 	{"linen", "Linen", Linen},
 	{"lilac", "Lilac", Lilac},
+	{"nord", "Nord", Nord},
 }
 
 var themeGroupDefs = []struct {
@@ -66,7 +68,7 @@ var themeGroupDefs = []struct {
 }{
 	{"Dark", 8},
 	{"Warm", 4},
-	{"Cool", 6},
+	{"Cool", 7},
 }
 
 func applyThemeByName(name string) {
@@ -277,4 +279,3 @@ func (p *picker) RenderTheme(w, h int) string {
 		Width(w).Height(max(1, h)).
 		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
 }
-

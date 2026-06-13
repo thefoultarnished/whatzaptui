@@ -70,6 +70,7 @@ var (
 	shortcutActive, sidebarActiveBg, sidebarActiveUnreadBg             lipgloss.Color
 	sidebarWhitelistActiveBg, sidebarBlacklistActiveBg                 lipgloss.Color
 	replyPreviewBg, messageSelectedBg, mediaTokenBg, mediaTokenPulseBg lipgloss.Color
+	background                                                          lipgloss.Color
 
 	spinnerFrames  = []string{"✶", "✸", "✹", "✺", "✹", "✷"}
 	typingIcons    = []string{"✿", "✦", "◇", "☆", "⌘"}

@@ -70,7 +70,7 @@ func (x m) View() string {
 				)
 				content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
 				if currentConfig.Borderless {
-					return lipgloss.NewStyle().Width(outerW).Height(outerH).Render(content)
+					return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
 				}
 				return lipgloss.NewStyle().
 					Width(outerW).
@@ -97,7 +97,7 @@ func (x m) View() string {
 			body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
 			content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
 			if currentConfig.Borderless {
-				return lipgloss.NewStyle().Width(outerW).Height(outerH).Render(content)
+				return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
 			}
 			return lipgloss.NewStyle().
 				Width(outerW).
@@ -109,7 +109,7 @@ func (x m) View() string {
 		msg := statusMsgTemplate(statusBody, "")
 		content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, msg)
 		if currentConfig.Borderless {
-			return lipgloss.NewStyle().Width(outerW).Height(outerH).Render(content)
+			return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
 		}
 		return lipgloss.NewStyle().
 			Width(outerW).
@@ -257,6 +257,7 @@ func (x m) View() string {
 		frame = lipgloss.NewStyle().
 			Width(outerW).
 			Height(outerH).
+			Background(background).
 			Render(inner)
 	} else {
 		frame = lipgloss.NewStyle().
@@ -375,7 +376,7 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	}
 	logoBlock := lipgloss.NewStyle().Width(padW).Render(logo)
 	leftContent := logoBlock + statusPart
-	leftStr := leftContent + lipgloss.NewStyle().Foreground(muted).Render("|")
+	leftStr := leftContent + lipgloss.NewStyle().Foreground(muted).Render("│")
 
 	themeMood := lipgloss.NewStyle().
 		Foreground(badgeInk).
@@ -1345,6 +1346,7 @@ func (x m) renderMain(w, h int) string {
 
 		reactionLinePlain := ""
 		reactionLine := ""
+		reactionMerged := false
 		if rxns, ok := reactionsFor[msg.Key.ID]; ok && len(rxns) > 0 {
 			// Split into known contacts vs others.
 			var contactRxns []reactionRender
@@ -1440,11 +1442,11 @@ func (x m) renderMain(w, h int) string {
 				if len([]rune(qText)) > 50 {
 					qText = string([]rune(qText)[:50]) + "..."
 				}
-				qSenderColor := sentName
-				qTextColor := sentText
+				qSenderColor := receivedName
+				qTextColor := receivedText
 				if qFromMe {
-					qSenderColor = receivedName
-					qTextColor = receivedText
+					qSenderColor = sentName
+					qTextColor = sentText
 				}
 				quotePrefix := "  ╭─ "
 				quoteSuffix := " ─╮ "
@@ -1485,12 +1487,25 @@ func (x m) renderMain(w, h int) string {
 			if !currentConfig.TimestampNewLine && lastLineW+timeSuffixW <= max(1, w-2) {
 				// Timestamp fits on the last line (and 2-line mode is off).
 				outgoingBlockW = max(outgoingBodyW, lastLineW+timeSuffixW)
+			} else if currentConfig.TimestampNewLine {
+				// Timestamp goes on its own line. Reserve outgoingIconW extra
+				// columns so the timestamp line's pad never needs to go
+				// negative to align its receipt tick with the last character
+				// of the message text (which sits behind the right-side icon).
+				outgoingBlockW = max(outgoingBodyW, timeSuffixW+outgoingIconW)
 			} else {
-				// Timestamp goes on its own line (too wide, or 2-line mode on).
+				// Timestamp goes on its own line (too wide for the last line).
 				outgoingBlockW = max(outgoingBodyW, timeSuffixW)
 			}
 			if reactionLinePlain != "" {
-				outgoingBlockW = max(outgoingBlockW, runeDisplayWidth(reactionLinePlain))
+				if currentConfig.TimestampNewLine {
+					// Reaction shares the timestamp line (reaction on the left,
+					// timestamp on the right), so reserve room for both plus a
+					// 1-space gap between them.
+					outgoingBlockW = max(outgoingBlockW, runeDisplayWidth(reactionLinePlain)+1+timeSuffixW+outgoingIconW)
+				} else {
+					outgoingBlockW = max(outgoingBlockW, runeDisplayWidth(reactionLinePlain))
+				}
 			}
 			outgoingBlockW = min(outgoingBlockW, max(1, w-2))
 		}
@@ -1642,23 +1657,63 @@ func (x m) renderMain(w, h int) string {
 		if msg.Key.FromMe {
 			lastW := runeDisplayWidth(wrapped[len(wrapped)-1] + " ")
 			if currentConfig.TimestampNewLine || lastW+timeSuffixW > outgoingBlockW {
-				pad := max(0, outgoingBlockW-timeSuffixW)
-				timeLine := indent + strings.Repeat(" ", pad) + timeStyled + " "
-				block = append(block, timeLine)
+				if currentConfig.TimestampNewLine {
+					// Body lines reserve outgoingIconW columns on the right for
+					// the right-side icon, so the message text's last character
+					// sits outgoingIconW+2 columns before the line's right edge.
+					// Pad the timestamp line so its last visible glyph (the
+					// second receipt tick, before receiptText's own trailing
+					// space) lands in that same column.
+					pad := max(0, outgoingBlockW-outgoingIconW-timeSuffixW)
+					if reactionLine != "" {
+						// Put the reaction on the left of the same line, with
+						// the timestamp staying right-aligned as usual.
+						reactionW := runeDisplayWidth(reactionLinePlain)
+						fillW := max(0, pad-reactionW)
+						timeLine := indent + reactionLine + strings.Repeat(" ", fillW) + timeStyled
+						block = append(block, timeLine)
+						reactionMerged = true
+					} else {
+						timeLine := indent + strings.Repeat(" ", pad) + timeStyled
+						block = append(block, timeLine)
+					}
+				} else {
+					pad := max(0, outgoingBlockW-timeSuffixW)
+					timeLine := indent + strings.Repeat(" ", pad) + timeStyled + " "
+					block = append(block, timeLine)
+				}
 			}
 		} else if currentConfig.TimestampNewLine {
 			var prefix string
+			var prefixWidth int
 			if isGroup {
-				prefixWidth := runeDisplayWidth(senderName + ": ")
+				prefixWidth = runeDisplayWidth(senderName + ": ")
 				prefix = strings.Repeat(" ", prefixWidth)
 			} else {
-				icon := strings.Repeat(" ", runeDisplayWidth(receivedMsgIcon+" "))
+				prefixWidth = runeDisplayWidth(receivedMsgIcon + " ")
+				icon := strings.Repeat(" ", prefixWidth)
 				prefix = applyBodyBG(lipgloss.NewStyle().Foreground(receivedName)).Render(icon)
 			}
-			timeLine := prefix + timeStyled
-			block = append(block, timeLine)
+			// timeStyled carries a "  " lead-in meant for the same-line layout;
+			// drop it here so the timestamp starts directly under the message
+			// text instead of leaving an extra gap after the icon/prefix.
+			timeOnly := mutedStyle.Foreground(timeColor).Render(timeStr)
+			if reactionLine != "" {
+				// Reaction shares the timestamp line, right-aligned to the
+				// message bubble's right edge while the timestamp stays left.
+				reactionW := runeDisplayWidth(reactionLinePlain)
+				timeW := prefixWidth + runeDisplayWidth(timeStr)
+				targetW := max(lastBodyPlainW, timeW+1+reactionW)
+				fillW := max(1, targetW-timeW-reactionW)
+				timeLine := prefix + timeOnly + strings.Repeat(" ", fillW) + reactionLine
+				block = append(block, timeLine)
+				reactionMerged = true
+			} else {
+				timeLine := prefix + timeOnly
+				block = append(block, timeLine)
+			}
 		}
-		if reactionLine != "" {
+		if reactionLine != "" && !reactionMerged {
 			reactionOffset := max(0, lastBodyPlainW-runeDisplayWidth(reactionLinePlain))
 			if msg.Key.FromMe {
 				reactionLine = indent + strings.Repeat(" ", reactionOffset) + reactionLine

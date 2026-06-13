@@ -2888,6 +2888,7 @@ func rehashStyles() {
 	messageSelectedBg = lipgloss.Color(currentTheme.MessageSelectedBg)
 	mediaTokenBg = lipgloss.Color(currentTheme.MediaTokenBg)
 	mediaTokenPulseBg = lipgloss.Color(currentTheme.MediaTokenPulseBg)
+	background = lipgloss.Color(currentTheme.Background)
 
 	baseBoxStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
