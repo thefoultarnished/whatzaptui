@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
@@ -126,6 +127,16 @@ type App struct {
 
 	apiToken string
 
+	// tokenPath is where the session token (S-1) lives on disk. Used by
+	// rotateTokenIfSessionDead (A-1) to write a fresh token when the
+	// registered TUI session goes away.
+	tokenPath string
+
+	// sessionPID/sessionRegisteredAt track the TUI process that called
+	// POST /session/register (A-1). Guarded by mu, like apiToken.
+	sessionPID          int
+	sessionRegisteredAt time.Time
+
 	wsMu      sync.Mutex
 	wsClients map[*websocket.Conn]*wsClient
 
@@ -203,8 +214,22 @@ func resolveWhatsmeowLogLevel() string {
 }
 const maxMessagesResponseLimit = 200
 const appDataDirName = "WhatZAP"
-const apiTokenEnvVar = "WHATZAP_API_TOKEN"
 const authHeaderName = "Authorization"
+
+// sessionTokenFileName is the name of the file (under
+// <data-root>/backend/) that holds the bearer token shared between the
+// TUI and the backend. Replaces the old WHATZAP_API_TOKEN env var (S-1):
+// env vars are inherited by every child process and visible to anything
+// that can inspect the process, whereas this file is written with 0600
+// permissions in the same per-user data directory as store.db.
+const sessionTokenFileName = "session.token"
+
+// sessionGraceDuration is how long a registered TUI PID (see
+// /session/register) is given before the backend will consider it gone
+// and rotate the session token (A-1). Paired with the 30s eviction
+// ticker in main(), so a dead session's token is rotated within roughly
+// sessionGraceDuration to sessionGraceDuration+30s.
+var sessionGraceDuration = 60 * time.Second
 
 // redactPlaceholder is what a leaked secret is replaced with in logs.
 const redactPlaceholder = "[REDACTED]"
@@ -218,24 +243,27 @@ const redactPlaceholder = "[REDACTED]"
 // once per entry, so a token never straddles two Write calls.
 type redactingWriter struct {
 	w      io.Writer
-	secret []byte
+	secret func() string
 }
 
-func newRedactingWriter(w io.Writer, secret string) io.Writer {
-	s := strings.TrimSpace(secret)
-	if s == "" {
-		// Nothing to scrub — don't pay the bytes.Replace cost on every
-		// log line. Return the raw writer so behavior is unchanged.
+// newRedactingWriter scrubs whatever secret() currently returns out of
+// every write. secret is called per-write (not once at construction) so
+// that a token rotated later (A-1) is still redacted — without this, a
+// rotated token logged after rotation would bypass a redactor built from
+// the token's old value.
+func newRedactingWriter(w io.Writer, secret func() string) io.Writer {
+	if secret == nil {
 		return w
 	}
-	return &redactingWriter{w: w, secret: []byte(s)}
+	return &redactingWriter{w: w, secret: secret}
 }
 
 func (rw *redactingWriter) Write(p []byte) (int, error) {
-	if !bytes.Contains(p, rw.secret) {
+	s := strings.TrimSpace(rw.secret())
+	if s == "" || !bytes.Contains(p, []byte(s)) {
 		return rw.w.Write(p)
 	}
-	cleaned := bytes.ReplaceAll(p, rw.secret, []byte(redactPlaceholder))
+	cleaned := bytes.ReplaceAll(p, []byte(s), []byte(redactPlaceholder))
 	// Report len(p) as written, not len(cleaned): callers expect the
 	// number of input bytes consumed, and a short count would trip the
 	// stdlib logger into thinking the write failed.
@@ -268,14 +296,37 @@ func cappedEvict[K comparable, V any](m map[K]V, max int) {
 	}
 }
 
+// globalApp lets the S-16 log redactors (set up in main() before NewApp()
+// runs) look up the *current* token after rotation (A-1). Stored exactly
+// once, right after NewApp() succeeds.
+var globalApp atomic.Pointer[App]
+
 func main() {
+	tokenPath, err := sessionTokenPath()
+	if err != nil {
+		log.Fatalf("resolve session token path: %v", err)
+	}
+	token, err := readSessionToken(tokenPath)
+	if err != nil {
+		log.Fatalf("init failed: %v", err)
+	}
+
+	// secretFn always returns the *current* token: before NewApp() runs
+	// it's the token just read from disk; afterwards it's a.apiToken,
+	// which the A-1 rotation ticker may have replaced.
+	secretFn := func() string {
+		if a := globalApp.Load(); a != nil {
+			a.mu.RLock()
+			defer a.mu.RUnlock()
+			return a.apiToken
+		}
+		return token
+	}
+
 	// S-16: route the default logger through a redactor before anything
 	// is logged, so the bearer token can never leak into stderr even if
-	// a future code path logs a raw *http.Request. The token is read
-	// from the same env var NewApp() uses; if it's unset, the redactor
-	// is a transparent pass-through (newRedactingWriter returns the raw
-	// writer), so dev runs without a token are unaffected.
-	log.SetOutput(newRedactingWriter(os.Stderr, os.Getenv(apiTokenEnvVar)))
+	// a future code path logs a raw *http.Request.
+	log.SetOutput(newRedactingWriter(os.Stderr, secretFn))
 
 	// S-3: print the active whatsmeow log level as the very first
 	// line so users can verify WHATZAP_LOG_LEVEL took effect. Goes
@@ -285,16 +336,21 @@ func main() {
 	// value the loggers will actually use.
 	log.Printf("[backend] log level: %s (set WHATZAP_LOG_LEVEL to change)", resolveWhatsmeowLogLevel())
 
-	app, err := NewApp()
+	app, err := NewApp(token, tokenPath)
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
+	globalApp.Store(app)
 
 	// A-13: periodic eviction of in-memory maps. Runs every 30s
 	// to keep Chats/Contacts/lidCache within their caps. Uses
 	// a background goroutine because the maps are not persisted
 	// as a batch anywhere we could piggyback on — lidCache in
 	// particular has no persistence path at all.
+	//
+	// A-1: the same tick also checks whether the registered TUI session
+	// (see /session/register) has gone away and, if so, rotates the
+	// session token so any leaked copy of the old token stops working.
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -306,6 +362,8 @@ func main() {
 			app.lidCacheMu.Lock()
 			cappedEvict(app.lidCache, maxLIDCacheCaps)
 			app.lidCacheMu.Unlock()
+
+			app.rotateTokenIfSessionDead()
 		}
 	}()
 
@@ -321,7 +379,7 @@ func main() {
 		// S-16: same redactor as the default logger. The stdlib http
 		// server can log request details here on malformed input; route
 		// it through the scrubber so a token can't leak via that path.
-		ErrorLog: log.New(newRedactingWriter(os.Stderr, os.Getenv(apiTokenEnvVar)), "[http] ", log.LstdFlags),
+		ErrorLog: log.New(newRedactingWriter(os.Stderr, secretFn), "[http] ", log.LstdFlags),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -367,6 +425,48 @@ func whatzapDataRoot() (string, error) {
 		return filepath.Join(home, ".whatzap"), nil
 	}
 	return "", fmt.Errorf("failed to resolve app data directory")
+}
+
+// sessionTokenPath returns the path to the session token file (S-1):
+// <data-root>/backend/session.token. The TUI writes/reads this same file
+// (it computes the same path independently — see backend/tui/main.go).
+func sessionTokenPath() (string, error) {
+	dataRoot, err := whatzapDataRoot()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(dataRoot, "backend")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, sessionTokenFileName), nil
+}
+
+// readSessionToken reads and validates the session token file written by
+// the TUI. Returns an error (with a message pointing at the cause) if the
+// file is missing or empty — the backend should not start with no token,
+// since isAuthorized() would then reject every request.
+func readSessionToken(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("session token file %s not found; start the TUI first: %w", path, err)
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" {
+		return "", fmt.Errorf("session token file %s is empty; start the TUI first", path)
+	}
+	return token, nil
+}
+
+// generateSessionToken returns a fresh random 32-byte token, base64url
+// encoded. Used both for the initial token (TUI) and for A-1 rotation
+// (backend, when a registered TUI session goes away).
+func generateSessionToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate session token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func resolveBackendCacheDir(workDir string) (string, error) {
@@ -479,10 +579,10 @@ func copyFile(srcPath, dstPath string, perm os.FileMode) error {
 	return nil
 }
 
-func NewApp() (*App, error) {
-	apiToken := strings.TrimSpace(os.Getenv(apiTokenEnvVar))
+func NewApp(apiToken, tokenPath string) (*App, error) {
+	apiToken = strings.TrimSpace(apiToken)
 	if apiToken == "" {
-		return nil, fmt.Errorf("%s must be set", apiTokenEnvVar)
+		return nil, fmt.Errorf("session token must not be empty")
 	}
 	// S-3: read the WHATZAP_LOG_LEVEL env var via the shared
 	// helper so main() and NewApp() see the same value (and tests
@@ -502,6 +602,7 @@ func NewApp() (*App, error) {
 	app := &App{
 		cacheDir:  cacheDir,
 		apiToken:  apiToken,
+		tokenPath: tokenPath,
 		wsClients: map[*websocket.Conn]*wsClient{},
 		lidCache:  map[string]string{},
 		state: PersistedState{
@@ -667,6 +768,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/search", a.handleSearch)
 	mux.HandleFunc("/block", a.handleBlock)
 	mux.HandleFunc("/group/members", a.handleGroupMembers)
+	mux.HandleFunc("/session/register", a.handleSessionRegister)
 	return withCORS(a.withAuth(mux))
 }
 
@@ -701,10 +803,74 @@ func (a *App) isAuthorized(r *http.Request) bool {
 		return false
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
-	if token == "" || a.apiToken == "" {
+	if token == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(token), []byte(a.apiToken)) == 1
+	// apiToken can change at runtime (A-1 rotation), so it's read under
+	// the same lock rotateTokenIfSessionDead writes it under.
+	a.mu.RLock()
+	current := a.apiToken
+	a.mu.RUnlock()
+	if current == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(current)) == 1
+}
+
+// handleSessionRegister records which TUI process (by PID) is the active
+// session (A-1). Called once by the TUI right after it confirms the
+// backend is up. rotateTokenIfSessionDead uses this to detect when that
+// TUI process has exited and rotate the session token.
+func (a *App) handleSessionRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		PID int `json:"pid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid pid")
+		return
+	}
+	a.mu.Lock()
+	a.sessionPID = req.PID
+	a.sessionRegisteredAt = time.Now()
+	a.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// rotateTokenIfSessionDead is called from the 30s ticker in main(). If a
+// TUI session was registered and the grace period has elapsed without it
+// being re-registered, and that PID is no longer running, a fresh token is
+// generated, written to disk (S-1), and swapped into a.apiToken — so any
+// copy of the old token (e.g. from a leaked log or a crashed process'
+// memory) stops working.
+func (a *App) rotateTokenIfSessionDead() {
+	a.mu.RLock()
+	pid := a.sessionPID
+	registeredAt := a.sessionRegisteredAt
+	a.mu.RUnlock()
+
+	if pid == 0 || time.Since(registeredAt) < sessionGraceDuration || processAlive(pid) {
+		return
+	}
+
+	newToken, err := generateSessionToken()
+	if err != nil {
+		log.Printf("[session] rotate token: %v", err)
+		return
+	}
+	if err := os.WriteFile(a.tokenPath, []byte(newToken), 0o600); err != nil {
+		log.Printf("[session] rotate token: write %s: %v", a.tokenPath, err)
+		return
+	}
+
+	a.mu.Lock()
+	a.apiToken = newToken
+	a.sessionPID = 0
+	a.mu.Unlock()
+	log.Printf("[session] TUI session (pid %d) ended; rotated session token", pid)
 }
 
 // isAllowedOrigin returns true only for the backend's own URL.

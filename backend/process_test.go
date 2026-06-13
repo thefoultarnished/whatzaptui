@@ -46,11 +46,21 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 	defer cancel()
 	apiToken := "process-test-token"
 
+	// S-1: the backend reads its token from <data-root>/backend/session.token
+	// rather than an env var, so write it there before starting the process.
+	dataDir := filepath.Join(tmpDir, "appdata")
+	tokenDir := filepath.Join(dataDir, "backend")
+	if err := os.MkdirAll(tokenDir, 0o700); err != nil {
+		t.Fatalf("mkdir token dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenDir, "session.token"), []byte(apiToken), 0o600); err != nil {
+		t.Fatalf("write session token: %v", err)
+	}
+
 	runCmd := exec.CommandContext(ctx, exePath)
 	runCmd.Dir = tmpDir
 	runCmd.Env = append(os.Environ(),
-		"WHATZAP_DATA_DIR="+filepath.Join(tmpDir, "appdata"),
-		apiTokenEnvVar+"="+apiToken,
+		"WHATZAP_DATA_DIR="+dataDir,
 	)
 	logPath := filepath.Join(tmpDir, "backend.log")
 	logFile, err := os.Create(logPath)

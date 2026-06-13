@@ -40,3 +40,4 @@ backend/out.json
 *.db-*
 *.sqlite
 *.sqlite3
+*.exe~

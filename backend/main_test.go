@@ -4129,7 +4129,7 @@ func TestMigrateLIDPermissions(t *testing.T) {
 // replaced by [REDACTED] and everything else intact.
 func TestRedactingWriterScrubsSecret(t *testing.T) {
 	var buf bytes.Buffer
-	w := newRedactingWriter(&buf, "supersecrettoken")
+	w := newRedactingWriter(&buf, func() string { return "supersecrettoken" })
 
 	// Simulate a leaked request dump: the kind of string log.Printf("%v", r)
 	// would produce, with the Authorization header inline.
@@ -4160,7 +4160,7 @@ func TestRedactingWriterScrubsSecret(t *testing.T) {
 // secret in a single write is scrubbed, not just the first.
 func TestRedactingWriterMultipleOccurrences(t *testing.T) {
 	var buf bytes.Buffer
-	w := newRedactingWriter(&buf, "tok123")
+	w := newRedactingWriter(&buf, func() string { return "tok123" })
 	in := "first tok123 middle tok123 last tok123"
 	if _, err := w.Write([]byte(in)); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -4175,23 +4175,31 @@ func TestRedactingWriterMultipleOccurrences(t *testing.T) {
 }
 
 // TestRedactingWriterEmptySecretIsPassthrough confirms that with no token
-// set (dev runs), newRedactingWriter returns the raw writer untouched — no
-// allocation, no behavior change, content passes through verbatim.
+// set (dev runs) or a literal nil getter, content passes through verbatim.
 func TestRedactingWriterEmptySecretIsPassthrough(t *testing.T) {
 	var buf bytes.Buffer
-	w := newRedactingWriter(&buf, "")
-	if w != &buf {
-		t.Fatalf("empty secret should return the raw writer unchanged")
+	if w := newRedactingWriter(&buf, nil); w != &buf {
+		t.Fatalf("nil secret getter should return the raw writer unchanged")
 	}
-	if w := newRedactingWriter(&buf, "   "); w != &buf {
-		t.Fatalf("whitespace-only secret should also be treated as empty")
-	}
+
 	in := "no secret here, pass through verbatim"
+
+	buf.Reset()
+	w := newRedactingWriter(&buf, func() string { return "" })
 	if _, err := w.Write([]byte(in)); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if got := buf.String(); got != in {
-		t.Fatalf("passthrough mangled content: got %q, want %q", got, in)
+		t.Fatalf("empty secret mangled content: got %q, want %q", got, in)
+	}
+
+	buf.Reset()
+	w = newRedactingWriter(&buf, func() string { return "   " })
+	if _, err := w.Write([]byte(in)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := buf.String(); got != in {
+		t.Fatalf("whitespace-only secret mangled content: got %q, want %q", got, in)
 	}
 }
 
@@ -4199,7 +4207,7 @@ func TestRedactingWriterEmptySecretIsPassthrough(t *testing.T) {
 // in it is written through untouched (the common case — most log lines).
 func TestRedactingWriterCleanLineUnchanged(t *testing.T) {
 	var buf bytes.Buffer
-	w := newRedactingWriter(&buf, "secret")
+	w := newRedactingWriter(&buf, func() string { return "secret" })
 	in := "upsertMessage: begin tx: connection refused"
 	if _, err := w.Write([]byte(in)); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -4214,7 +4222,7 @@ func TestRedactingWriterCleanLineUnchanged(t *testing.T) {
 // log.Printf call.
 func TestRedactingWriterViaLogger(t *testing.T) {
 	var buf bytes.Buffer
-	lg := log.New(newRedactingWriter(&buf, "live-token-xyz"), "[http] ", 0)
+	lg := log.New(newRedactingWriter(&buf, func() string { return "live-token-xyz" }), "[http] ", 0)
 	lg.Printf("rejected request with header Authorization: Bearer live-token-xyz")
 	got := buf.String()
 	if strings.Contains(got, "live-token-xyz") {

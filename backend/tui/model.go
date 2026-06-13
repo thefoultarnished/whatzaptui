@@ -278,6 +278,7 @@ type m struct {
 	inputFlushScheduled                      bool
 	downloadedMedia                          map[string]string
 	downloadingMedia                         map[string]bool
+	drafts                                   map[string]string // chatID -> unsent composer text
 }
 
 type initMsg struct {

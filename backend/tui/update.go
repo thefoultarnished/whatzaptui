@@ -42,7 +42,11 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		x.startedBackend, x.backend = v.started, v.cmd
 		x.status = "Connecting..."
-		return x, tea.Batch(openWS(x.wsURL, x.apiToken), postEmpty(x.client, x.baseURL+"/start", nil))
+		return x, tea.Batch(
+			openWS(x.wsURL, x.apiToken),
+			postEmpty(x.client, x.baseURL+"/start", nil),
+			registerSession(x.client, x.baseURL, x.apiToken),
+		)
 	case wsOpenMsg:
 		if v.err != nil {
 			x.wsDisconnected = true
@@ -116,7 +120,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				notify := false
 				notifyTitle := ""
 				notifyBody := ""
-				activeViewing := x.mode == "chat" && !x.sidebarFocused && x.active == wm.Key.RemoteJID
+				activeViewing := x.mode == "chat" && x.active == wm.Key.RemoteJID
 				exists := false
 				// For our own outgoing messages, replace a local-* placeholder
 				// in-place to avoid the optimistic/WS race creating a duplicate.
@@ -315,8 +319,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
+		selectedID := x.selectedChatID()
 		x.chats = v.chats
-		sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+		x.resortChats(selectedID)
 		x.ensureSideVisible(x.sideViewRows())
 		cmds := []tea.Cmd{}
 		if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
@@ -552,6 +557,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.contactsByNumber = map[string]contact{}
 		x.whitelist = map[string]string{}
 		x.names = map[string]string{}
+		x.drafts = map[string]string{}
 		x.replyTo = nil
 		x.selectedMsgID = ""
 		x.status = v.msg
@@ -696,13 +702,14 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				x.mainCache.result = ""
 			}
 			now := time.Now()
+			selectedID := x.selectedChatID()
 			for i := range x.chats {
 				if x.chats[i].ID == x.active {
 					x.chats[i].ConversationTimestamp = now.Unix()
 					break
 				}
 			}
-			sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+			x.resortChats(selectedID)
 			x.scroll = 0
 			x.msgActivityUntil = time.Now().Add(3 * time.Second)
 			x.msgActivityType = "sent"
@@ -738,13 +745,14 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.mainCache.result = ""
 		}
 		now := time.Now()
+		selectedID := x.selectedChatID()
 		for i := range x.chats {
 			if x.chats[i].ID == x.active {
 				x.chats[i].ConversationTimestamp = now.Unix()
 				break
 			}
 		}
-		sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+		x.resortChats(selectedID)
 		x.scroll = 0
 		x.msgActivityUntil = time.Now().Add(3 * time.Second)
 		x.msgActivityType = "sent"
@@ -1131,6 +1139,32 @@ func optimisticOutgoingMediaMessage(chatID, kind, fileName, caption, pendingID s
 	return msg
 }
 
+// saveDraft stores the current composer text under the active chat's ID so
+// it can be restored if the user switches away without sending. An empty
+// composer clears any previously saved draft for that chat.
+func (x *m) saveDraft() {
+	if x.active == "" {
+		return
+	}
+	text := x.input + x.inputBuf
+	if text == "" {
+		delete(x.drafts, x.active)
+		return
+	}
+	if x.drafts == nil {
+		x.drafts = map[string]string{}
+	}
+	x.drafts[x.active] = text
+}
+
+// restoreDraft loads the saved composer text for the active chat (empty if
+// none was saved), replacing whatever was previously shown.
+func (x *m) restoreDraft() {
+	x.input = x.drafts[x.active]
+	x.inputBuf = ""
+	x.inputFlushScheduled = false
+}
+
 func (x *m) clearChatComposer() {
 	x.input = ""
 	x.inputBuf = ""
@@ -1157,11 +1191,9 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.fileBrowserOpen {
 		return x.setTopBar("Close the file browser first (Esc)")
 	}
-	// Prefer the userlist selection. If the sidebar is empty/invalid (no
-	// chats, no contacts, or sel is out of range), fall back to the open chat.
-	// This matches /whitelist / /blacklist and means the shortcut also works
-	// in the common case "I have the chat open and haven't navigated the
-	// sidebar yet."
+	// Always target the highlighted sidebar item (the "selected" chat),
+	// regardless of whether the sidebar has focus. Falls back to the open
+	// chat only if the sidebar selection is out of range (e.g. empty list).
 	targetID := ""
 	items := x.sidebarItems()
 	if x.sel >= 0 && x.sel < len(items) {
@@ -1767,7 +1799,11 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return x, nil
 			}
 			hit := x.msgSearchResults[x.msgSearchSel]
-			x.active = hit.ChatID
+			if hit.ChatID != x.active {
+				x.saveDraft()
+				x.active = hit.ChatID
+				x.restoreDraft()
+			}
 			x.mode = "chat"
 			x.sidebarFocused = false
 			x.scroll = 0
@@ -2106,6 +2142,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				x.replyTo = nil
 				return x, nil
 			}
+			x.saveDraft()
 			x.mode, x.active = "nav", ""
 			x.ensureSideVisible(x.sideViewRows())
 		case tea.KeyUp:
@@ -2674,13 +2711,14 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 			x.mainCache.result = ""
 		}
 		now := time.Now()
+		selectedID := x.selectedChatID()
 		for i := range x.chats {
 			if x.chats[i].ID == x.active {
 				x.chats[i].ConversationTimestamp = now.Unix()
 				break
 			}
 		}
-		sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+		x.resortChats(selectedID)
 		x.scroll = 0
 		x.msgActivityUntil = time.Now().Add(3 * time.Second)
 		x.msgActivityType = "sent"
@@ -2937,6 +2975,34 @@ func contactSortKey(name string) (class int, key string) {
 	return 1, lower
 }
 
+// selectedChatID returns the ID of the chat currently highlighted in the
+// sidebar (x.sel into x.chats), or "" if there's no valid selection. Used to
+// re-anchor x.sel to the same chat after x.chats is re-sorted.
+func (x m) selectedChatID() string {
+	if x.sidebarTab == "contacts" || x.sel < 0 || x.sel >= len(x.chats) {
+		return ""
+	}
+	return x.chats[x.sel].ID
+}
+
+// resortChats re-sorts x.chats by ConversationTimestamp (most recent first)
+// and, if selectedID is non-empty, moves x.sel so it keeps pointing at that
+// chat — otherwise the sidebar highlight (and anything that targets it, like
+// Alt+B/Alt+W) would silently jump to whatever chat ends up at the old index
+// when an incoming message reorders the list.
+func (x *m) resortChats(selectedID string) {
+	sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+	if selectedID == "" {
+		return
+	}
+	for i, c := range x.chats {
+		if c.ID == selectedID {
+			x.sel = i
+			return
+		}
+	}
+}
+
 func (x m) filtered() []chat {
 	items := x.sidebarItems()
 	if strings.TrimSpace(x.search) == "" {
@@ -3157,7 +3223,13 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 	if x.sel < 0 || x.sel >= len(f) {
 		x.sel = 0
 	}
-	x.active, x.mode, x.scroll = f[x.sel].ID, "chat", 0
+	newID := f[x.sel].ID
+	if newID != x.active {
+		x.saveDraft()
+		x.active = newID
+		x.restoreDraft()
+	}
+	x.mode, x.scroll = "chat", 0
 	if x.chatInputLocked() {
 		x.clearChatComposer()
 	}

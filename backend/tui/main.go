@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,11 +15,12 @@ import (
 
 func main() {
 	loadConfig()
-	apiToken, err := resolveClientAPIToken()
+	apiToken, err := resolveSessionToken()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	currentAPIToken = apiToken
 
 	applyThemeByName(currentConfig.ThemeName)
 
@@ -97,17 +99,41 @@ func main() {
 	}
 }
 
-func resolveClientAPIToken() (string, error) {
-	if token := os.Getenv(apiTokenEnvVar); token != "" {
-		_ = os.Setenv(apiTokenEnvVar, token)
-		return token, nil
+// sessionTokenPath returns <data-root>/backend/session.token — the same
+// path the backend resolves independently (backend/main.go's
+// sessionTokenPath). S-1: this is the shared file the token lives in,
+// replacing the WHATZAP_API_TOKEN env var.
+func sessionTokenPath() (string, error) {
+	dir := filepath.Join(whatzapDataRoot(), "backend")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "session.token"), nil
+}
+
+// resolveSessionToken returns the token to use for talking to the backend.
+// If a token file already exists (e.g. from a previous TUI run, or written
+// by the backend during A-1 rotation), it's reused — this lets a restarted
+// TUI reconnect to an already-running backend without a token mismatch.
+// Otherwise a fresh token is generated and written to the file (0600).
+func resolveSessionToken() (string, error) {
+	path, err := sessionTokenPath()
+	if err != nil {
+		return "", fmt.Errorf("resolve session token path: %w", err)
+	}
+	if b, err := os.ReadFile(path); err == nil {
+		if token := strings.TrimSpace(string(b)); token != "" {
+			return token, nil
+		}
 	}
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate api token: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(buf)
-	_ = os.Setenv(apiTokenEnvVar, token)
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		return "", fmt.Errorf("write session token: %w", err)
+	}
 	return token, nil
 }
 

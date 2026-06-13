@@ -2899,6 +2899,71 @@ func TestAltToggleFallsBackToActiveChatWhenNoSidebarSelection(t *testing.T) {
 	}
 }
 
+// If an incoming message reorders the sidebar (a different chat's
+// ConversationTimestamp bumps it above the one the user has highlighted),
+// the sidebar selection (x.sel) must follow the same chat rather than
+// staying on a raw index — so Alt+B/Alt+W still targets the chat the user
+// actually had selected.
+func TestAltToggleTargetsHighlightedChatAfterSidebarReorder(t *testing.T) {
+	withTempAPIEnv(t)
+	srv, captured, mu := buildToggleTestServer(t)
+	defer srv.Close()
+
+	selectedChat := "15551230010@s.whatsapp.net"
+	otherChat := "15551230011@s.whatsapp.net"
+	model := m{
+		status:    "ready",
+		mode:      "nav",
+		baseURL:   srv.URL,
+		client:    srv.Client(),
+		whitelist: map[string]string{"15551230010": "Selected", "15551230011": "Other"},
+		names:     map[string]string{"15551230010": "Selected", "15551230011": "Other"},
+		// User has "Selected" highlighted at index 0.
+		chats: []chat{
+			{ID: selectedChat, Name: "Selected", ConversationTimestamp: 1700000000},
+			{ID: otherChat, Name: "Other", ConversationTimestamp: 1699999000},
+		},
+		msgs:         map[string][]wireMsg{},
+		flashUntil:   map[string]time.Time{},
+		mainCache:    &renderCache{},
+		sidebarCache: &sidebarCache{},
+		sel:          0,
+	}
+	model.rebuildContactIndex()
+
+	// otherChat now receives a message and jumps above selectedChat.
+	updated, _ := model.Update(chatsMsg{chats: []chat{
+		{ID: selectedChat, Name: "Selected", ConversationTimestamp: 1700000000},
+		{ID: otherChat, Name: "Other", ConversationTimestamp: 1700000500},
+	}})
+	model = updated.(m)
+
+	if got := model.chats[model.sel].ID; got != selectedChat {
+		t.Fatalf("after reorder, x.sel points at %q, want %q (selection should follow the chat)", got, selectedChat)
+	}
+
+	next, cmd := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	got := next.(m)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd from alt+b")
+	}
+	runBatch(t, cmd)
+
+	if _, ok := got.whitelist["15551230010"]; ok {
+		t.Fatal("the highlighted chat should be blacklisted, but it's still whitelisted")
+	}
+	if _, ok := got.whitelist["15551230011"]; !ok {
+		t.Fatal("the chat that moved to the top should NOT have been touched")
+	}
+
+	waitForCapturedCount(t, mu, captured, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(*captured) != 1 || (*captured)[0].phone != "15551230010" {
+		t.Fatalf("expected 1 setWhitelistEntry for the highlighted chat (15551230010), got %+v", *captured)
+	}
+}
+
 func TestAltToggleFiresViaInlineRuneFallback(t *testing.T) {
 	withTempAPIEnv(t)
 	srv, captured, mu := buildToggleTestServer(t)
@@ -2936,4 +3001,56 @@ func TestAltToggleFiresViaInlineRuneFallback(t *testing.T) {
 		t.Fatal("contact should be blacklisted after alt+b")
 	}
 	waitForCapturedCount(t, mu, captured, 1)
+}
+
+// Switching the active chat (Alt+Up/Down, sidebar selection) must not leak
+// an unsent composer draft into the newly opened chat — each chat keeps its
+// own draft, restored when you return to it.
+func TestOpenSelectedChatSavesAndRestoresPerChatDraft(t *testing.T) {
+	chat1 := "15551230001@s.whatsapp.net"
+	chat2 := "15551230002@s.whatsapp.net"
+	model := m{
+		status:    "ready",
+		mode:      "chat",
+		demoMode:  true,
+		active:    chat1,
+		input:     "hello from chat1",
+		whitelist: map[string]string{"15551230001": "Alice", "15551230002": "Bob"},
+		names:     map[string]string{"15551230001": "Alice", "15551230002": "Bob"},
+		chats: []chat{
+			{ID: chat1, Name: "Alice", ConversationTimestamp: 1700000001},
+			{ID: chat2, Name: "Bob", ConversationTimestamp: 1700000000},
+		},
+		msgs:         map[string][]wireMsg{},
+		flashUntil:   map[string]time.Time{},
+		mainCache:    &renderCache{},
+		sidebarCache: &sidebarCache{},
+		sel:          1,
+	}
+	model.rebuildContactIndex()
+
+	// Switch to chat2 without sending — chat1's draft must be saved, and
+	// chat2's composer must start empty (no leaked text).
+	next, _ := model.openSelectedChat()
+	got := next.(m)
+	if got.active != chat2 {
+		t.Fatalf("active = %q, want %q", got.active, chat2)
+	}
+	if got.input != "" {
+		t.Fatalf("input for chat2 = %q, want empty (no leaked draft)", got.input)
+	}
+	if got.drafts[chat1] != "hello from chat1" {
+		t.Fatalf("drafts[chat1] = %q, want %q", got.drafts[chat1], "hello from chat1")
+	}
+
+	// Switch back to chat1 — its draft must be restored.
+	got.sel = 0
+	back, _ := got.openSelectedChat()
+	final := back.(m)
+	if final.active != chat1 {
+		t.Fatalf("active = %q, want %q", final.active, chat1)
+	}
+	if final.input != "hello from chat1" {
+		t.Fatalf("input for chat1 = %q, want restored draft %q", final.input, "hello from chat1")
+	}
 }

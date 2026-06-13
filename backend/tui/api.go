@@ -27,8 +27,12 @@ import (
 )
 
 const backendStartupLogLimit = 8192
-const apiTokenEnvVar = "WHATZAP_API_TOKEN"
 const authHeaderName = "Authorization"
+
+// currentAPIToken is the session token (S-1) resolved once at startup by
+// resolveSessionToken() in main.go. Replaces the old WHATZAP_API_TOKEN env
+// var lookup in apiTokenFromURL.
+var currentAPIToken string
 
 type limitedBuffer struct {
 	mu    sync.Mutex
@@ -109,7 +113,10 @@ func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
 			cmd = exec.Command(goBin, "run", ".")
 		}
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), apiTokenEnvVar+"="+apiToken)
+		// S-1: no token in the env — the backend reads its token from
+		// <data-root>/backend/session.token (written by resolveSessionToken
+		// before ensureBackend is called), so the child just inherits the
+		// normal environment.
 		logBuf := &limitedBuffer{limit: backendStartupLogLimit}
 		cmd.Stdout = logBuf
 		cmd.Stderr = logBuf
@@ -788,7 +795,25 @@ func attachAuthHeader(req *http.Request, apiToken string) {
 }
 
 func apiTokenFromURL(base string) string {
-	return strings.TrimSpace(os.Getenv(apiTokenEnvVar))
+	return currentAPIToken
+}
+
+// registerSession tells the backend which TUI process (by PID) is the
+// active session (A-1). Called once after ensureBackend succeeds; the
+// backend uses this to rotate the session token if this process exits.
+func registerSession(c *http.Client, base, apiToken string) tea.Cmd {
+	return func() tea.Msg {
+		body, _ := json.Marshal(map[string]int{"pid": os.Getpid()})
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/session/register", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		attachAuthHeader(req, apiToken)
+		res, err := c.Do(req)
+		if err != nil {
+			return nil
+		}
+		defer res.Body.Close()
+		return nil
+	}
 }
 
 func syncContacts(c *http.Client, base string) tea.Cmd {
