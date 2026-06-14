@@ -728,28 +728,44 @@ func (x m) emptyComposerHint() string {
 
 func (x m) renderSide(w, h int) string {
 	f := x.filtered()
-	tabW := max(8, (w-3)/2)
-	inactiveTabStyle := lipgloss.NewStyle().
-		Width(tabW).
+	chatsW := (w - 1) / 2
+	peopleW := (w - 1) - chatsW
+	
+	chatsInactiveStyle := lipgloss.NewStyle().
+		Width(chatsW).
 		Align(lipgloss.Center).
 		Foreground(muted)
-	activeTabStyle := lipgloss.NewStyle().
-		Width(tabW).
+	chatsActiveStyle := lipgloss.NewStyle().
+		Width(chatsW).
 		Align(lipgloss.Center).
 		Foreground(buttonInk).
 		Background(accent).
 		Bold(true)
+
+	peopleInactiveStyle := lipgloss.NewStyle().
+		Width(peopleW).
+		Align(lipgloss.Center).
+		Foreground(muted)
+	peopleActiveStyle := lipgloss.NewStyle().
+		Width(peopleW).
+		Align(lipgloss.Center).
+		Foreground(buttonInk).
+		Background(accent).
+		Bold(true)
+
 	labelStyle := lipgloss.NewStyle().Bold(true)
 	shortcutStyle := lipgloss.NewStyle().Foreground(muted)
 	activeShortcutStyle := lipgloss.NewStyle().Foreground(shortcutActive)
-	chatsTab := inactiveTabStyle.Render(labelStyle.Render("Chats") + " " + shortcutStyle.Render("alt+c"))
-	contactsTab := inactiveTabStyle.Render(labelStyle.Render("People") + " " + shortcutStyle.Render("alt+p"))
+
+	var chatsTab, contactsTab string
 	if x.sidebarTab == "chats" {
-		chatsTab = activeTabStyle.Render("Chats " + activeShortcutStyle.Render("alt+c"))
+		chatsTab = chatsActiveStyle.Render("Chats " + activeShortcutStyle.Render("alt+c"))
+		contactsTab = peopleInactiveStyle.Render(labelStyle.Render("People") + " " + shortcutStyle.Render("alt+p"))
 	} else {
-		contactsTab = activeTabStyle.Render("People " + activeShortcutStyle.Render("alt+p"))
+		chatsTab = chatsInactiveStyle.Render(labelStyle.Render("Chats") + " " + shortcutStyle.Render("alt+c"))
+		contactsTab = peopleActiveStyle.Render("People " + activeShortcutStyle.Render("alt+p"))
 	}
-	tabsLine := chatsTab + " " + contactsTab
+	tabsLine := chatsTab + contactsTab
 	underlineColor := muted
 	if x.mode == "search" {
 		underlineColor = accent
@@ -757,7 +773,7 @@ func (x m) renderSide(w, h int) string {
 
 	sideStyle := lipgloss.NewStyle().
 		Width(w).
-		Padding(0, 1).
+		Padding(0, 0, 0, 0).
 		Border(lipgloss.NormalBorder(), false, true, false, false).
 		BorderForeground(muted)
 
@@ -797,7 +813,7 @@ func (x m) renderSearchBox() string {
 	if searchFocused {
 		searchValue = x.searchInput
 	}
-	searchIconText := "⌕ "
+	searchIconText := " ⌕ "
 	searchIcon := mutedStyle.Render(searchIconText)
 	searchLine := searchIcon
 	placeholder := "search [Alt+S]"
@@ -860,8 +876,8 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			rowBase = rowBase.Background(bg).Foreground(fg)
 		}
 
-		rowWidth := max(1, w-2)
-		nameWidth := max(1, rowWidth-2)
+		rowWidth := max(1, w-1)
+		nameWidth := max(1, rowWidth-1)
 
 		n := i + 1
 		var numLabel string
@@ -877,20 +893,28 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 				numLabel = fmt.Sprintf("0%d. ", n)
 			}
 		}
-		nameText := numLabel + x.name(c)
+		chatName := x.name(c)
+		nameText := numLabel + chatName
 		isMarqueeRow := highlighted || (isActive && x.mode == "chat" && !x.sidebarFocused)
-		if isMarqueeRow && graphemeCount(nameText) > nameWidth {
+		
+		_, typing := x.typingChats[c.ID]
+		adjustW := 0
+		if typing {
+			adjustW = 3
+		}
+		
+		if isMarqueeRow && graphemeCount(nameText) > nameWidth-adjustW {
 			offset := x.sidebarMarqueeOffset
-			maxOffset := graphemeCount(nameText) - nameWidth
+			maxOffset := graphemeCount(nameText) - (nameWidth - adjustW)
 			if offset < 0 {
 				offset = 0
 			}
 			if offset > maxOffset {
 				offset = maxOffset
 			}
-			nameText = graphemeWindow(nameText, offset, nameWidth)
+			nameText = graphemeWindow(nameText, offset, nameWidth-adjustW)
 		} else {
-			nameText = truncate(nameText, nameWidth)
+			nameText = truncate(nameText, nameWidth-adjustW)
 		}
 		var content string
 		switch {
@@ -911,11 +935,11 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			}
 			// Clamp the label to the row so the wave's end matches the visible name.
 			label := nameText
-			if runeDisplayWidth(label) > nameWidth {
-				label = padRight(label, nameWidth)
+			if runeDisplayWidth(label) > nameWidth-adjustW {
+				label = padRight(label, nameWidth-adjustW)
 			}
 			content = renderShine(label, shineBase, shineHigh, x.shineFrame+i*4)
-			if pad := nameWidth - runeDisplayWidth(label); pad > 0 {
+			if pad := (nameWidth - adjustW) - runeDisplayWidth(label); pad > 0 {
 				padStyle := lipgloss.NewStyle()
 				if highlighted || isActive {
 					padStyle = padStyle.Background(bg)
@@ -927,18 +951,25 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			if highlighted {
 				contentStyle = contentStyle.Bold(isSel && navActive)
 			}
-			content = contentStyle.Render(padRight(nameText, nameWidth))
+			content = contentStyle.Render(padRight(nameText, nameWidth-adjustW))
 		default:
-			content = padRight(nameText, nameWidth)
+			content = padRight(nameText, nameWidth-adjustW)
 		}
+		
 		unreadStyle := lipgloss.NewStyle()
 		if highlighted || isActive {
 			unreadStyle = unreadStyle.Background(bg)
 		}
-		if hasUnread {
-			content += unreadStyle.Foreground(accent).Render("\u25cf")
+		if typing {
+			frames := []string{".  ", ".. ", "...", ".. "}
+			dots := frames[(x.shineFrame/3)%len(frames)]
+			content += unreadStyle.Foreground(accent).Bold(true).Render(dots)
 		} else {
-			content += unreadStyle.Render(" ")
+			if hasUnread {
+				content += unreadStyle.Foreground(accent).Render("\u25cf")
+			} else {
+				content += unreadStyle.Render(" ")
+			}
 		}
 		leftPad := " "
 		if highlighted || isActive {

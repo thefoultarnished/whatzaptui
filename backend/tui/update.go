@@ -245,6 +245,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					delete(x.typingChats, tm.ChatID)
 				}
 				x.mainCache.result = ""
+				if x.sidebarCache != nil {
+					x.sidebarCache.contactsValid = false
+				}
 			}
 		case "call":
 			var cm callMsg
@@ -302,10 +305,15 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				delete(x.flashUntil, id)
 			}
 		}
+		anyDeleted := false
 		for chatID, since := range x.typingChats {
 			if now.Sub(since) > 15*time.Second {
 				delete(x.typingChats, chatID)
+				anyDeleted = true
 			}
+		}
+		if anyDeleted && x.sidebarCache != nil {
+			x.sidebarCache.contactsValid = false
 		}
 		return x, nextCursorBlink()
 	case spinnerTickMsg:

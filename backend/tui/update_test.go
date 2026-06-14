@@ -751,8 +751,8 @@ func TestRenderUserListHighlightedNameUsesMarqueeOffset(t *testing.T) {
 	if strings.Contains(lines[0], "1. Very Long Highlighted") {
 		t.Fatalf("highlighted row ignored marquee offset: %q", lines[0])
 	}
-	if got := lipgloss.Width(lines[0]); got != 28 {
-		t.Fatalf("highlighted row width = %d, want 28", got)
+	if got := lipgloss.Width(lines[0]); got != 29 {
+		t.Fatalf("highlighted row width = %d, want 29", got)
 	}
 }
 
