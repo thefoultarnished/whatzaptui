@@ -1787,14 +1787,7 @@ func (x m) renderMain(w, h int) string {
 		if hasQuoteLine {
 			timeLine++
 		}
-		if replySelected && len(block) > 0 {
-			marker := lipgloss.NewStyle().Foreground(selectColor).Bold(true).Render("│ ")
-			if x.pulseOn {
-				block[0] = marker + block[0]
-			} else {
-				block[0] = "  " + block[0]
-			}
-		}
+		// No shifting or prefix marker prepending for replySelected
 		msgBlocks = append(msgBlocks, block)
 		msgTimestamps = append(msgTimestamps, msg.MessageTimestamp)
 		msgBlockMsgs = append(msgBlockMsgs, msg)
