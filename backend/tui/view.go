@@ -681,7 +681,7 @@ func (x m) renderReplyBar(contentW, rightW int) string {
 	if strings.TrimSpace(rSender) == "" {
 		rSender = num(x.senderIDForMsg(*displayReplyTo))
 	}
-	rText := strings.ReplaceAll(renderMessageBody(displayReplyTo.Message), "\n", " ")
+	rText := stripAnsi(strings.ReplaceAll(renderMessageBody(displayReplyTo.Message), "\n", " "))
 	quoteTextColor := quotedReceivedText
 	nameColor := receivedName
 	if displayReplyTo.Key.FromMe {
@@ -995,6 +995,12 @@ func wrapMessageLines(msgBody string, availableW int, fromMe bool, senderName st
 	}
 	prefixWidth := runeDisplayWidth(senderName + ": ")
 	return strings.Split(wrapTextWithPrefix(msgBody, availableW, prefixWidth), "\n")
+}
+
+var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func stripAnsi(s string) string {
+	return ansiEscapeRegex.ReplaceAllString(s, "")
 }
 
 var urlRegex = regexp.MustCompile(`https?://[^\s]+`)
@@ -1491,7 +1497,7 @@ func (x m) renderMain(w, h int) string {
 				if !qFromMe && strings.TrimSpace(qSender) == "" {
 					qSender = num(qParticipant)
 				}
-				origQuote := strings.ReplaceAll(qText, "\n", " ")
+				origQuote := stripAnsi(strings.ReplaceAll(qText, "\n", " "))
 				qText = origQuote
 				if len([]rune(qText)) > 50 {
 					qText = string([]rune(qText)[:50]) + "..."

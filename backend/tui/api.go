@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -442,7 +443,9 @@ func send(c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID
 		payload := map[string]any{"chatId": chatID, "text": text}
 		if replyTo != nil {
 			payload["replyToMsgId"] = replyTo.Key.ID
-			payload["replyToText"] = renderMessageBody(replyTo.Message)
+			rawText := renderMessageBody(replyTo.Message)
+			ansiRe := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+			payload["replyToText"] = ansiRe.ReplaceAllString(rawText, "")
 			participant := replyTo.Key.RemoteJID
 			if replyTo.Key.Participant != "" {
 				participant = replyTo.Key.Participant
