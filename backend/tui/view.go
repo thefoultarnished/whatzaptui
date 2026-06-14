@@ -260,12 +260,18 @@ func (x m) View() string {
 			Background(background).
 			Render(inner)
 	} else {
-		frame = lipgloss.NewStyle().
+		framedBody := lipgloss.NewStyle().
 			Width(outerW).
 			Height(outerH).
-			Border(lipgloss.RoundedBorder()).
+			Border(lipgloss.RoundedBorder(), false, true, true, true).
 			BorderForeground(muted).
 			Render(inner)
+		// Use a "┬" junction in the top border where the sidebar's right
+		// border meets it, so the divider reads as continuous from the
+		// very top of the frame.
+		topRow := lipgloss.NewStyle().Foreground(muted).Render(
+			"╭" + strings.Repeat("─", leftW+1) + "┬" + strings.Repeat("─", max(0, outerW-leftW-2)) + "╮")
+		frame = lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody)
 	}
 	if x.mode == "msgsearch" {
 		return x.renderSearchOverlay(frame, outerW, outerH)
@@ -361,7 +367,7 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	if totalUnread > 0 {
 		statusPart = amberStyle.Render(strconv.Itoa(totalUnread)+" unread") + " "
 	} else {
-		wifi := lipgloss.NewStyle().Foreground(brand).Render("ᯤ")
+		wifi := lipgloss.NewStyle().Foreground(brand).Render("●")
 		connText := lipgloss.NewStyle().Foreground(brand).Render(" connected")
 		if x.demoMode {
 			connText = lipgloss.NewStyle().Foreground(brand).Render(" demo")
@@ -448,11 +454,12 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	centerStr := lipgloss.NewStyle().Width(centerW).Render(centerContent)
 	headLine := leftStr + centerStr + rightStr
 	headBlock := lipgloss.NewStyle().Width(contentW).Render(headLine)
-	// Use a "┬" junction where the sidebar's right border meets the header's
-	// bottom border, so the vertical divider reads as continuous rather than
-	// breaking into a plain "─" for this one row.
+	// Keep the same "│" glyph (instead of a "┬" junction) directly below the
+	// header's divider so it reads as one continuous vertical line into the
+	// sidebar's border below, with no reliance on box-drawing junction glyphs
+	// rendering flush in every font.
 	borderRow := lipgloss.NewStyle().Foreground(muted).
-		Render(strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, contentW-leftW-1)))
+		Render(strings.Repeat("─", leftW) + "│" + strings.Repeat("─", max(0, contentW-leftW-1)))
 	return lipgloss.JoinVertical(lipgloss.Left, headBlock, borderRow)
 }
 
@@ -747,9 +754,21 @@ func (x m) renderSide(w, h int) string {
 	if x.mode == "search" {
 		underlineColor = accent
 	}
-	tabsUnderline := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", max(8, w-2)))
-	underline := lipgloss.NewStyle().Foreground(underlineColor).Render(strings.Repeat("─", max(8, w-2)))
-	lines := []string{tabsLine, tabsUnderline, x.renderSearchBox(), underline}
+
+	sideStyle := lipgloss.NewStyle().
+		Width(w).
+		Padding(0, 1).
+		Border(lipgloss.NormalBorder(), false, true, false, false).
+		BorderForeground(muted)
+
+	tabsRow := sideStyle.Height(1).Render(tabsLine)
+	searchRow := sideStyle.Height(1).Render(x.renderSearchBox())
+
+	// Divider rows span the full width (instead of the padded content area)
+	// so the "─" line reaches all the way to the left edge of the sidebar.
+	tabsDivider := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", w) + "│")
+	searchDivider := lipgloss.NewStyle().Foreground(underlineColor).Render(strings.Repeat("─", w) + "│")
+
 	viewRows := max(1, h-4)
 	maxStart := max(0, len(f)-viewRows)
 	start := x.sideScroll
@@ -760,20 +779,16 @@ func (x m) renderSide(w, h int) string {
 		start = 0
 	}
 	end := min(len(f), start+viewRows)
-	lines = append(lines, x.renderUserList(f, start, end, w)...)
+	listLines := x.renderUserList(f, start, end, w)
 	if len(f) == 0 && strings.TrimSpace(x.search) != "" {
-		lines = append(lines, mutedStyle.Render("  no results"))
+		listLines = append(listLines, mutedStyle.Render("  no results"))
 	}
-	for len(lines) < h {
-		lines = append(lines, "")
+	for len(listLines) < viewRows {
+		listLines = append(listLines, "")
 	}
-	return lipgloss.NewStyle().
-		Width(w).
-		Height(h).
-		Padding(0, 1).
-		Border(lipgloss.NormalBorder(), false, true, false, false).
-		BorderForeground(muted).
-		Render(strings.Join(lines, "\n"))
+	listBlock := sideStyle.Height(viewRows).Render(strings.Join(listLines, "\n"))
+
+	return lipgloss.JoinVertical(lipgloss.Left, tabsRow, tabsDivider, searchRow, searchDivider, listBlock)
 }
 
 func (x m) renderSearchBox() string {
