@@ -1594,7 +1594,7 @@ func (x m) renderMain(w, h int) string {
 		if quoteStyled != "" {
 			if msg.Key.FromMe {
 				qPlainW := runeDisplayWidth(quotePlainRight)
-				targetW := outgoingBodyW
+				targetW := outgoingBlockW
 				if currentConfig.TimestampNewLine && !isMediaMsg {
 					targetW -= 3
 				}
