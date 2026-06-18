@@ -9,10 +9,12 @@ CONTEXT.md
 
 # Build artifacts & binaries
 *.exe
+*.exe~
 *.out
 *.so
 *.dylib
 backend/bin/
+backend/bgtest/
 dist/
 
 # Go cache
@@ -40,4 +42,3 @@ backend/out.json
 *.db-*
 *.sqlite
 *.sqlite3
-*.exe~
