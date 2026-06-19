@@ -18,8 +18,7 @@ func lastNonSpaceCol(s string) int {
 }
 
 func TestTimestampNewLineAlignsLastCharWithReceiptTick(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	saved := currentConfig.TimestampNewLine
 	t.Cleanup(func() { currentConfig.TimestampNewLine = saved })
@@ -76,8 +75,7 @@ func TestTimestampNewLineAlignsLastCharWithReceiptTick(t *testing.T) {
 }
 
 func TestOutgoingReactionSharesTimestampLineInTimestampNewLineMode(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	saved := currentConfig.TimestampNewLine
 	t.Cleanup(func() { currentConfig.TimestampNewLine = saved })
@@ -148,8 +146,7 @@ func TestOutgoingReactionSharesTimestampLineInTimestampNewLineMode(t *testing.T)
 }
 
 func TestIncomingReactionSharesTimestampLineInTimestampNewLineMode(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	saved := currentConfig.TimestampNewLine
 	t.Cleanup(func() { currentConfig.TimestampNewLine = saved })

@@ -292,8 +292,7 @@ func TestDraftLineCountCountsExplicitNewlines(t *testing.T) {
 }
 
 func TestRenderQRStopsGrowingWhenSpaceAllows(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	small := renderQR("test-qr-payload", 20, 10)
 	large := renderQR("test-qr-payload", 80, 40)
@@ -571,8 +570,7 @@ func TestRenderMessageBodyImageNerd(t *testing.T) {
 }
 
 func TestRenderFontTestRendersAllKinds(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	out := renderFontTest(100, 40)
 	if out == "" {
@@ -614,8 +612,7 @@ func TestNerdIconForAllKindsNonEmpty(t *testing.T) {
 }
 
 func TestMediaTagStyle(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	saved := currentConfig.MediaIconStyle
 	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
@@ -640,5 +637,29 @@ func TestMediaTagStyle(t *testing.T) {
 	}
 	if got, _ := st.GetBackground().(lipgloss.Color); got != "" {
 		t.Errorf("nerd mode should have no background, got %v", got)
+	}
+}
+
+func TestHasVisibleText(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		want bool
+	}{
+		{"empty", "", false},
+		{"spaces only", "   ", false},
+		{"tabs and newlines", "\t\n\r", false},
+		{"control chars only", "\x00\x01\x1b", false},
+		{"normal text", "hello", true},
+		{"text with spaces", " hello ", true},
+		{"mixed control and text", "\x00hello\x1b", true},
+		{"emoji", "👋", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasVisibleText(tt.s); got != tt.want {
+				t.Errorf("hasVisibleText(%q) = %v, want %v", tt.s, got, tt.want)
+			}
+		})
 	}
 }

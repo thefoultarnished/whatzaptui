@@ -42,8 +42,7 @@ func TestChatInputLockedIgnoresTyping(t *testing.T) {
 }
 
 func TestRenderChatInputShowsBlacklistedPlaceholder(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		mode:      "chat",
@@ -61,8 +60,7 @@ func TestRenderChatInputShowsBlacklistedPlaceholder(t *testing.T) {
 }
 
 func TestRenderChatInputFocusedTypableShowsBlinkingCursorState(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	base := m{
 		mode:             "chat",
@@ -86,8 +84,7 @@ func TestRenderChatInputFocusedTypableShowsBlinkingCursorState(t *testing.T) {
 }
 
 func TestAltFOpensFilePickerInChat(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "note.txt")
@@ -274,8 +271,7 @@ func TestSidebarItemsContactsCacheInvalidatesOnIdentityChange(t *testing.T) {
 }
 
 func TestRenderMainIncomingMessageKeepsBodyColorAfterPrefix(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	msg := wireMsg{
 		Message: map[string]any{"conversation": "hello there"},
@@ -459,8 +455,7 @@ func TestSendFileRejectsMissingFile(t *testing.T) {
 }
 
 func TestRenderMainQuoteUsesSentColorsWhenQuotingMe(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	msg := wireMsg{
 		Message: map[string]any{
@@ -491,8 +486,7 @@ func TestRenderMainQuoteUsesSentColorsWhenQuotingMe(t *testing.T) {
 }
 
 func TestRenderMainQuoteUsesReceivedColorsWhenQuotingOtherSender(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	msg := wireMsg{
 		Message: map[string]any{
@@ -529,8 +523,7 @@ func TestRenderMainQuoteUsesReceivedColorsWhenQuotingOtherSender(t *testing.T) {
 }
 
 func TestRenderReplyBarTruncatesToPaneWidth(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	reply := &wireMsg{
 		Message: map[string]any{
@@ -563,8 +556,7 @@ func TestRenderReplyBarTruncatesToPaneWidth(t *testing.T) {
 }
 
 func TestViewReplyBarDoesNotExpandPastFrameWidth(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	reply := &wireMsg{
 		Message: map[string]any{
@@ -604,8 +596,7 @@ func TestViewReplyBarDoesNotExpandPastFrameWidth(t *testing.T) {
 }
 
 func TestRenderMainOutgoingReactionKeepsMessageIndentedRight(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	msg := wireMsg{
 		Message:          map[string]any{"conversation": "big data. SPM later"},
@@ -681,8 +672,7 @@ func TestRenderMainOutgoingReactionKeepsMessageIndentedRight(t *testing.T) {
 }
 
 func TestRenderMainGroupReactionShowsReactorName(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	groupID := "120363@g.us"
 	msg := wireMsg{
@@ -723,8 +713,7 @@ func TestRenderMainGroupReactionShowsReactorName(t *testing.T) {
 }
 
 func TestRenderUserListHighlightedNameUsesMarqueeOffset(t *testing.T) {
-	currentTheme = Monokai
-	rehashStyles()
+	setTestTheme(t, Monokai)
 
 	model := m{
 		mode:                 "nav",
@@ -778,8 +767,7 @@ func enableTrueColor(t *testing.T) {
 
 func TestUserListDefaultRowHasNoBg(t *testing.T) {
 	enableTrueColor(t)
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		mode:           "nav",
@@ -807,8 +795,7 @@ func TestUserListDefaultRowHasNoBg(t *testing.T) {
 
 func TestUserListHighlightedWhitelistedRowUsesBrandBg(t *testing.T) {
 	enableTrueColor(t)
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		mode:           "nav",
@@ -836,8 +823,7 @@ func TestUserListHighlightedWhitelistedRowUsesBrandBg(t *testing.T) {
 
 func TestUserListHighlightedBlacklistedRowUsesRedBg(t *testing.T) {
 	enableTrueColor(t)
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		mode:           "nav",
@@ -865,8 +851,7 @@ func TestUserListHighlightedBlacklistedRowUsesRedBg(t *testing.T) {
 
 func TestUserListActiveWhitelistedRowUsesWhitelistActiveBg(t *testing.T) {
 	enableTrueColor(t)
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		mode:           "chat",
@@ -898,8 +883,7 @@ func TestUserListActiveWhitelistedRowUsesWhitelistActiveBg(t *testing.T) {
 
 func TestUserListActiveBlacklistedRowUsesBlacklistActiveBg(t *testing.T) {
 	enableTrueColor(t)
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		mode:           "chat",
@@ -2146,6 +2130,23 @@ func baseModel(chatID string) m {
 	}
 }
 
+func makeTestWSCh() <-chan env {
+	c := make(chan env, 1)
+	c <- env{}
+	return c
+}
+
+func setTestTheme(t *testing.T, theme Theme) {
+	t.Helper()
+	saved := currentTheme
+	currentTheme = theme
+	rehashStyles()
+	t.Cleanup(func() {
+		currentTheme = saved
+		rehashStyles()
+	})
+}
+
 // #2: WS-first path — WS delivers real message before HTTP response.
 // Expected: only one message in the list (no duplicate).
 func TestOptimisticWSFirstNoDuplicate(t *testing.T) {
@@ -2348,7 +2349,7 @@ func TestChatsLoadedDoesNotClobberLoadedMessages(t *testing.T) {
 		mainCache:  &renderCache{},
 		// Buffered send channel so the readWS sub-cmd in the batch returns
 		// immediately instead of blocking the sibling cmds.
-		wsCh: func() <-chan env { c := make(chan env, 1); c <- env{}; return c }(),
+		wsCh: makeTestWSCh(),
 	}
 
 	next, cmd := model.Update(wsEvtMsg{ok: true, evt: env{Type: "chats:loaded"}})
@@ -2416,7 +2417,7 @@ func TestChatsLoadedFetchesInitialWindowWhenEmpty(t *testing.T) {
 		msgs:       map[string][]wireMsg{},
 		flashUntil: map[string]time.Time{},
 		mainCache:  &renderCache{},
-		wsCh:       func() <-chan env { c := make(chan env, 1); c <- env{}; return c }(),
+		wsCh:       makeTestWSCh(),
 	}
 
 	next, cmd := model.Update(wsEvtMsg{ok: true, evt: env{Type: "chats:loaded"}})

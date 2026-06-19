@@ -6,8 +6,7 @@ import (
 )
 
 func TestHeaderShowsPhoneNumberForNamedIndividualChat(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		active: "15551230001@s.whatsapp.net",
@@ -27,8 +26,7 @@ func TestHeaderShowsPhoneNumberForNamedIndividualChat(t *testing.T) {
 }
 
 func TestHeaderOmitsDuplicatePhoneNumberWhenNameIsNumber(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		active: "15551230001@s.whatsapp.net",
@@ -45,8 +43,7 @@ func TestHeaderOmitsDuplicatePhoneNumberWhenNameIsNumber(t *testing.T) {
 }
 
 func TestHeaderOmitsPhoneNumberWhenSettingDisabled(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	saved := currentConfig.HidePhoneNumber
 	t.Cleanup(func() { currentConfig.HidePhoneNumber = saved })
@@ -70,8 +67,7 @@ func TestHeaderOmitsPhoneNumberWhenSettingDisabled(t *testing.T) {
 }
 
 func TestHeaderOmitsPhoneNumberForGroupChat(t *testing.T) {
-	currentTheme = TokyoNight
-	rehashStyles()
+	setTestTheme(t, TokyoNight)
 
 	model := m{
 		active: "111@g.us",

@@ -4232,3 +4232,25 @@ func TestRedactingWriterViaLogger(t *testing.T) {
 		t.Fatalf("expected redaction marker, got %q", got)
 	}
 }
+
+func TestResolveWhatsmeowLogLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{"empty defaults to WARN", "", "WARN"},
+		{"whitespace defaults to WARN", "  ", "WARN"},
+		{"DEBUG", "DEBUG", "DEBUG"},
+		{"debug lowercased", "debug", "DEBUG"},
+		{" info with spaces", " info ", "INFO"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("WHATZAP_LOG_LEVEL", tt.env)
+			if got := resolveWhatsmeowLogLevel(); got != tt.want {
+				t.Errorf("resolveWhatsmeowLogLevel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

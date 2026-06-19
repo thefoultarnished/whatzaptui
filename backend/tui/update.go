@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -100,7 +101,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch v.evt.Type {
 		case "qr":
 			var qr string
-			_ = json.Unmarshal(v.evt.Payload, &qr)
+			if err := json.Unmarshal(v.evt.Payload, &qr); err != nil {
+				log.Printf("ws qr unmarshal: %v", err)
+			}
 			x.status = "qr"
 			x.qrRaw = qr
 		case "ready":
@@ -190,6 +193,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 					cmds = append(cmds, titleCmd)
 				}
+			} else {
+				log.Printf("ws message unmarshal: %v", err)
 			}
 		case "message:edited":
 			var wm wireMsg
@@ -205,6 +210,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if x.mainCache != nil {
 					x.mainCache.result = ""
 				}
+			} else {
+				log.Printf("ws message:edited unmarshal: %v", err)
 			}
 		case "receipt":
 			var rm receiptMsg
@@ -228,6 +235,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						x.mainCache.result = ""
 					}
 				}
+			} else {
+				log.Printf("ws receipt unmarshal: %v", err)
 			}
 		case "typing":
 			var tm struct {
@@ -248,6 +257,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if x.sidebarCache != nil {
 					x.sidebarCache.contactsValid = false
 				}
+			} else {
+				log.Printf("ws typing unmarshal: %v", err)
 			}
 		case "call":
 			var cm callMsg
@@ -258,6 +269,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					callCmds = append(callCmds, flashTaskbarCmd())
 				}
 				cmds = append(cmds, tea.Batch(callCmds...))
+			} else {
+				log.Printf("ws call unmarshal: %v", err)
 			}
 		}
 		return x, tea.Batch(cmds...)

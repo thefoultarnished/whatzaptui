@@ -1003,6 +1003,113 @@ func stripAnsi(s string) string {
 	return ansiEscapeRegex.ReplaceAllString(s, "")
 }
 
+func applyBgToAnsiString(s string, bg lipgloss.Color) string {
+	if s == "" {
+		return ""
+	}
+	// Parse ANSI sequences and construct a new string where every non-sequence part is wrapped with the background,
+	// and any reset or background-clearing sequence is supplemented with the selection background sequence.
+	// Since lipgloss.Color can be #RRGGBB, we can use lipgloss.NewStyle().Background(bg).Render("") to find the escape code,
+	// or format it ourselves. In 24-bit color mode, background is "\x1b[48;2;R;G;Bm".
+	bgStyle := lipgloss.NewStyle().Background(bg)
+	bgSeq := bgStyle.Render("")
+	// If bgSeq has a trailing reset \x1b[0m, strip it. Let's just find the start sequence.
+	if idx := strings.Index(bgSeq, "m"); idx > 0 {
+		bgSeq = bgSeq[:idx+1]
+	} else {
+		bgSeq = ""
+	}
+	
+	if bgSeq == "" {
+		return s
+	}
+
+	var sb strings.Builder
+	// Start with the background sequence active
+	sb.WriteString(bgSeq)
+	
+	matches := ansiEscapeRegex.FindAllStringIndex(s, -1)
+	lastIdx := 0
+	for _, match := range matches {
+		// Write the text segment before this ANSI escape code
+		sb.WriteString(s[lastIdx:match[0]])
+		esc := s[match[0]:match[1]]
+		sb.WriteString(esc)
+		// If the escape code is a reset (\x1b[0m or contains a 0 code), we must re-enable our background color
+		// because the reset clears both foreground and background colors.
+		// Similarly, if it sets a background, it might override ours, but reset is the main one that clears all.
+		if esc == "\x1b[0m" || esc == "\x1b[m" || strings.Contains(esc, ";0m") || strings.Contains(esc, "[0m") || strings.Contains(esc, "[0;") {
+			sb.WriteString(bgSeq)
+		}
+		lastIdx = match[1]
+	}
+	sb.WriteString(s[lastIdx:])
+	// End with a reset code
+	sb.WriteString("\x1b[0m")
+	return sb.String()
+}
+
+func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
+	if targetW <= 0 {
+		return "", s
+	}
+	var sbPrefix strings.Builder
+	var sbSuffix strings.Builder
+	
+	matches := ansiEscapeRegex.FindAllStringIndex(s, -1)
+	currentW := 0
+	lastIdx := 0
+	
+	// Keep track of the current active ANSI styles to prepend to the suffix so formatting is preserved
+	var activeStyles []string
+	
+	for _, match := range matches {
+		// Process text segment before this ANSI sequence
+		textSeg := s[lastIdx:match[0]]
+		for _, r := range textSeg {
+			rw := runeDisplayWidth(string(r))
+			if currentW+rw <= targetW {
+				sbPrefix.WriteRune(r)
+				currentW += rw
+			} else {
+				sbSuffix.WriteRune(r)
+			}
+		}
+		
+		esc := s[match[0]:match[1]]
+		if esc == "\x1b[0m" || esc == "\x1b[m" {
+			activeStyles = nil
+		} else {
+			activeStyles = append(activeStyles, esc)
+		}
+		
+		if currentW <= targetW {
+			sbPrefix.WriteString(esc)
+		} else {
+			sbSuffix.WriteString(esc)
+		}
+		lastIdx = match[1]
+	}
+	
+	textSeg := s[lastIdx:]
+	for _, r := range textSeg {
+		rw := runeDisplayWidth(string(r))
+		if currentW+rw <= targetW {
+			sbPrefix.WriteRune(r)
+			currentW += rw
+		} else {
+			sbSuffix.WriteRune(r)
+		}
+	}
+	
+	prefix := sbPrefix.String()
+	suffix := sbSuffix.String()
+	if suffix != "" && len(activeStyles) > 0 {
+		suffix = strings.Join(activeStyles, "") + suffix
+	}
+	return prefix, suffix
+}
+
 var urlRegex = regexp.MustCompile(`https?://[^\s]+`)
 
 func renderTextWithLinks(s string, baseStyle lipgloss.Style, original ...string) string {
@@ -1788,6 +1895,86 @@ func (x m) renderMain(w, h int) string {
 			timeLine++
 		}
 		// No shifting or prefix marker prepending for replySelected
+		if replySelected && len(block) > 0 {
+			minStart := 9999
+			maxEnd := 0
+			plainLines := make([]string, len(block))
+			starts := make([]int, len(block))
+			ends := make([]int, len(block))
+			for idx, ln := range block {
+				plain := stripAnsi(ln)
+				plainLines[idx] = plain
+			}
+			for idx := range block {
+				if idx == timeLine {
+					continue
+				}
+				plain := plainLines[idx]
+				trimmed := strings.TrimLeft(plain, " ")
+				leading := len(plain) - len(trimmed)
+				
+				pointerW := 0
+				if !msg.Key.FromMe {
+					bodyLineIdx := idx
+					if hasQuoteLine {
+						bodyLineIdx = idx - 1
+					}
+					// If the index is for a quote line (idx == 0 and hasQuoteLine), it has no pointer.
+					if bodyLineIdx >= 0 {
+						if isGroup {
+							if bodyLineIdx == 0 {
+								pointerW = runeDisplayWidth(senderName + ": ")
+							}
+						} else {
+							// For single chat, first line has receivedMsgIcon + " ", subsequent lines have corresponding padding/icon
+							if bodyLineIdx == 0 {
+								pointerW = runeDisplayWidth(receivedMsgIcon + " ")
+							} else {
+								// Check receivedMsgIcon type to get correct padding width
+								switch receivedMsgIcon {
+								case "│", "┃", "║":
+									pointerW = runeDisplayWidth(receivedMsgIcon + " ")
+								default:
+									pointerW = runeDisplayWidth(receivedMsgIcon + " ")
+								}
+							}
+						}
+					}
+				}
+
+				contentStart := leading + pointerW
+				contentEnd := leading + runeDisplayWidth(trimmed)
+				
+				starts[idx] = contentStart
+				ends[idx] = contentEnd
+				if starts[idx] < minStart {
+					minStart = starts[idx]
+				}
+				if ends[idx] > maxEnd {
+					maxEnd = ends[idx]
+				}
+			}
+
+			for idx, ln := range block {
+				if idx == timeLine {
+					continue
+				}
+				start := starts[idx]
+				end := ends[idx]
+				rightPadding := ""
+				if end < maxEnd {
+					rightPadding = strings.Repeat(" ", maxEnd-end)
+				}
+				
+				// Reconstruct the line preserving the prefix (up to start) unhighlighted,
+				// and highlighting the content from start to maxEnd.
+				// Let's extract the prefix and content using ANSI-safe splitting at `start`.
+				prefixPart, contentPart := splitAnsiStringAtWidth(ln, start)
+				
+				// Apply background style to contentPart + rightPadding.
+				block[idx] = prefixPart + applyBgToAnsiString(contentPart+rightPadding, messageSelectedBg)
+			}
+		}
 		msgBlocks = append(msgBlocks, block)
 		msgTimestamps = append(msgTimestamps, msg.MessageTimestamp)
 		msgBlockMsgs = append(msgBlockMsgs, msg)

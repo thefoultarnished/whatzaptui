@@ -37,7 +37,7 @@ var (
 		SidebarWhitelistActiveBg: "#ff8c00", // brand amber
 		SidebarBlacklistActiveBg: "#ff3300", // red
 		ReplyPreviewBg:           "#1a1000",
-		MessageSelectedBg:        "#1e1200",
+		MessageSelectedBg:        "#3c2200",
 		MediaTokenBg:             "#ff4500",
 		MediaTokenPulseBg:        "#ff8c00",
 		Background:               "#0e0900", // near-black coal
@@ -79,7 +79,7 @@ var (
 		SidebarWhitelistActiveBg: "#7ec8e3", // brand blue
 		SidebarBlacklistActiveBg: "#7090b8", // red
 		ReplyPreviewBg:           "#0c1824",
-		MessageSelectedBg:        "#101e2c",
+		MessageSelectedBg:        "#1c344e",
 		MediaTokenBg:             "#7ec8e3",
 		MediaTokenPulseBg:        "#a8daf0",
 		Background:               "#080e14", // very dark ice-navy
@@ -121,7 +121,7 @@ var (
 		SidebarWhitelistActiveBg: "#5aab3a", // brand green
 		SidebarBlacklistActiveBg: "#c04a3a", // red
 		ReplyPreviewBg:           "#121a0c",
-		MessageSelectedBg:        "#101808",
+		MessageSelectedBg:        "#243818",
 		MediaTokenBg:             "#5aab3a",
 		MediaTokenPulseBg:        "#78c850",
 		Background:               "#0a0f07", // very dark forest floor
@@ -163,7 +163,7 @@ var (
 		SidebarWhitelistActiveBg: "#f4a261", // brand orange
 		SidebarBlacklistActiveBg: "#ef4565", // red
 		ReplyPreviewBg:           "#1c0c30",
-		MessageSelectedBg:        "#180a28",
+		MessageSelectedBg:        "#3c1a5c",
 		MediaTokenBg:             "#e76f51",
 		MediaTokenPulseBg:        "#f4a261",
 		Background:               "#110818", // deep indigo-purple
@@ -205,7 +205,7 @@ var (
 		SidebarWhitelistActiveBg: "#c8a864", // brand gold
 		SidebarBlacklistActiveBg: "#a84840", // red
 		ReplyPreviewBg:           "#1c1610",
-		MessageSelectedBg:        "#1a140e",
+		MessageSelectedBg:        "#3c2c1a",
 		MediaTokenBg:             "#a87c50",
 		MediaTokenPulseBg:        "#c8a864",
 		Background:               "#14110c", // dark warm sepia-black
@@ -373,7 +373,7 @@ var (
 		SidebarWhitelistActiveBg: "#25D366", // brand green
 		SidebarBlacklistActiveBg: "#E57373", // red
 		ReplyPreviewBg:           "#111B21", // dark app panel
-		MessageSelectedBg:        "#1A2A2F", // slightly lifted dark selection
+		MessageSelectedBg:        "#2c4248", // slightly lifted dark selection
 		MediaTokenBg:             "#128C7E", // WhatsApp dark teal
 		MediaTokenPulseBg:        "#25D366", // pulse with the brand green
 		Background:               "#0B141A", // WhatsApp dark app background
@@ -415,7 +415,7 @@ var (
 		SidebarWhitelistActiveBg: "#9ece6a", // brand green
 		SidebarBlacklistActiveBg: "#f7768e", // red
 		ReplyPreviewBg:           "#1d2545", // deep navy reply context
-		MessageSelectedBg:        "#232845", // subtle navy highlight
+		MessageSelectedBg:        "#383f60", // subtle navy highlight
 		MediaTokenBg:             "#f7768e", // theme's own red — more cohesive
 		MediaTokenPulseBg:        "#ff9eb5", // soft red-pink pulse
 		Background:               "#1a1b26", // Tokyo Night canonical bg
@@ -457,7 +457,7 @@ var (
 		SidebarWhitelistActiveBg: "#a6e3a1", // brand green
 		SidebarBlacklistActiveBg: "#f38ba8", // red
 		ReplyPreviewBg:           "#272040", // dark mauve context
-		MessageSelectedBg:        "#252040", // deep mauve selection
+		MessageSelectedBg:        "#3c345a", // deep mauve selection
 		MediaTokenBg:             "#f38ba8", // Mocha Red
 		MediaTokenPulseBg:        "#f5bde6", // Mocha Pink — soft pulse
 		Background:               "#1e1e2e",
@@ -499,7 +499,7 @@ var (
 		SidebarWhitelistActiveBg: "#a6e22e", // brand green
 		SidebarBlacklistActiveBg: "#f92672", // red
 		ReplyPreviewBg:           "#332c18", // dark warm Monokai
-		MessageSelectedBg:        "#2d2910", // very dark warm highlight
+		MessageSelectedBg:        "#5d541c", // very dark warm highlight
 		MediaTokenBg:             "#f92672", // Monokai red
 		MediaTokenPulseBg:        "#ff6b9d", // soft pink pulse
 		Background:               "#272822",
@@ -541,7 +541,7 @@ var (
 		SidebarWhitelistActiveBg: "#ebebeb", // brand gray
 		SidebarBlacklistActiveBg: "#a0a0a0", // red
 		ReplyPreviewBg:           "#3f3f3f",
-		MessageSelectedBg:        "#383838",
+		MessageSelectedBg:        "#505050",
 		MediaTokenBg:             "#c8c8c8",
 		MediaTokenPulseBg:        "#e0e0e0",
 		Background:               "#1c1c1c",
@@ -583,7 +583,7 @@ var (
 		SidebarWhitelistActiveBg: "#50fa7b", // brand green
 		SidebarBlacklistActiveBg: "#ff5555", // red
 		ReplyPreviewBg:           "#1a2030",
-		MessageSelectedBg:        "#14192a", // very dark navy
+		MessageSelectedBg:        "#283254", // very dark navy
 		MediaTokenBg:             "#ff79c6", // aurora pink
 		MediaTokenPulseBg:        "#ffb3e0", // soft pink pulse
 		Background:               "#0d1117",
@@ -667,7 +667,7 @@ var (
 		SidebarWhitelistActiveBg: "#00e5c8", // brand teal
 		SidebarBlacklistActiveBg: "#ff4f6e", // red
 		ReplyPreviewBg:           "#0c2030",
-		MessageSelectedBg:        "#091c28",
+		MessageSelectedBg:        "#183850",
 		MediaTokenBg:             "#0077aa",
 		MediaTokenPulseBg:        "#00cfff",
 		Background:               "#020810",
@@ -708,7 +708,7 @@ var (
 		SidebarWhitelistActiveBg: "#ff007f", // brand magenta
 		SidebarBlacklistActiveBg: "#ff003c", // red
 		ReplyPreviewBg:           "#12061c",
-		MessageSelectedBg:        "#1c092c",
+		MessageSelectedBg:        "#3c135c",
 		MediaTokenBg:             "#ff007f",
 		MediaTokenPulseBg:        "#00f0ff",
 		Background:               "#0a0a14",

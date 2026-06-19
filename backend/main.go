@@ -2407,7 +2407,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := 50
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
-		limit = min(n, 200)
+		limit = min(n, maxMessagesResponseLimit)
 	}
 	chatID := strings.TrimSpace(r.URL.Query().Get("chatId"))
 	if chatID != "" {
@@ -3446,16 +3446,6 @@ func (a *App) toWireMessageFromHistory(webMsg *waWeb.WebMessageInfo) WireMessage
 }
 
 func normalizeQuotedParticipant(participant, selfID string, canonicalize func(string) string) string {
-	phoneIdentity := func(jid string) string {
-		local := phoneFromJID(jid)
-		local = strings.SplitN(local, ":", 2)[0]
-		return strings.Map(func(r rune) rune {
-			if r >= '0' && r <= '9' {
-				return r
-			}
-			return -1
-		}, local)
-	}
 	participant = strings.TrimSpace(participant)
 	if participant == "" {
 		return ""
@@ -4151,11 +4141,6 @@ func (a *App) reconcileChatTimestampsFromDB() {
 	if changed {
 		a.persistState()
 	}
-}
-
-func reconcileChatTimestamps(state *PersistedState) bool {
-	// Kept for tests that work with in-memory state snapshots only.
-	return false
 }
 
 func reconcileChatTimestampsFromMessages(state *PersistedState, msgs map[string][]WireMessage) bool {

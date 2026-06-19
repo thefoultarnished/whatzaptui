@@ -620,6 +620,9 @@ func (x m) cleanup() {
 	if x.demoMode {
 		return
 	}
+	for _, path := range x.downloadedMedia {
+		_ = os.Remove(path)
+	}
 	if x.ws != nil {
 		_ = x.ws.Close()
 	}
