@@ -71,7 +71,8 @@ func newTestApp(t *testing.T) *App {
 		CREATE TABLE IF NOT EXISTS contacts (
 			id     TEXT PRIMARY KEY,
 			name   TEXT NOT NULL DEFAULT '',
-			notify TEXT NOT NULL DEFAULT ''
+			notify TEXT NOT NULL DEFAULT '',
+			stored INTEGER NOT NULL DEFAULT 0
 		);
 	`); err != nil {
 		t.Fatalf("create chats/contacts tables: %v", err)

@@ -75,6 +75,10 @@ type Config struct {
 	Borderless           bool   `json:"borderless,omitempty"`
 	UserlistIconStyle    string `json:"userlist_icon_style,omitempty"`
 	HidePhoneNumber      bool   `json:"hide_phone_number,omitempty"`
+	// ShowAllContacts disables the stored-only People filter. Default
+	// false: the People tab shows address-book contacts plus renamed
+	// and whitelisted chats, hiding push-name-only strangers.
+	ShowAllContacts bool `json:"show_all_contacts,omitempty"`
 }
 
 var currentConfig Config
@@ -115,6 +119,7 @@ type contact struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Notify string `json:"notify"`
+	Stored bool   `json:"stored"`
 }
 
 // UnmarshalJSON sanitizes wire-derived display text (Name, Notify) to strip

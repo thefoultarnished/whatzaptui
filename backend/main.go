@@ -91,6 +91,10 @@ type Contact struct {
 	ID     string `json:"id"`
 	Name   string `json:"name,omitempty"`
 	Notify string `json:"notify,omitempty"`
+	// Stored is true when the name came from the phone's address book
+	// (FullName/FirstName/BusinessName), false for push-name-only
+	// contacts observed in messages/groups.
+	Stored bool `json:"stored,omitempty"`
 }
 
 type PersistedState struct {
@@ -152,6 +156,19 @@ type App struct {
 	// Kept separate from mu so a logout's network call to WhatsApp
 	// doesn't stall every other request that needs a read of a.state.
 	logoutMu sync.Mutex
+
+	// startMu serializes /start so two concurrent calls can't race
+	// GetQRChannel against Connect (whatsmeow rejects GetQRChannel
+	// once connecting). Repeat calls while connecting just re-attach.
+	startMu sync.Mutex
+
+	// connState is the last known WhatsApp connection state for WS
+	// late-joiners ("connecting", "waiting-qr", "ready",
+	// "connect-failed: ...", "disconnected", "logged-out").
+	// lastQR keeps the most recent QR code so a TUI that opens its
+	// WebSocket after the qr event still gets it. Guarded by mu.
+	connState string
+	lastQR    string
 }
 
 var maxUploadBytes int64 = 150 * 1024 * 1024
@@ -697,12 +714,15 @@ func (a *App) initPersistentResources() error {
 		CREATE TABLE IF NOT EXISTS contacts (
 			id     TEXT PRIMARY KEY,
 			name   TEXT NOT NULL DEFAULT '',
-			notify TEXT NOT NULL DEFAULT ''
+			notify TEXT NOT NULL DEFAULT '',
+			stored INTEGER NOT NULL DEFAULT 0
 		);
 	`); err != nil {
 		_ = rawDB.Close()
 		return err
 	}
+	// Migration for DBs created before the stored column existed.
+	_, _ = rawDB.Exec(`ALTER TABLE contacts ADD COLUMN stored INTEGER NOT NULL DEFAULT 0`)
 	if _, err := rawDB.Exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 			chat_id UNINDEXED,
@@ -890,6 +910,8 @@ func (a *App) bindEvents() {
 		case *events.Connected:
 			a.mu.Lock()
 			a.connected = true
+			a.connState = "ready"
+			a.lastQR = ""
 			a.mu.Unlock()
 			go func() {
 				presCtx, presCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -901,12 +923,14 @@ func (a *App) bindEvents() {
 		case *events.Disconnected:
 			a.mu.Lock()
 			a.connected = false
+			a.connState = "disconnected"
 			a.mu.Unlock()
 			a.broadcast(EventEnvelope{Type: "disconnected", Payload: "connection closed"})
 		case *events.LoggedOut:
 			a.mu.Lock()
 			a.connected = false
 			a.started = false
+			a.connState = "logged-out"
 			a.mu.Unlock()
 			a.broadcast(EventEnvelope{Type: "status", Payload: "Logged out. Start again to scan QR."})
 			if a.client != nil && a.client.Store != nil {
@@ -916,7 +940,10 @@ func (a *App) bindEvents() {
 		case *events.PushName:
 			jid := a.canonicalizeChatID(v.JID.String())
 			a.mu.Lock()
-			a.state.Contacts[jid] = Contact{ID: jid, Notify: v.NewPushName}
+			ct := a.state.Contacts[jid]
+			ct.ID = jid
+			ct.Notify = v.NewPushName
+			a.state.Contacts[jid] = ct
 			a.mu.Unlock()
 			a.persistState()
 			a.broadcast(EventEnvelope{Type: "contacts:updated"})
@@ -1404,6 +1431,13 @@ func scanMessageRow(rows *sql.Rows) (WireMessage, error) {
 	}, nil
 }
 
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (a *App) upsertChatToDB(chat Chat) error {
 	_, err := a.db.Exec(`
 		INSERT OR REPLACE INTO chats (id, name, subject, conv_ts, unread_count)
@@ -1414,9 +1448,9 @@ func (a *App) upsertChatToDB(chat Chat) error {
 
 func (a *App) upsertContactToDB(contact Contact) error {
 	_, err := a.db.Exec(`
-		INSERT OR REPLACE INTO contacts (id, name, notify)
-		VALUES (?, ?, ?)
-	`, contact.ID, contact.Name, contact.Notify)
+		INSERT OR REPLACE INTO contacts (id, name, notify, stored)
+		VALUES (?, ?, ?, ?)
+	`, contact.ID, contact.Name, contact.Notify, boolToInt(contact.Stored))
 	return err
 }
 
@@ -1438,7 +1472,7 @@ func (a *App) loadChatsFromDB() (map[string]Chat, error) {
 }
 
 func (a *App) loadContactsFromDB() (map[string]Contact, error) {
-	rows, err := a.db.Query(`SELECT id, name, notify FROM contacts`)
+	rows, err := a.db.Query(`SELECT id, name, notify, stored FROM contacts`)
 	if err != nil {
 		return nil, err
 	}
@@ -1446,9 +1480,11 @@ func (a *App) loadContactsFromDB() (map[string]Contact, error) {
 	contacts := map[string]Contact{}
 	for rows.Next() {
 		var c Contact
-		if err := rows.Scan(&c.ID, &c.Name, &c.Notify); err != nil {
+		var stored int
+		if err := rows.Scan(&c.ID, &c.Name, &c.Notify, &stored); err != nil {
 			return nil, err
 		}
+		c.Stored = stored != 0
 		contacts[c.ID] = c
 	}
 	return contacts, rows.Err()
@@ -1509,7 +1545,10 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 	a.state.Chats[chatID] = chat
 
 	if msg.PushName != "" && !msg.Key.FromMe && !strings.HasSuffix(chatID, "@g.us") {
-		a.state.Contacts[chatID] = Contact{ID: chatID, Notify: msg.PushName}
+		ct := a.state.Contacts[chatID]
+		ct.ID = chatID
+		ct.Notify = msg.PushName
+		a.state.Contacts[chatID] = ct
 	}
 	if !a.historySyncing {
 		atomic.StoreUint32(&a.persistDirty, 1)
@@ -1592,24 +1631,63 @@ func (a *App) updateReceiptStatus(chatID string, ids []string, status string) bo
 }
 
 func (a *App) startSession() error {
-	a.mu.Lock()
+	// Serialize concurrent /start calls: a repeat call while a connect
+	// is in flight must be a no-op, not a second GetQRChannel/Connect.
+	a.startMu.Lock()
+	defer a.startMu.Unlock()
+
+	a.mu.RLock()
 	alreadyStarted := a.started
-	if !a.started {
-		a.started = true
+	connected := a.connected
+	a.mu.RUnlock()
+	if alreadyStarted {
+		if connected && a.client.IsConnected() && a.client.IsLoggedIn() {
+			return nil
+		}
+		// A connect is already in flight (or failed and will be
+		// retried by the next /start). Re-attaching is enough.
+		if a.client.IsConnected() {
+			return nil
+		}
+		// Fall through and try again only if nothing is in flight.
+		// whatsmeow reports connecting state via IsConnected; if a
+		// previous Connect goroutine is still running, don't start
+		// a second one.
+		a.mu.RLock()
+		state := a.connState
+		a.mu.RUnlock()
+		if state == "connecting" || state == "waiting-qr" {
+			return nil
+		}
 	}
+
+	a.mu.Lock()
+	a.started = true
+	if a.client.Store.ID == nil {
+		a.connState = "waiting-qr"
+	} else {
+		a.connState = "connecting"
+	}
+	state := a.connState
 	a.mu.Unlock()
+	a.broadcast(EventEnvelope{Type: "status", Payload: state})
 
 	if a.client.Store.ID == nil {
 		qrChan, err := a.client.GetQRChannel(context.Background())
 		if err != nil {
 			a.mu.Lock()
 			a.started = false
+			a.connState = "connect-failed: " + err.Error()
 			a.mu.Unlock()
+			a.broadcast(EventEnvelope{Type: "status", Payload: "connect-failed: " + err.Error()})
 			return err
 		}
 		go func() {
 			for evt := range qrChan {
 				if evt.Event == "code" {
+					a.mu.Lock()
+					a.lastQR = evt.Code
+					a.mu.Unlock()
 					a.broadcast(EventEnvelope{Type: "qr", Payload: evt.Code})
 				} else if evt.Event == "timeout" {
 					a.broadcast(EventEnvelope{Type: "status", Payload: "QR timed out, retrying..."})
@@ -1617,22 +1695,17 @@ func (a *App) startSession() error {
 			}
 		}()
 	}
-	if alreadyStarted {
-		a.mu.RLock()
-		connected := a.connected
-		a.mu.RUnlock()
-		if connected && a.client.IsConnected() && a.client.IsLoggedIn() {
-			return nil
-		}
-	}
 	// Connect in a goroutine so /start returns immediately.
-	// The TUI learns the session is ready via the WS "ready" event.
+	// The TUI learns the session is ready via the WS "ready" event,
+	// or the failure via the WS "status" connect-failed event.
 	go func() {
 		if err := a.client.Connect(); err != nil {
 			a.mu.Lock()
 			a.started = false
+			a.connState = "connect-failed: " + err.Error()
 			a.mu.Unlock()
 			log.Printf("startSession: connect failed: %v", err)
+			a.broadcast(EventEnvelope{Type: "status", Payload: "connect-failed: " + err.Error()})
 			return
 		}
 		a.recanonicalizeState()
@@ -1764,6 +1837,8 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 	a.wsMu.Unlock()
 	a.mu.RLock()
 	connected := a.connected
+	lastQR := a.lastQR
+	connState := a.connState
 	a.mu.RUnlock()
 	if connected {
 		if data, err := json.Marshal(EventEnvelope{Type: "ready"}); err == nil {
@@ -1776,6 +1851,27 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if data, err := json.Marshal(EventEnvelope{Type: "chats:loaded"}); err == nil {
+			if err := client.write(data); err != nil {
+				a.wsMu.Lock()
+				delete(a.wsClients, conn)
+				a.wsMu.Unlock()
+				_ = conn.Close()
+				return
+			}
+		}
+	} else {
+		// Late joiner while not connected: replay the current state so
+		// the TUI never sits on "Connecting..." with no further events.
+		var snapshot EventEnvelope
+		switch {
+		case lastQR != "":
+			snapshot = EventEnvelope{Type: "qr", Payload: lastQR}
+		case connState != "":
+			snapshot = EventEnvelope{Type: "status", Payload: connState}
+		default:
+			snapshot = EventEnvelope{Type: "status", Payload: "connecting"}
+		}
+		if data, err := json.Marshal(snapshot); err == nil {
 			if err := client.write(data); err != nil {
 				a.wsMu.Lock()
 				delete(a.wsClients, conn)
@@ -2066,6 +2162,9 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 		if name != "" {
 			contact.Name = name
 			contact.Notify = name
+		}
+		if fullName != "" || firstName != "" || businessName != "" {
+			contact.Stored = true
 		}
 		a.state.Contacts[cid] = contact
 
@@ -4007,6 +4106,9 @@ func (a *App) bootstrapFromStore() {
 		if name != "" && ct.Notify == "" {
 			ct.Notify = name
 		}
+		if fullName != "" || firstName != "" || businessName != "" {
+			ct.Stored = true
+		}
 		a.state.Contacts[cid] = ct
 
 		if ch.ID != "" {
@@ -4095,9 +4197,9 @@ func (a *App) persistStateWithErr() error {
 	}
 	for _, contact := range contacts {
 		if _, err := tx.Exec(`
-			INSERT OR REPLACE INTO contacts (id, name, notify)
-			VALUES (?, ?, ?)
-		`, contact.ID, contact.Name, contact.Notify); err != nil {
+			INSERT OR REPLACE INTO contacts (id, name, notify, stored)
+			VALUES (?, ?, ?, ?)
+		`, contact.ID, contact.Name, contact.Notify, boolToInt(contact.Stored)); err != nil {
 			return err
 		}
 	}
@@ -4335,6 +4437,7 @@ func mergeContact(dst Contact, src Contact) Contact {
 	if dst.Notify == "" {
 		dst.Notify = src.Notify
 	}
+	dst.Stored = dst.Stored || src.Stored
 	return dst
 }
 

@@ -29,6 +29,7 @@ var helpCommands = []struct {
 	{"/block", "Block on WhatsApp"},
 	{"/synccontacts", "Sync contacts"},
 	{"/syncgroups", "Sync groups"},
+	{"/allcontacts", "Toggle stored-only People"},
 	{"Alt+B / Alt+W", "Toggle whitelist for selected contact"},
 	// Sounds
 	{"/soundon", "Enable sounds"},

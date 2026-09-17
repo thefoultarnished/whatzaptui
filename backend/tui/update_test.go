@@ -249,8 +249,8 @@ func TestSidebarItemsContactsCacheInvalidatesOnIdentityChange(t *testing.T) {
 		sidebarTab:   "contacts",
 		sidebarCache: &sidebarCache{},
 		contacts: map[string]contact{
-			"15550000002@s.whatsapp.net": {ID: "15550000002@s.whatsapp.net", Notify: "Bravo"},
-			"15550000001@s.whatsapp.net": {ID: "15550000001@s.whatsapp.net", Notify: "Alpha"},
+			"15550000002@s.whatsapp.net": {ID: "15550000002@s.whatsapp.net", Notify: "Bravo", Stored: true},
+			"15550000001@s.whatsapp.net": {ID: "15550000001@s.whatsapp.net", Notify: "Alpha", Stored: true},
 		},
 	}
 	model.rebuildContactIndex()
@@ -267,6 +267,36 @@ func TestSidebarItemsContactsCacheInvalidatesOnIdentityChange(t *testing.T) {
 	second := model.sidebarItems()
 	if len(second) != 2 || second[0].ID != "15550000002@s.whatsapp.net" {
 		t.Fatalf("sidebar cache did not refresh after identity change: %+v", second)
+	}
+}
+
+func TestSidebarItemsHidesUnstoredStrangersByDefault(t *testing.T) {
+	old := currentConfig.ShowAllContacts
+	currentConfig.ShowAllContacts = false
+	defer func() { currentConfig.ShowAllContacts = old }()
+
+	model := m{
+		sidebarTab:   "contacts",
+		sidebarCache: &sidebarCache{},
+		contacts: map[string]contact{
+			"15550000001@s.whatsapp.net": {ID: "15550000001@s.whatsapp.net", Notify: "Stored Person", Stored: true},
+			"15550000002@s.whatsapp.net": {ID: "15550000002@s.whatsapp.net", Notify: "Group Stranger"},
+		},
+		whitelist: map[string]string{},
+		names:     map[string]string{},
+	}
+	model.rebuildContactIndex()
+
+	items := model.sidebarItems()
+	if len(items) != 1 || items[0].ID != "15550000001@s.whatsapp.net" {
+		t.Fatalf("stored-only filter: got %+v, want only the stored contact", items)
+	}
+
+	currentConfig.ShowAllContacts = true
+	model.invalidateSidebarContacts()
+	items = model.sidebarItems()
+	if len(items) != 2 {
+		t.Fatalf("show-all: got %+v, want both contacts", items)
 	}
 }
 

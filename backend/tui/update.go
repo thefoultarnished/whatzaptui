@@ -117,6 +117,53 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "contacts:updated":
 			cmds = append(cmds, getContacts(x.client, x.baseURL))
+		case "status":
+			var st string
+			if err := json.Unmarshal(v.evt.Payload, &st); err != nil {
+				log.Printf("ws status unmarshal: %v", err)
+				break
+			}
+			st = strings.TrimSpace(st)
+			if st == "" {
+				break
+			}
+			if strings.HasPrefix(st, "connect-failed:") {
+				msg := strings.TrimSpace(strings.TrimPrefix(st, "connect-failed:"))
+				if msg == "" {
+					msg = "connect failed"
+				}
+				x.status = "Error: WhatsApp connect failed: " + msg
+				break
+			}
+			if x.status == "ready" {
+				cmds = append(cmds, x.setTopBar(st))
+				break
+			}
+			switch st {
+			case "connecting":
+				x.status = "Connecting..."
+			case "waiting-qr":
+				x.status = "Connecting..."
+			case "disconnected":
+				x.status = "Reconnecting…"
+			case "logged-out":
+				x.status = "Logged out. Start again to scan QR."
+			default:
+				// Backend detail strings ("QR timed out, ...",
+				// "Logged out. ..."): surface logged-out, show the
+				// rest as-is unless we're already past loading.
+				if strings.HasPrefix(strings.ToLower(st), "logged out") {
+					x.status = st
+				} else {
+					cmds = append(cmds, x.setTopBar(st))
+				}
+			}
+		case "disconnected":
+			if x.status == "ready" {
+				cmds = append(cmds, x.setTopBar("Disconnected — waiting for backend…"))
+			} else {
+				x.status = "Reconnecting…"
+			}
 		case "message":
 			var wm wireMsg
 			if err := json.Unmarshal(v.evt.Payload, &wm); err == nil {
@@ -2631,6 +2678,14 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		}
 		x.syncingGroups = true
 		return tea.Batch(x.setTopBar("Syncing groups..."), syncGroups(x.client, x.baseURL)), true
+	case includeGlobal && txt == "/allcontacts":
+		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
+		saveConfig()
+		x.invalidateSidebarContacts()
+		if currentConfig.ShowAllContacts {
+			return x.setTopBar("People shows all contacts (stored + strangers)"), true
+		}
+		return x.setTopBar("People shows stored contacts only"), true
 	case txt == "/whitelistall":
 		if len(x.chats) == 0 {
 			if includeGlobal {
@@ -2971,6 +3026,17 @@ func (x m) sidebarItems() []chat {
 			// Contacts tab should only show named contacts, not raw unresolved numbers.
 			if strings.TrimSpace(ct.Notify) == "" && strings.TrimSpace(ct.Name) == "" {
 				continue
+			}
+			// Stored-only filter: hide push-name-only strangers unless
+			// the user opted into all contacts. Renamed and whitelisted
+			// chats always show so they stay manageable.
+			if !currentConfig.ShowAllContacts && !ct.Stored {
+				n := num(ct.ID)
+				if _, ok := x.names[n]; !ok {
+					if _, ok := x.whitelist[n]; !ok {
+						continue
+					}
+				}
 			}
 			out = append(out, chat{ID: ct.ID, Name: ct.Notify, Subject: ct.Name})
 		}
