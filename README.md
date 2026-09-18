@@ -62,7 +62,8 @@ The TUI ships with multiple built-in themes, a keyboard-first chat workflow, and
 The project has two cooperating processes/components:
 
 1. **Backend**
-   File: `backend/main.go`
+   Domain files in `backend/`: `types.go`, `state.go`, `server.go`,
+   `events.go`, `messages.go`, `contacts.go`, `chats.go`, `media.go`
 
    Responsibilities:
    - Starts and maintains the WhatsApp Web client through `whatsmeow`
@@ -93,18 +94,27 @@ The backend currently exposes local endpoints for:
 - `/start`
 - `/chats`
 - `/contacts`
+- `/resolve/lidpn`
+- `/sync/contacts`
+- `/sync/groups`
 - `/messages`
 - `/messages/send`
 - `/messages/send-file`
 - `/messages/read`
-- `/sync/contacts`
-- `/sync/groups`
+- `/messages/react`
+- `/messages/delete`
+- `/messages/edit`
+- `/profile-picture`
+- `/media/download`
+- `/typing`
+- `/search`
+- `/block`
+- `/group/members`
 - `/whitelist`
 - `/whitelist/set`
 - `/names/set`
-- `/profile-picture`
-- `/media/download`
 - `/logout`
+- `/session/register`
 
 Security notes:
 
@@ -143,21 +153,24 @@ Current notable flows:
 
 Commands currently implemented in the TUI include:
 
+- `/help` shows the command palette.
 - `/synccontacts` refreshes contacts from WhatsApp and merges local contact metadata.
 - `/syncgroups` refreshes group/chat metadata from WhatsApp.
+- `/allcontacts` toggles stored-only vs all contacts in the People tab.
 - `/whitelist` allows sending to the currently active chat.
 - `/whitelistall` whitelists every currently loaded chat.
 - `/blacklist` removes the currently active chat from the send whitelist.
 - `/blacklistall` clears the whitelist entirely.
+- `/block` blocks the active chat on WhatsApp.
 - `/rename <name>` assigns a local display name to the active chat/contact.
 - `/emoji` opens the in-app emoji picker.
-- `/send <path> [caption]` sends a file and auto-detects the media/document type.
-- `/theme` shows the available built-in themes.
-- `/theme1tokyonight` switches to the Tokyo Night theme.
-- `/theme2catppuccin` switches to the Catppuccin theme.
-- `/theme3monokai` switches to the Monokai theme.
-- `/theme4charcoal` switches to the Charcoal theme.
-- `/theme5aurora` switches to the Aurora theme.
+- `/send <path> [caption]` (also `/sendimage`, `/sendvideo`, `/sendfile`) sends a file and auto-detects the media/document type.
+- `/theme` shows the available built-in themes (`/theme1<name>`… shortcuts switch directly).
+- `/pointer` changes the message icon.
+- `/typinganimation` changes the typing indicator style.
+- `/settings` opens the settings panel.
+- `/fonttest` shows the Nerd Font icon test.
+- `/soundon` / `/soundoff` enables/disables sounds (`/sound1`–`/sound5` switch profiles).
 - `/mouseon` enables mouse interactions in the TUI.
 - `/mouseoff` disables mouse interactions in the TUI.
 - `/logout` logs out the current WhatsApp session.
