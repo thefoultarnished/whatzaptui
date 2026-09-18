@@ -90,6 +90,32 @@ func apiErrorFromResponse(res *http.Response, fallback string) error {
 	return fmt.Errorf("%s: %s", res.Status, msg)
 }
 
+// backendBinPath returns the backend executable for dir.
+func backendBinPath(dir string) string {
+	name := "backend"
+	if runtime.GOOS == "windows" {
+		name = "backend.exe"
+	}
+	return filepath.Join(dir, name)
+}
+
+// backendBinStale reports whether the backend binary is missing or older
+// than any Go source in dir, in which case ensureBackend rebuilds it once
+// instead of paying `go run` compile time on every launch.
+func backendBinStale(dir string) bool {
+	st, err := os.Stat(backendBinPath(dir))
+	if err != nil {
+		return true
+	}
+	srcs, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+	for _, s := range srcs {
+		if si, err := os.Stat(s); err == nil && si.ModTime().After(st.ModTime()) {
+			return true
+		}
+	}
+	return false
+}
+
 func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
 	return func() tea.Msg {
 		if health(c, base) == nil {
@@ -99,20 +125,19 @@ func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
 			return initMsg{}
 		}
 		var cmd *exec.Cmd
-		binName := "backend"
-		if runtime.GOOS == "windows" {
-			binName = "backend.exe"
-		}
-		binPath := filepath.Join(dir, binName)
-		if exists(binPath) {
-			cmd = exec.Command(binPath)
-		} else {
+		binPath := backendBinPath(dir)
+		if backendBinStale(dir) {
 			goBin := "go"
 			if runtime.GOOS == "windows" {
 				goBin = "go.exe"
 			}
-			cmd = exec.Command(goBin, "run", ".")
+			build := exec.Command(goBin, "build", "-o", binPath, ".")
+			build.Dir = dir
+			if out, err := build.CombinedOutput(); err != nil {
+				return initMsg{err: formatBackendStartupError("backend build failed", string(out))}
+			}
 		}
+		cmd = exec.Command(binPath)
 		cmd.Dir = dir
 		// S-1: no token in the env — the backend reads its token from
 		// <data-root>/backend/session.token (written by resolveSessionToken
