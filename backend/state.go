@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -588,16 +589,12 @@ func (a *App) bootstrapFromStore() {
 	if a.client.Store.AppState == nil {
 		log.Printf("bootstrap: app state store unavailable, skipping app state sync")
 	} else {
-		for _, patch := range []appstate.WAPatchName{
+		fetchAppStates([]appstate.WAPatchName{
 			appstate.WAPatchCriticalBlock,
 			appstate.WAPatchRegularLow,
 			appstate.WAPatchRegularHigh,
 			appstate.WAPatchRegular,
-		} {
-			patchCtx, patchCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			a.safeFetchAppState(patchCtx, patch)
-			patchCancel()
-		}
+		}, a.safeFetchAppState)
 	}
 
 	if a.client.Store.Contacts == nil {
@@ -678,6 +675,23 @@ func (a *App) safeFetchAppState(ctx context.Context, name appstate.WAPatchName) 
 	if err := a.client.FetchAppState(ctx, name, true, false); err != nil {
 		log.Printf("bootstrap: failed to fetch app state %s: %v", name, err)
 	}
+}
+
+// fetchAppStates fetches every patch concurrently so one slow patch stops
+// delaying the others. All patches are attempted even if some fail; each
+// fetch owns a 30s timeout. Extracted for unit testing the fan-out.
+func fetchAppStates(patches []appstate.WAPatchName, fetch func(context.Context, appstate.WAPatchName)) {
+	var wg sync.WaitGroup
+	for _, patch := range patches {
+		wg.Add(1)
+		go func(p appstate.WAPatchName) {
+			defer wg.Done()
+			patchCtx, patchCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer patchCancel()
+			fetch(patchCtx, p)
+		}(patch)
+	}
+	wg.Wait()
 }
 
 func (a *App) startPersistWorker() {

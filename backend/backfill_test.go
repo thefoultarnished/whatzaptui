@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.mau.fi/whatsmeow/appstate"
 )
 
 func insertFTSFixture(t *testing.T, app *App, chatID, msgID string, ts int64, body string) {
@@ -45,6 +49,38 @@ func TestBackfillIndexesTextSkipsEmptyAndFuture(t *testing.T) {
 	}
 	if n := ftsTripleCount(t, app, "c1", "m3"); n != 0 {
 		t.Fatalf("future row fts count = %d, want 0", n)
+	}
+}
+
+func TestFetchAppStates(t *testing.T) {
+	patches := []appstate.WAPatchName{
+		appstate.WAPatchCriticalBlock,
+		appstate.WAPatchRegularLow,
+		appstate.WAPatchRegularHigh,
+		appstate.WAPatchRegular,
+	}
+	var mu sync.Mutex
+	seen := map[appstate.WAPatchName]bool{}
+	var inFlight, maxInFlight atomic.Int32
+	fetchAppStates(patches, func(ctx context.Context, p appstate.WAPatchName) {
+		cur := inFlight.Add(1)
+		for {
+			old := maxInFlight.Load()
+			if cur <= old || maxInFlight.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		defer inFlight.Add(-1)
+		time.Sleep(50 * time.Millisecond)
+		mu.Lock()
+		seen[p] = true
+		mu.Unlock()
+	})
+	if len(seen) != len(patches) {
+		t.Fatalf("attempted patches = %d, want %d", len(seen), len(patches))
+	}
+	if maxInFlight.Load() < 2 {
+		t.Fatalf("max concurrency = %d, want >= 2 (fan-out)", maxInFlight.Load())
 	}
 }
 
