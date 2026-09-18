@@ -85,6 +85,11 @@ func (a *App) bindEvents() {
 				}
 				return
 			}
+			// Sync plumbing (history sync notifications, key shares, ...) is
+			// not chat content: drop it before it reaches storage or the UI.
+			if isInvisibleProtocolMessage(v.Message) {
+				return
+			}
 			msg := a.toWireMessage(v)
 			msg.Key.RemoteJID = chatID
 			if msg.Key.Participant != "" {
@@ -311,6 +316,9 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		for _, item := range conv.GetMessages() {
 			wm := item.GetMessage()
 			if wm == nil {
+				continue
+			}
+			if isInvisibleProtocolMessage(wm.GetMessage()) {
 				continue
 			}
 			msg := a.toWireMessageFromHistory(wm)

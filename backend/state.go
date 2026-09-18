@@ -534,6 +534,41 @@ func (a *App) backfillReceipt() {
 	}
 }
 
+// purgeInvisibleProtocolMessages deletes stored protocol control messages
+// (history sync notifications, key shares, ...) that pre-fix builds saved
+// as visible chat content, plus their orphaned FTS rows. Runs once per DB
+// via the fts_backfill_meta flag table. New arrivals are dropped at ingest
+// (see isInvisibleProtocolMessage), so this only cleans legacy rows.
+func (a *App) purgeInvisibleProtocolMessages() {
+	if a.db == nil {
+		return
+	}
+	if _, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		log.Printf("purgeInvisibleProtocol: meta table: %v", err)
+		return
+	}
+	var done int
+	_ = a.db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'protocol_purge'`).Scan(&done)
+	if done == 1 {
+		return
+	}
+	res, err := a.db.Exec(`DELETE FROM messages
+		WHERE json_extract(message_json, '$.protocolMessage.type') IS NOT NULL
+		AND json_extract(message_json, '$.protocolMessage.type') NOT IN ('REVOKE', 'MESSAGE_EDIT', 'EPHEMERAL_SETTING')`)
+	if err != nil {
+		log.Printf("purgeInvisibleProtocol: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("purgeInvisibleProtocol: removed %d control message(s)", n)
+		_, _ = a.db.Exec(`DELETE FROM messages_fts WHERE NOT EXISTS (
+			SELECT 1 FROM messages m WHERE m.chat_id = messages_fts.chat_id
+			AND m.id = messages_fts.msg_id AND m.from_me = messages_fts.from_me)`)
+	}
+	_, _ = a.db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('protocol_purge', 1)
+		ON CONFLICT(key) DO UPDATE SET val = excluded.val`)
+}
+
 func (a *App) loadState() {
 	// Defensive: clear any chat_permissions rows that have the local user's own
 	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
@@ -542,6 +577,9 @@ func (a *App) loadState() {
 	// sync inserted them as empty receipt, which the TUI renders as a single
 	// tick). Idempotent.
 	a.backfillReceipt()
+	// Drop stored protocol plumbing (history sync notifications, key shares)
+	// that pre-fix builds saved as visible chat messages. One-time.
+	a.purgeInvisibleProtocolMessages()
 	// Compact the DB in the background to reclaim space freed by message deletes.
 	a.vacuumDB()
 

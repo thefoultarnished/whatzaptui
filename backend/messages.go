@@ -1531,6 +1531,35 @@ func extractPollCreationMessage(msg *waE2E.Message) *waE2E.PollCreationMessage {
 	return nil
 }
 
+// visibleProtocolType reports whether a protocol message carries
+// user-visible meaning. Only deletes, edits, and disappearing-message
+// notices do — the other 30+ types (history sync notifications, app-state
+// key shares, fanout requests, ...) are sync plumbing that must never be
+// stored or rendered as chat content.
+func visibleProtocolType(t waE2E.ProtocolMessage_Type) bool {
+	switch t {
+	case waE2E.ProtocolMessage_REVOKE,
+		waE2E.ProtocolMessage_MESSAGE_EDIT,
+		waE2E.ProtocolMessage_EPHEMERAL_SETTING:
+		return true
+	default:
+		return false
+	}
+}
+
+// isInvisibleProtocolMessage reports whether msg is a bare protocol control
+// message with no user-visible meaning.
+func isInvisibleProtocolMessage(msg *waE2E.Message) bool {
+	if msg == nil {
+		return false
+	}
+	pm := msg.GetProtocolMessage()
+	if pm == nil {
+		return false
+	}
+	return !visibleProtocolType(pm.GetType())
+}
+
 func protocolMessagePayload(raw, effective *waE2E.Message) map[string]any {
 	var protocol *waE2E.ProtocolMessage
 	switch {
