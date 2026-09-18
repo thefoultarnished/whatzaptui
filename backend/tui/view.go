@@ -92,7 +92,7 @@ func (x m) View() string {
 			hint = mutedStyle.Render("Press ctrl+c to exit, then re-run whatzap")
 		} else {
 			statusBody = accentStyle.Copy().Bold(false).Render(spinnerFrames[x.spinnerFrame] + " Connecting your session...")
-			progress := mutedStyle.Render("Syncing chats, contacts, and recent messages")
+			progress := x.renderBootStages()
 			pulse := x.loadingPulse()
 			body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
 			content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
@@ -354,6 +354,77 @@ func (x m) loadingPulse() string {
 	}
 	idx := x.spinnerFrame % len(steps)
 	return accentStyle.Copy().Bold(false).Render(steps[idx])
+}
+
+// bootStage is one row of the startup checklist. state is one of
+// "done", "active", "pending".
+type bootStage struct {
+	label  string
+	state  string
+	detail string
+}
+
+// loadingStages derives the startup checklist from already-available state:
+// backend liveness from status, session from status, chats/contacts from
+// the prefetched lists (populated before `ready`). Pure for testability.
+func (x m) loadingStages() []bootStage {
+	backendDone := x.status != "" && x.status != "Starting backend..." && x.status != "Starting demo..."
+	sessionDone := x.status == "ready"
+	chatsDone := len(x.chats) > 0
+	contactsDone := len(x.contacts) > 0
+
+	sessionState := "pending"
+	if sessionDone {
+		sessionState = "done"
+	} else if backendDone {
+		sessionState = "active"
+	}
+	chats := bootStage{label: "Chats", state: "pending"}
+	if chatsDone {
+		chats.state = "done"
+		chats.detail = plural(len(x.chats), "chat")
+	} else if backendDone {
+		chats.state = "active"
+	}
+	contacts := bootStage{label: "Contacts", state: "pending"}
+	if contactsDone {
+		contacts.state = "done"
+		contacts.detail = plural(len(x.contacts), "contact")
+	} else if backendDone {
+		contacts.state = "active"
+	}
+	backend := bootStage{label: "Backend", state: "pending"}
+	if backendDone {
+		backend.state = "done"
+	}
+	return []bootStage{backend, {label: "Session", state: sessionState}, chats, contacts}
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return strconv.Itoa(n) + " " + word + "s"
+}
+
+// renderBootStages renders the startup checklist, one row per stage.
+func (x m) renderBootStages() string {
+	var rows []string
+	for _, s := range x.loadingStages() {
+		label := s.label
+		if s.detail != "" {
+			label += "  " + s.detail
+		}
+		switch s.state {
+		case "done":
+			rows = append(rows, accentStyle.Copy().Bold(false).Render("✓ "+label))
+		case "active":
+			rows = append(rows, logoStyle.Render(spinnerFrames[x.spinnerFrame]+" "+label))
+		default:
+			rows = append(rows, mutedStyle.Render("· "+label))
+		}
+	}
+	return strings.Join(rows, "\n")
 }
 
 func (x m) renderHeaderContainer(contentW, leftW int) string {
