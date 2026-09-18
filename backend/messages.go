@@ -493,7 +493,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	matchExpr := strings.Join(tokens, " ")
 
 	const baseQ = `
-		SELECT f.chat_id, f.msg_id, f.from_me,
+		SELECT DISTINCT f.chat_id, f.msg_id, f.from_me,
 		       snippet(messages_fts, 3, '<b>', '</b>', '...', 12) AS snip,
 		       COALESCE(m.ts, 0) AS ts
 		FROM messages_fts f

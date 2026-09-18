@@ -147,7 +147,10 @@ func (a *App) initPersistentResources() error {
 
 	a.db = rawDB
 	a.storeContainer = container
-	a.backfillFTS()
+	// Async so a large first-run FTS build doesn't delay /health and TUI
+	// startup. backfillFTS only touches rows older than its start cutoff
+	// and search dedupes, so racing live inserts can't create dupes.
+	go a.backfillFTS()
 	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", whatsmeowLogLevel, true))
 	a.bindEvents()
 	return nil
@@ -364,38 +367,43 @@ func (a *App) backfillFTS() {
 	if a.db == nil {
 		return
 	}
-	var ftsCount, msgCount int
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM messages_fts`).Scan(&ftsCount); err != nil {
-		log.Printf("backfillFTS count fts: %v", err)
+	// Resume watermark: max messages.rowid already examined. Replaces the
+	// old "skip when FTS non-empty" check, which raced with live inserts
+	// once the backfill moved off the startup path.
+	if _, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		log.Printf("backfillFTS meta table: %v", err)
 		return
 	}
-	if ftsCount > 0 {
-		return
-	}
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount); err != nil || msgCount == 0 {
-		return
-	}
+	var watermark int64
+	_ = a.db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'rowid'`).Scan(&watermark)
 
 	type ftsRow struct {
 		chatID, msgID, body string
 		fromMe              int
 	}
 
+	// Only rows older than this cutoff: live inserts racing the backfill
+	// are newer and write their own FTS rows, so the sets stay disjoint.
+	cutoff := time.Now().Unix()
 	limit := 1000
-	offset := 0
+	lastRowID := watermark
 	for {
-		rows, err := a.db.Query(`SELECT id, chat_id, from_me, message_json FROM messages LIMIT ? OFFSET ?`, limit, offset)
+		rows, err := a.db.Query(`SELECT rowid, id, chat_id, from_me, message_json FROM messages WHERE rowid > ? AND ts <= ? ORDER BY rowid LIMIT ?`, lastRowID, cutoff, limit)
 		if err != nil {
 			log.Printf("backfillFTS scan query: %v", err)
 			break
 		}
 		var pending []ftsRow
+		scanned := 0
 		for rows.Next() {
+			var rowID int64
 			var id, chatID, msgJSON string
 			var fromMe int
-			if err := rows.Scan(&id, &chatID, &fromMe, &msgJSON); err != nil {
+			if err := rows.Scan(&rowID, &id, &chatID, &fromMe, &msgJSON); err != nil {
 				continue
 			}
+			lastRowID = rowID
+			scanned++
 			var m map[string]any
 			_ = json.Unmarshal([]byte(msgJSON), &m)
 			body := extractSearchableText(m)
@@ -409,27 +417,38 @@ func (a *App) backfillFTS() {
 		}
 		_ = rows.Close()
 
-		if len(pending) == 0 {
+		if len(pending) > 0 {
+			tx, err := a.db.Begin()
+			if err != nil {
+				log.Printf("backfillFTS tx: %v", err)
+				break
+			}
+			// Delete-then-insert per page (atomic): a live writer may
+			// have indexed these rows first, and a crashed/resumed
+			// backfill may revisit them — either way we converge to
+			// exactly one FTS row per triple, never duplicates.
+			for _, r := range pending {
+				_, _ = tx.Exec(`DELETE FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = ?`, r.chatID, r.msgID, r.fromMe)
+			}
+			for _, r := range pending {
+				_, _ = tx.Exec(`INSERT INTO messages_fts (chat_id, msg_id, from_me, body) VALUES (?, ?, ?, ?)`, r.chatID, r.msgID, r.fromMe, r.body)
+			}
+			if err := tx.Commit(); err != nil {
+				log.Printf("backfillFTS commit: %v", err)
+				break
+			}
+		}
+		// Advance the watermark past every examined row, even textless
+		// ones, so the next boot resumes instead of rescanning.
+		if _, err := a.db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('rowid', ?)
+			ON CONFLICT(key) DO UPDATE SET val=excluded.val`, lastRowID); err != nil {
+			log.Printf("backfillFTS watermark: %v", err)
 			break
 		}
 
-		tx, err := a.db.Begin()
-		if err != nil {
-			log.Printf("backfillFTS tx: %v", err)
+		if scanned < limit {
 			break
 		}
-		for _, r := range pending {
-			_, _ = tx.Exec(`INSERT INTO messages_fts (chat_id, msg_id, from_me, body) VALUES (?, ?, ?, ?)`, r.chatID, r.msgID, r.fromMe, r.body)
-		}
-		if err := tx.Commit(); err != nil {
-			log.Printf("backfillFTS commit: %v", err)
-			break
-		}
-
-		if len(pending) < limit {
-			break
-		}
-		offset += limit
 	}
 }
 
