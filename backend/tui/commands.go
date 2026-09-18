@@ -1,0 +1,394 @@
+package main
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func (x *m) toggleWhitelistForSelection() tea.Cmd {
+	if x.status != "ready" {
+		return x.setTopBar("Not ready — wait for the chat to load")
+	}
+	if x.leftInputFocused {
+		return x.setTopBar("Finish the /command first (Esc)")
+	}
+	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.userlistIconPicker.open || x.fontTestOpen {
+		return x.setTopBar("Close the picker first (Esc)")
+	}
+	if x.fileBrowserOpen {
+		return x.setTopBar("Close the file browser first (Esc)")
+	}
+	// Always target the highlighted sidebar item (the "selected" chat),
+	// regardless of whether the sidebar has focus. Falls back to the open
+	// chat only if the sidebar selection is out of range (e.g. empty list).
+	targetID := ""
+	items := x.sidebarItems()
+	if x.sel >= 0 && x.sel < len(items) {
+		targetID = items[x.sel].ID
+	}
+	if targetID == "" && x.active != "" {
+		targetID = x.active
+	}
+	if targetID == "" {
+		return x.setTopBar("No contact selected")
+	}
+	n := num(targetID)
+	if n == "" {
+		return x.setTopBar("No contact selected")
+	}
+	name := x.nameFor(targetID)
+	wasWhitelisted := false
+	if _, ok := x.whitelist[n]; ok {
+		delete(x.whitelist, n)
+		wasWhitelisted = true
+	} else {
+		x.whitelist[n] = name
+	}
+	x.markIdentityChanged()
+	if wasWhitelisted && x.active != "" && num(x.active) == n {
+		x.clearChatComposer()
+	}
+	verb := "Blacklisted"
+	allowed := 0
+	if !wasWhitelisted {
+		verb = "Whitelisted"
+		allowed = 1
+	}
+	msg := fmt.Sprintf("%s: %s (%s)", verb, name, n)
+	if x.demoMode {
+		return x.setTopBar(msg)
+	}
+	return tea.Batch(
+		setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], allowed),
+		x.setTopBar(msg),
+	)
+}
+
+// doWhitelistAll whitelists every loaded chat. Confirmed via the A-6
+// confirm dialog before this runs.
+func (x *m) doWhitelistAll() tea.Cmd {
+	added := 0
+	cmds := []tea.Cmd{}
+	for _, c := range x.chats {
+		if strings.HasSuffix(c.ID, "@g.us") {
+			continue // groups can't be whitelisted (A-9/A-10/A-11)
+		}
+		n := num(c.ID)
+		if _, exists := x.whitelist[n]; !exists {
+			added++
+		}
+		name := x.nameFor(c.ID)
+		x.whitelist[n] = name
+		cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, name, 1))
+	}
+	x.markIdentityChanged()
+	msg := fmt.Sprintf("Whitelisted %d chats (%d new)", len(x.whitelist), added)
+	if x.demoMode {
+		return x.setTopBar(msg)
+	}
+	cmds = append(cmds, x.setTopBar(msg))
+	return tea.Batch(cmds...)
+}
+
+// doBlacklistAll removes every contact from the whitelist. Confirmed via
+// the A-6 confirm dialog before this runs.
+func (x *m) doBlacklistAll() tea.Cmd {
+	count := len(x.whitelist)
+	cmds := []tea.Cmd{}
+	for n := range x.whitelist {
+		cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], 0))
+	}
+	x.whitelist = map[string]string{}
+	x.markIdentityChanged()
+	if x.active != "" {
+		x.clearChatComposer()
+	}
+	msg := fmt.Sprintf("Removed %d from whitelist", count)
+	if x.demoMode {
+		return x.setTopBar(msg)
+	}
+	cmds = append(cmds, x.setTopBar(msg))
+	return tea.Batch(cmds...)
+}
+
+func (x *m) handleSlash(txt string) (tea.Cmd, bool) {
+	return x.runCommand(txt, false)
+}
+
+func (x *m) handleGlobalCommand(txt string) (tea.Cmd, bool) {
+	return x.runCommand(txt, true)
+}
+
+func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
+	switch {
+	case includeGlobal && txt == "/exit":
+		return tea.Quit, true
+	case includeGlobal && txt == "/restart":
+		x.restartRequested = true
+		return tea.Quit, true
+	case txt == "/logout":
+		x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
+		return nil, true
+	case includeGlobal && txt == "/synccontacts":
+		if x.demoMode {
+			return x.setTopBar("Demo mode: contacts already fake"), true
+		}
+		x.syncingContacts = true
+		return tea.Batch(x.setTopBar("Syncing contacts..."), syncContacts(x.client, x.baseURL)), true
+	case includeGlobal && txt == "/syncgroups":
+		if x.demoMode {
+			return x.setTopBar("Demo mode: groups already fake"), true
+		}
+		x.syncingGroups = true
+		return tea.Batch(x.setTopBar("Syncing groups..."), syncGroups(x.client, x.baseURL)), true
+	case includeGlobal && txt == "/allcontacts":
+		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
+		saveConfig()
+		x.invalidateSidebarContacts()
+		if currentConfig.ShowAllContacts {
+			return x.setTopBar("People shows all contacts (stored + strangers)"), true
+		}
+		return x.setTopBar("People shows stored contacts only"), true
+	case txt == "/whitelistall":
+		if len(x.chats) == 0 {
+			if includeGlobal {
+				return x.setTopBar("No chats loaded yet"), true
+			}
+			x.err = "no chats loaded yet"
+			return nil, true
+		}
+		x.confirmDialog.Open("Whitelist all chats?",
+			"Are you sure you want to whitelist all contacts?", "whitelistall")
+		return nil, true
+	case txt == "/blacklistall":
+		count := len(x.whitelist)
+		if count == 0 {
+			return x.setTopBar("Whitelist already empty"), true
+		}
+		x.confirmDialog.Open("Clear the whitelist?",
+			"Are you sure you want to blacklist all contacts?", "blacklistall")
+		return nil, true
+	case txt == "/whitelist":
+		if includeGlobal && x.active == "" {
+			return x.setTopBar("No active chat"), true
+		}
+		n := num(x.active)
+		_, already := x.whitelist[n]
+		name := x.nameFor(x.active)
+		x.whitelist[n] = name
+		x.markIdentityChanged()
+		msg := "Added to whitelist"
+		if already {
+			msg = "Already in whitelist"
+		}
+		if x.demoMode {
+			return x.setTopBar(msg), true
+		}
+		return tea.Batch(setWhitelistEntry(x.client, x.baseURL, n, name, 1), x.setTopBar(msg)), true
+	case txt == "/blacklist":
+		if includeGlobal && x.active == "" {
+			return x.setTopBar("No active chat"), true
+		}
+		n := num(x.active)
+		_, was := x.whitelist[n]
+		delete(x.whitelist, n)
+		x.markIdentityChanged()
+		if x.active != "" && num(x.active) == n {
+			x.clearChatComposer()
+		}
+		msg := "Removed from whitelist"
+		if !was {
+			msg = "Not in whitelist"
+		}
+		if x.demoMode {
+			return x.setTopBar(msg), true
+		}
+		return tea.Batch(setWhitelistEntry(x.client, x.baseURL, n, "", 0), x.setTopBar(msg)), true
+	case txt == "/block":
+		if includeGlobal && x.active == "" {
+			return x.setTopBar("No active chat"), true
+		}
+		n := num(x.active)
+		delete(x.whitelist, n)
+		x.markIdentityChanged()
+		if x.active != "" && num(x.active) == n {
+			x.clearChatComposer()
+		}
+		if x.demoMode {
+			return x.setTopBar("Demo mode: block disabled"), true
+		}
+		return tea.Batch(
+			x.setTopBar("Blocking contact..."),
+			blockContact(x.client, x.baseURL, x.active),
+			setWhitelistEntry(x.client, x.baseURL, n, "", 0),
+		), true
+	case strings.HasPrefix(txt, "/rename "):
+		name := strings.TrimSpace(strings.TrimPrefix(txt, "/rename "))
+		if name == "" {
+			return x.setTopBar("usage: /rename <name>"), true
+		}
+		if includeGlobal && x.active == "" {
+			return x.setTopBar("No active chat"), true
+		}
+		n := num(x.active)
+		x.names[n] = name
+		if _, ok := x.whitelist[n]; ok {
+			x.whitelist[n] = name
+		}
+		x.markIdentityChanged()
+		if x.demoMode {
+			return x.setTopBar("Renamed"), true
+		}
+		return tea.Batch(setName(x.client, x.baseURL, n, name), x.setTopBar("Renamed")), true
+	case txt == "/rename":
+		return x.setTopBar("usage: /rename <name>"), true
+	case strings.HasPrefix(txt, "/send "), txt == "/send", strings.HasPrefix(txt, "/sendimage"), strings.HasPrefix(txt, "/sendvideo"), strings.HasPrefix(txt, "/sendfile"):
+		cmd, usage, matched := parseMediaSendCommand(txt)
+		if !matched {
+			break
+		}
+		if usage != "" {
+			return x.setTopBar(usage), true
+		}
+		if includeGlobal && x.active == "" {
+			return x.setTopBar("No active chat"), true
+		}
+		if _, ok := x.whitelist[num(x.active)]; !ok {
+			return x.setTopBar("Not whitelisted - use /whitelist to enable"), true
+		}
+		if x.demoMode {
+			return x.setTopBar("Demo mode: media send disabled"), true
+		}
+		kind := cmd.kind
+		if kind == "" {
+			var err error
+			kind, err = detectMediaSendKind(cmd.path)
+			if err != nil {
+				return x.setTopBar(err.Error()), true
+			}
+		}
+		fileName := filepath.Base(cmd.path)
+		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+		x.msgs[x.active] = append(x.msgs[x.active],
+			optimisticOutgoingMediaMessage(x.active, kind, fileName, cmd.caption, pendingID))
+		if x.mainCache != nil {
+			x.mainCache.result = ""
+		}
+		now := time.Now()
+		selectedID := x.selectedChatID()
+		for i := range x.chats {
+			if x.chats[i].ID == x.active {
+				x.chats[i].ConversationTimestamp = now.Unix()
+				break
+			}
+		}
+		x.resortChats(selectedID)
+		x.scroll = 0
+		x.msgActivityUntil = time.Now().Add(3 * time.Second)
+		x.msgActivityType = "sent"
+		x.replyTo = nil
+		progressCh := make(chan fileProgressMsg, 16)
+		if x.uploadChans == nil {
+			x.uploadChans = map[string]chan fileProgressMsg{}
+		}
+		x.uploadChans[pendingID] = progressCh
+		return tea.Batch(
+			sendFile(x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, pendingID, progressCh),
+			listenFileProgress(progressCh),
+		), true
+	case txt == "/emoji":
+		x.openEmojiPicker()
+		return nil, true
+	case txt == "/theme":
+		x.themePicker.Open(currentConfig.ThemeName)
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/pointer":
+		x.pointerPicker.Open(receivedMsgIcon)
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/typinganimation":
+		x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
+		x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/help":
+		x.helpPicker.Open("")
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/settings":
+		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker.Open("")
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case txt == "/fonttest":
+		x.fontTestOpen = true
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.mainCache.result = ""
+		return nil, true
+	case strings.HasPrefix(txt, "/theme") && txt != "/theme":
+		suffix := txt[len("/theme"):]
+		// Strip optional leading digit (e.g. "/theme1linen" → "linen").
+		if len(suffix) > 0 && suffix[0] >= '0' && suffix[0] <= '9' {
+			suffix = suffix[1:]
+		}
+		for _, t := range themeList {
+			if t.name == suffix {
+				applyThemeByName(t.name)
+				saveConfig()
+				x.mainCache.result = ""
+				return x.setTopBar("Theme: " + t.displayName), true
+			}
+		}
+	case txt == "/mouseon":
+		x.mouseEnabled = true
+		currentConfig.MouseEnabled = true
+		saveConfig()
+		return x.setTopBar("Mouse: Enabled"), true
+	case txt == "/mouseoff":
+		x.mouseEnabled = false
+		currentConfig.MouseEnabled = false
+		saveConfig()
+		return x.setTopBar("Mouse: Disabled"), true
+	case txt == "/sound1", txt == "/sound2", txt == "/sound3", txt == "/sound4", txt == "/sound5":
+		profile := int(txt[len(txt)-1] - '0')
+		profile = normalizeSoundProfile(profile)
+		x.soundProfile = profile
+		x.soundEnabled = true
+		currentConfig.SoundProfile = profile
+		currentConfig.SoundEnabled = true
+		saveConfig()
+		// Quick preview helps you pick a tone without guesswork.
+		return tea.Batch(x.setTopBar("Sound: "+soundName(profile)), playSoundProfileCmd(profile)), true
+	case txt == "/soundoff":
+		x.soundEnabled = false
+		currentConfig.SoundEnabled = false
+		saveConfig()
+		return x.setTopBar("Sound: Off"), true
+	case txt == "/soundon":
+		x.soundEnabled = true
+		x.soundProfile = normalizeSoundProfile(x.soundProfile)
+		currentConfig.SoundEnabled = true
+		currentConfig.SoundProfile = x.soundProfile
+		saveConfig()
+		return tea.Batch(x.setTopBar("Sound: "+soundName(x.soundProfile)), playSoundProfileCmd(x.soundProfile)), true
+	case strings.HasPrefix(txt, "/"):
+		return x.setTopBar("unknown command: " + txt), true
+	}
+	return nil, false
+}
