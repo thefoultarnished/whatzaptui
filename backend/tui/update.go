@@ -72,7 +72,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = x.ws.Close()
 		}
 		x.ws, x.wsCh = v.conn, v.ch
-		return x, readWS(x.wsCh)
+		return x, tea.Batch(readWS(x.wsCh), x.prefetchOnWSOpen())
 	case reconnectMsg:
 		return x, openWS(x.wsURL, x.apiToken)
 	case wsEvtMsg:
@@ -843,4 +843,12 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return mdl, cmd
 	}
 	return x, nil
+}
+
+// prefetchOnWSOpen loads cached chats/contacts the moment the socket
+// opens, so when `ready` arrives the sidebar can render instantly instead
+// of waiting for more round trips. Safe pre-login: the backend serves
+// whatever is cached (possibly empty) without requiring a session.
+func (x m) prefetchOnWSOpen() tea.Cmd {
+	return tea.Batch(getChats(x.client, x.baseURL), getContacts(x.client, x.baseURL))
 }
