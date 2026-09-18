@@ -1,0 +1,92 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// TestChatsMsgAutoOpensRecentChat: a fresh session (active == "") opens the
+// most recent chat so first paint includes messages.
+func TestChatsMsgAutoOpensRecentChat(t *testing.T) {
+	var msgsHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/messages":
+			msgsHit = true
+			_, _ = w.Write([]byte(`{"messages":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	x := m{
+		client:        srv.Client(),
+		baseURL:       srv.URL,
+		status:        "ready",
+		sidebarTab:    "chats",
+		msgs:          map[string][]wireMsg{},
+		contacts:      map[string]contact{},
+		whitelist:     map[string]string{"111": "Recent"},
+		names:         map[string]string{},
+		drafts:        map[string]string{},
+		groupPreviews: map[string]groupPreview{},
+		sidebarCache:  &sidebarCache{},
+		mainCache:     &renderCache{},
+	}
+	newChats := []chat{
+		{ID: "111@s.whatsapp.net", ConversationTimestamp: 200},
+		{ID: "222@s.whatsapp.net", ConversationTimestamp: 100},
+	}
+	mdl, cmd := x.updateInner(chatsMsg{chats: newChats})
+	got := mdl.(m)
+	if got.active != "111@s.whatsapp.net" {
+		t.Fatalf("active = %q, want most recent chat", got.active)
+	}
+	if got.mode != "chat" {
+		t.Fatalf("mode = %q, want chat", got.mode)
+	}
+	if cmd == nil {
+		t.Fatalf("expected message-fetch cmd")
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c != nil {
+				_ = c()
+			}
+		}
+	}
+	if !msgsHit {
+		t.Fatalf("expected /messages fetch for auto-opened chat")
+	}
+}
+
+// TestChatsMsgPreservesExistingActive: a set active chat is never hijacked.
+func TestChatsMsgPreservesExistingActive(t *testing.T) {
+	x := m{
+		status:        "ready",
+		sidebarTab:    "chats",
+		active:        "222@s.whatsapp.net",
+		mode:          "chat",
+		msgs:          map[string][]wireMsg{},
+		contacts:      map[string]contact{},
+		whitelist:     map[string]string{},
+		names:         map[string]string{},
+		drafts:        map[string]string{},
+		groupPreviews: map[string]groupPreview{},
+		sidebarCache:  &sidebarCache{},
+		mainCache:     &renderCache{},
+	}
+	newChats := []chat{
+		{ID: "111@s.whatsapp.net", ConversationTimestamp: 200},
+		{ID: "222@s.whatsapp.net", ConversationTimestamp: 100},
+	}
+	mdl, _ := x.updateInner(chatsMsg{chats: newChats})
+	if got := mdl.(m); got.active != "222@s.whatsapp.net" {
+		t.Fatalf("active = %q, want preserved 222", got.active)
+	}
+}

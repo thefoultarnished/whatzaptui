@@ -389,6 +389,19 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.resortChats(selectedID)
 		x.ensureSideVisible(x.sideViewRows())
 		cmds := []tea.Cmd{}
+		// First paint: open the most recent chat so the pane isn't empty.
+		// active is only "" on a fresh session (logout clears chats too),
+		// and People-tab selection must not be hijacked.
+		if x.active == "" && x.sidebarTab == "chats" && len(x.chats) > 0 {
+			x.sel = 0
+			mdl, openCmd := x.openSelectedChat()
+			if xm, ok := mdl.(m); ok {
+				x = xm
+			}
+			if openCmd != nil {
+				cmds = append(cmds, openCmd)
+			}
+		}
 		if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 			cmds = append(cmds, titleCmd)
 		}
