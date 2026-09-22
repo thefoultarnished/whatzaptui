@@ -226,6 +226,11 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x.handleLeftInput(k)
 	}
 	if x.status != "ready" {
+		if x.sessionReady && !strings.HasPrefix(x.status, "Error:") && !strings.HasPrefix(strings.ToLower(x.status), "logged out") {
+			x.status = "ready"
+			x.invalidate()
+			return x, x.refreshWindowTitleCmd()
+		}
 		return x, nil
 	}
 	if x.fontTestOpen {

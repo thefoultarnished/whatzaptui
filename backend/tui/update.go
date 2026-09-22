@@ -13,6 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var splashHoldDuration = 10 * time.Second
+
 // nextReconnectDelay doubles the WS reconnect backoff (1s start, 30s cap)
 // and returns the delay to wait before the next attempt.
 func (x *m) nextReconnectDelay() time.Duration {
@@ -97,6 +99,15 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, tea.Batch(readWS(x.wsCh), x.prefetchOnWSOpen())
 	case reconnectMsg:
 		return x, openWS(x.reqCtx(), x.wsURL, x.apiToken)
+	case splashDoneMsg:
+		if x.sessionReady && x.status != "ready" && !strings.HasPrefix(x.status, "Error:") && !strings.HasPrefix(strings.ToLower(x.status), "logged out") {
+			x.status = "ready"
+			x.invalidate()
+			if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
+				return x, titleCmd
+			}
+		}
+		return x, nil
 	case wsEvtMsg:
 		if !v.ok {
 			x.wsDisconnected = true
@@ -119,9 +130,18 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.status = "qr"
 			x.qrRaw = qr
 		case "ready":
-			x.status = "ready"
+			x.sessionReady = true
 			x.qrRaw = ""
-			cmds = append(cmds, getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL), getWhitelist(x.reqCtx(), x.client, x.baseURL))
+			cmds = append(cmds,
+				getChats(x.reqCtx(), x.client, x.baseURL),
+				getContacts(x.reqCtx(), x.client, x.baseURL),
+				getWhitelist(x.reqCtx(), x.client, x.baseURL),
+			)
+			if splashHoldDuration > 0 {
+				cmds = append(cmds, tea.Tick(splashHoldDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }))
+			} else {
+				cmds = append(cmds, func() tea.Msg { return splashDoneMsg{} })
+			}
 		case "chats:loaded":
 			cmds = append(cmds, getChats(x.reqCtx(), x.client, x.baseURL))
 			if x.active != "" && len(x.msgs[x.active]) == 0 {

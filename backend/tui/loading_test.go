@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestLoadingStages(t *testing.T) {
@@ -75,5 +77,71 @@ func TestLoadingScreenContainsPiLogo(t *testing.T) {
 	}
 	if !strings.Contains(view, "▒") {
 		t.Errorf("loading screen missing Pi logo dither block '▒'")
+	}
+}
+
+func TestSignedInSplashVisualElements(t *testing.T) {
+	model := m{
+		w:      80,
+		h:      24,
+		status: "Connecting...",
+	}
+	view := model.View()
+	// Pipeline tree connectors
+	if !strings.Contains(view, "├─") || !strings.Contains(view, "└─") {
+		t.Errorf("loading screen missing pipeline tree connectors (├─ / └─)")
+	}
+	// Stages
+	for _, stage := range []string{"Backend", "Session", "Chats", "Contacts"} {
+		if !strings.Contains(view, stage) {
+			t.Errorf("loading screen missing stage %q", stage)
+		}
+	}
+	// Progress indicator
+	if !strings.Contains(view, "%") {
+		t.Errorf("loading screen missing progress percentage")
+	}
+	// System badges
+	if !strings.Contains(view, "8787") || !strings.Contains(view, "whatsmeow") {
+		t.Errorf("loading screen missing system info badges")
+	}
+}
+
+func TestRenderBootStagesPipelineTree(t *testing.T) {
+	model := m{status: "Connecting..."}
+	tree := model.renderBootStages()
+	lines := strings.Split(tree, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 pipeline stages, got %d", len(lines))
+	}
+	if !strings.HasPrefix(lines[0], "├─") {
+		t.Errorf("first line should start with ├─, got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[3], "└─") {
+		t.Errorf("last line should start with └─, got %q", lines[3])
+	}
+}
+
+func TestSplashHoldTransitionsOnTimer(t *testing.T) {
+	model := m{
+		status:       "Connecting...",
+		sessionReady: true,
+	}
+	next, _ := model.Update(splashDoneMsg{})
+	got := next.(m)
+	if got.status != "ready" {
+		t.Fatalf("expected status 'ready' after splashDoneMsg, got %q", got.status)
+	}
+}
+
+func TestSplashHoldSkipsOnKeypress(t *testing.T) {
+	model := m{
+		status:       "Connecting...",
+		sessionReady: true,
+	}
+	next, _ := model.key(tea.KeyMsg{Type: tea.KeyEnter})
+	got := next.(m)
+	if got.status != "ready" {
+		t.Fatalf("expected status 'ready' after keypress, got %q", got.status)
 	}
 }

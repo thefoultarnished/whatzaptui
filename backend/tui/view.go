@@ -172,11 +172,7 @@ func (x m) renderStartupView(frameW int) string {
 		statusBody = lipgloss.NewStyle().Foreground(red).Bold(true).Render("Error: " + errMsg)
 		hint = mutedStyle.Render("Press ctrl+c to exit, then re-run whatzap")
 	} else {
-		statusBody = accentStyle.Copy().Bold(false).Render(spinnerFrames[x.spinnerFrame] + " Connecting your session...")
-		progress := x.renderBootStages()
-		pulse := x.loadingPulse()
-		body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
-		return renderStatusBox(body, innerW, innerH, outerW, outerH)
+		return x.renderSignedInSplash(innerW, innerH, outerW, outerH)
 	}
 	msg := statusMsgTemplate(statusBody, "")
 	return renderStatusBox(msg, innerW, innerH, outerW, outerH)
@@ -434,7 +430,7 @@ type bootStage struct {
 // the prefetched lists (populated before `ready`). Pure for testability.
 func (x m) loadingStages() []bootStage {
 	backendDone := x.status != "" && x.status != "Starting backend..." && x.status != "Starting demo..."
-	sessionDone := x.status == "ready"
+	sessionDone := x.status == "ready" || x.sessionReady
 	chatsDone := len(x.chats) > 0
 	contactsDone := len(x.contacts) > 0
 
@@ -472,24 +468,145 @@ func plural(n int, word string) string {
 	return strconv.Itoa(n) + " " + word + "s"
 }
 
-// renderBootStages renders the startup checklist, one row per stage.
+// renderBootStages renders the startup checklist as a connected pipeline.
 func (x m) renderBootStages() string {
+	stages := x.loadingStages()
 	var rows []string
-	for _, s := range x.loadingStages() {
-		label := s.label
-		if s.detail != "" {
-			label += "  " + s.detail
+	for i, s := range stages {
+		isLast := i == len(stages)-1
+		branch := "├─ "
+		if isLast {
+			branch = "└─ "
 		}
+		branchStr := mutedStyle.Render(branch)
+
+		var icon, labelStr, detailStr string
 		switch s.state {
 		case "done":
-			rows = append(rows, accentStyle.Copy().Bold(false).Render("✓ "+label))
+			icon = accentStyle.Render("✓ ")
+			labelStr = lipgloss.NewStyle().Foreground(text).Render(s.label)
+			if s.detail != "" {
+				detailStr = mutedStyle.Render("  " + s.detail)
+			} else {
+				detailStr = mutedStyle.Render("  ready")
+			}
 		case "active":
-			rows = append(rows, logoStyle.Render(spinnerFrames[x.spinnerFrame]+" "+label))
+			icon = logoStyle.Render(spinnerFrames[x.spinnerFrame] + " ")
+			labelStr = logoStyle.Render(s.label)
+			detailStr = logoStyle.Render("  syncing...")
 		default:
-			rows = append(rows, mutedStyle.Render("· "+label))
+			icon = mutedStyle.Render("· ")
+			labelStr = mutedStyle.Render(s.label)
+			detailStr = mutedStyle.Render("  waiting")
 		}
+		rows = append(rows, branchStr+icon+labelStr+detailStr)
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
+	stages := x.loadingStages()
+
+	doneCount := 0
+	activeIdx := -1
+	for i, s := range stages {
+		if s.state == "done" {
+			doneCount++
+		} else if s.state == "active" && activeIdx == -1 {
+			activeIdx = i
+		}
+	}
+	percent := (doneCount * 100) / len(stages)
+	if activeIdx != -1 && percent < 95 {
+		percent += 12
+	}
+	if percent > 100 {
+		percent = 100
+	}
+
+	statusText := "Connecting your session..."
+	if activeIdx != -1 {
+		switch stages[activeIdx].label {
+		case "Backend":
+			statusText = "Starting backend server..."
+		case "Session":
+			statusText = "Resuming WhatsApp session..."
+		case "Chats":
+			statusText = "Syncing recent chats..."
+		case "Contacts":
+			statusText = "Loading address book..."
+		}
+	} else if doneCount == len(stages) {
+		statusText = "Session ready, launching..."
+	}
+
+	cardW := min(54, max(36, innerW-4))
+	if innerW < 40 {
+		cardW = max(24, innerW-2)
+	}
+
+	barW := min(26, max(12, cardW-18))
+	filled := (barW * percent) / 100
+	if filled > barW {
+		filled = barW
+	}
+	empty := barW - filled
+	barStr := lipgloss.NewStyle().Foreground(brand).Render(strings.Repeat("█", filled)) +
+		lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("░", empty))
+	pctStr := accentStyle.Copy().Bold(false).Render(fmt.Sprintf("%3d%%", percent))
+	progressRow := barStr + " " + pctStr
+
+	stepperBlock := x.renderBootStages()
+
+	p1 := mutedStyle.Render("[") + accentStyle.Copy().Bold(false).Render("⚡ :8787") + mutedStyle.Render("]")
+	p2 := mutedStyle.Render("[") + accentStyle.Copy().Bold(false).Render("🖼️ "+x.gfxName()) + mutedStyle.Render("]")
+	p3 := mutedStyle.Render("[") + accentStyle.Copy().Bold(false).Render("🔒 whatsmeow") + mutedStyle.Render("]")
+	pillRow := p1 + " " + p2 + " " + p3
+
+	logo := renderPiLogo()
+	title := logoStyle.Render("WhatZap")
+	subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
+	statusHeader := accentStyle.Copy().Bold(false).Render(spinnerFrames[x.spinnerFrame] + " " + statusText)
+	hint := mutedStyle.Render("Keep this window open")
+	if x.sessionReady {
+		hint = mutedStyle.Render("Keep this window open  •  press any key to enter")
+	}
+
+	var sections []string
+	if innerH >= 23 {
+		sections = []string{
+			logo,
+			"",
+			title,
+			subtitle,
+			"",
+			statusHeader,
+			progressRow,
+			"",
+			stepperBlock,
+			"",
+			pillRow,
+			hint,
+		}
+	} else if innerH >= 18 {
+		sections = []string{
+			logo,
+			title + "  •  " + subtitle,
+			statusHeader,
+			progressRow,
+			stepperBlock,
+			pillRow,
+		}
+	} else {
+		sections = []string{
+			logo,
+			title + " " + progressRow,
+			stepperBlock,
+		}
+	}
+
+	cardBody := lipgloss.JoinVertical(lipgloss.Center, sections...)
+	return renderStatusBox(cardBody, innerW, innerH, outerW, outerH)
 }
 
 func (x m) renderHeaderContainer(contentW, leftW int) string {

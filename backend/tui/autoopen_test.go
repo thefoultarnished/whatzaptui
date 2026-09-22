@@ -184,7 +184,9 @@ func TestReadyEventNeverSendsReadReceipt(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-
+	origHold := splashHoldDuration
+	splashHoldDuration = 0
+	defer func() { splashHoldDuration = origHold }()
 	wsCh := make(chan env, 1)
 	wsCh <- env{}
 	x := m{

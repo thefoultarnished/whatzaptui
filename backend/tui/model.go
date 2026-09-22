@@ -164,6 +164,7 @@ type m struct {
 	w, h                                     int
 	status, err                              string
 	qrRaw                                    string
+	sessionReady                             bool
 	topBarMsg                                string
 	topBarShown                              int
 	topBarVer                                int
@@ -379,6 +380,7 @@ type logoutMsg struct {
 	err error
 }
 type reconnectMsg struct{}
+type splashDoneMsg struct{}
 type whitelistLoadMsg struct {
 	whitelist      map[string]string // allowed=1 only
 	denied         map[string]bool   // allowed=0 overrides
