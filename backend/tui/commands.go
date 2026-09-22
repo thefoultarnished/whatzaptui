@@ -63,7 +63,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 		return x.setTopBar(msg)
 	}
 	return tea.Batch(
-		setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], allowed),
+		setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, x.whitelist[n], allowed),
 		x.setTopBar(msg),
 	)
 }
@@ -83,7 +83,7 @@ func (x *m) doWhitelistAll() tea.Cmd {
 		}
 		name := x.nameFor(c.ID)
 		x.whitelist[n] = name
-		cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, name, 1))
+		cmds = append(cmds, setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, name, 1))
 	}
 	x.markIdentityChanged()
 	msg := fmt.Sprintf("Whitelisted %d chats (%d new)", len(x.whitelist), added)
@@ -100,7 +100,7 @@ func (x *m) doBlacklistAll() tea.Cmd {
 	count := len(x.whitelist)
 	cmds := []tea.Cmd{}
 	for n := range x.whitelist {
-		cmds = append(cmds, setWhitelistEntry(x.client, x.baseURL, n, x.whitelist[n], 0))
+		cmds = append(cmds, setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, x.whitelist[n], 0))
 	}
 	x.whitelist = map[string]string{}
 	x.markIdentityChanged()
@@ -126,9 +126,11 @@ func (x *m) handleGlobalCommand(txt string) (tea.Cmd, bool) {
 func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 	switch {
 	case includeGlobal && txt == "/exit":
+		x.cancelRequests()
 		return tea.Quit, true
 	case includeGlobal && txt == "/restart":
 		x.restartRequested = true
+		x.cancelRequests()
 		return tea.Quit, true
 	case txt == "/logout":
 		x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
@@ -138,13 +140,13 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 			return x.setTopBar("Demo mode: contacts already fake"), true
 		}
 		x.syncingContacts = true
-		return tea.Batch(x.setTopBar("Syncing contacts..."), syncContacts(x.client, x.baseURL)), true
+		return tea.Batch(x.setTopBar("Syncing contacts..."), syncContacts(x.reqCtx(), x.client, x.baseURL)), true
 	case includeGlobal && txt == "/syncgroups":
 		if x.demoMode {
 			return x.setTopBar("Demo mode: groups already fake"), true
 		}
 		x.syncingGroups = true
-		return tea.Batch(x.setTopBar("Syncing groups..."), syncGroups(x.client, x.baseURL)), true
+		return tea.Batch(x.setTopBar("Syncing groups..."), syncGroups(x.reqCtx(), x.client, x.baseURL)), true
 	case includeGlobal && txt == "/allcontacts":
 		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
 		saveConfig()
@@ -188,7 +190,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		if x.demoMode {
 			return x.setTopBar(msg), true
 		}
-		return tea.Batch(setWhitelistEntry(x.client, x.baseURL, n, name, 1), x.setTopBar(msg)), true
+		return tea.Batch(setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, name, 1), x.setTopBar(msg)), true
 	case txt == "/blacklist":
 		if includeGlobal && x.active == "" {
 			return x.setTopBar("No active chat"), true
@@ -207,7 +209,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		if x.demoMode {
 			return x.setTopBar(msg), true
 		}
-		return tea.Batch(setWhitelistEntry(x.client, x.baseURL, n, "", 0), x.setTopBar(msg)), true
+		return tea.Batch(setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, "", 0), x.setTopBar(msg)), true
 	case txt == "/block":
 		if includeGlobal && x.active == "" {
 			return x.setTopBar("No active chat"), true
@@ -223,8 +225,8 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		}
 		return tea.Batch(
 			x.setTopBar("Blocking contact..."),
-			blockContact(x.client, x.baseURL, x.active),
-			setWhitelistEntry(x.client, x.baseURL, n, "", 0),
+			blockContact(x.reqCtx(), x.client, x.baseURL, x.active),
+			setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, "", 0),
 		), true
 	case strings.HasPrefix(txt, "/rename "):
 		name := strings.TrimSpace(strings.TrimPrefix(txt, "/rename "))
@@ -243,7 +245,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		if x.demoMode {
 			return x.setTopBar("Renamed"), true
 		}
-		return tea.Batch(setName(x.client, x.baseURL, n, name), x.setTopBar("Renamed")), true
+		return tea.Batch(setName(x.reqCtx(), x.client, x.baseURL, n, name), x.setTopBar("Renamed")), true
 	case txt == "/rename":
 		return x.setTopBar("usage: /rename <name>"), true
 	case strings.HasPrefix(txt, "/send "), txt == "/send", strings.HasPrefix(txt, "/sendimage"), strings.HasPrefix(txt, "/sendvideo"), strings.HasPrefix(txt, "/sendfile"):
@@ -275,9 +277,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
 		x.msgs[x.active] = append(x.msgs[x.active],
 			optimisticOutgoingMediaMessage(x.active, kind, fileName, cmd.caption, pendingID))
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 		now := time.Now()
 		selectedID := x.selectedChatID()
 		for i := range x.chats {
@@ -297,7 +297,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		}
 		x.uploadChans[pendingID] = progressCh
 		return tea.Batch(
-			sendFile(x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, pendingID, progressCh),
+			sendFile(x.reqCtx(), x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, pendingID, progressCh),
 			listenFileProgress(progressCh),
 		), true
 	case txt == "/emoji":
@@ -307,39 +307,39 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		x.themePicker.Open(currentConfig.ThemeName)
 		x.leftInput = ""
 		x.leftInputFocused = false
-		x.mainCache.result = ""
+		x.invalidate()
 		return nil, true
 	case txt == "/pointer":
 		x.pointerPicker.Open(receivedMsgIcon)
 		x.leftInput = ""
 		x.leftInputFocused = false
-		x.mainCache.result = ""
+		x.invalidate()
 		return nil, true
 	case txt == "/typinganimation":
 		x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
 		x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 		x.leftInput = ""
 		x.leftInputFocused = false
-		x.mainCache.result = ""
+		x.invalidate()
 		return nil, true
 	case txt == "/help":
 		x.helpPicker.Open("")
 		x.leftInput = ""
 		x.leftInputFocused = false
-		x.mainCache.result = ""
+		x.invalidate()
 		return nil, true
 	case txt == "/settings":
 		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 		x.settingsPicker.Open("")
 		x.leftInput = ""
 		x.leftInputFocused = false
-		x.mainCache.result = ""
+		x.invalidate()
 		return nil, true
 	case txt == "/fonttest":
 		x.fontTestOpen = true
 		x.leftInput = ""
 		x.leftInputFocused = false
-		x.mainCache.result = ""
+		x.invalidate()
 		return nil, true
 	case strings.HasPrefix(txt, "/theme") && txt != "/theme":
 		suffix := txt[len("/theme"):]
@@ -351,7 +351,7 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 			if t.name == suffix {
 				applyThemeByName(t.name)
 				saveConfig()
-				x.mainCache.result = ""
+				x.invalidate()
 				return x.setTopBar("Theme: " + t.displayName), true
 			}
 		}

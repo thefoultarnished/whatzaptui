@@ -116,8 +116,17 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 	total := 0
 	a.mu.Lock()
 	a.state.Contacts = make(map[string]Contact)
-	_, _ = a.db.Exec(`DELETE FROM contacts`)
-	_, _ = a.db.Exec(`DELETE FROM chats WHERE conv_ts = 0 AND id NOT LIKE '%@g.us'`)
+	if err := a.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM contacts`); err != nil {
+			return fmt.Errorf("delete contacts: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM chats WHERE conv_ts = 0 AND id NOT LIKE '%@g.us'`); err != nil {
+			return fmt.Errorf("delete empty chats: %w", err)
+		}
+		return nil
+	}); err != nil {
+		log.Printf("syncContacts wipe: %v", err)
+	}
 	for id, ch := range a.state.Chats {
 		if ch.ConversationTimestamp == 0 && !strings.HasSuffix(id, "@g.us") {
 			delete(a.state.Chats, id)

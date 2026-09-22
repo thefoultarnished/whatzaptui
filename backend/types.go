@@ -116,6 +116,8 @@ type App struct {
 	historySyncing     bool
 	shuttingDown       bool
 	persistDirty       uint32 // atomic: 1 = needs persist
+	stopPersist        chan struct{}
+	stopPersistOnce    sync.Once
 	lidCacheMu         sync.RWMutex
 	lidCache           map[string]string
 

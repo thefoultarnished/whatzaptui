@@ -46,9 +46,7 @@ func (x *m) invalidateSidebarContacts() {
 
 func (x *m) markIdentityChanged() {
 	x.identityVersion++
-	if x.mainCache != nil {
-		x.mainCache.result = ""
-	}
+	x.invalidate()
 	x.invalidateSidebarContacts()
 }
 

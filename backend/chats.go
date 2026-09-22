@@ -122,6 +122,9 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !a.requireConnectedClient(w) {
+		return
+	}
 	jidStr := r.URL.Query().Get("jid")
 	if !strings.HasSuffix(jidStr, "@g.us") {
 		writeErr(w, http.StatusBadRequest, "jid must be a group JID ending in @g.us")

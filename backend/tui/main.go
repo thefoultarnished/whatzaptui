@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -26,6 +27,9 @@ func main() {
 
 	backendDir := detectDirs()
 	demoMode := demoEnabled()
+	fmt.Fprintln(os.Stderr, "graphics protocol:", detectGraphicsProto())
+	apiCtx, apiCancel := context.WithCancel(context.Background())
+	defer apiCancel()
 	for {
 		model := m{
 			baseURL:          "http://127.0.0.1:8787",
@@ -33,6 +37,9 @@ func main() {
 			backendDir:       backendDir,
 			apiToken:         apiToken,
 			client:           &http.Client{Timeout: 12 * time.Second},
+			apiCtx:           apiCtx,
+			apiCancel:        apiCancel,
+			gfx:              newGfxState(),
 			demoMode:         demoMode,
 			status:           "Starting backend...",
 			mode:             "nav",
@@ -143,12 +150,28 @@ func detectDirs() string {
 		cwd,
 		filepath.Join(cwd, ".."),
 		filepath.Join(cwd, "..", ".."),
-		"c:/Users/Nav/Downloads/personal/whatzap",
+	}
+	if override := strings.TrimSpace(os.Getenv("WHATZAP_DIR")); override != "" {
+		cands = append(cands, override, filepath.Join(override, "backend"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		cands = append(cands, exeDir, filepath.Join(exeDir, ".."), filepath.Join(exeDir, "..", ".."))
 	}
 	for _, c := range cands {
 		abs, _ := filepath.Abs(c)
 		if exists(filepath.Join(abs, "backend", "main.go")) {
 			return filepath.Join(abs, "backend")
+		}
+		if exists(filepath.Join(abs, "main.go")) && filepath.Base(abs) == "backend" {
+			return abs
+		}
+	}
+	// Fallback: check if backend binary exists next to the TUI executable (e.g. ~/go/bin/)
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		if exists(filepath.Join(exeDir, "backend.exe")) || exists(filepath.Join(exeDir, "backend")) {
+			return exeDir
 		}
 	}
 	abs, _ := filepath.Abs(cwd)

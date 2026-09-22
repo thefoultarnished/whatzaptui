@@ -12,17 +12,46 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// nextReconnectDelay doubles the WS reconnect backoff (1s start, 30s cap)
+// and returns the delay to wait before the next attempt.
+func (x *m) nextReconnectDelay() time.Duration {
+	if x.wsReconnectDelay == 0 {
+		x.wsReconnectDelay = time.Second
+	}
+	delay := x.wsReconnectDelay
+	if x.wsReconnectDelay*2 < 30*time.Second {
+		x.wsReconnectDelay *= 2
+	} else {
+		x.wsReconnectDelay = 30 * time.Second
+	}
+	return delay
+}
+
 func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	resModel, cmd := x.updateInner(msg)
 	resM, ok := resModel.(m)
 	if !ok {
 		return resModel, cmd
 	}
+	resM.boundCaches()
+	resM.invalidate()
 	var bgCmd tea.Cmd
-	if currentConfig.MediaViewStyle == "pixel" && resM.active != "" {
+	if inlineMediaArt() && resM.active != "" {
 		bgCmd = resM.triggerBackgroundDownloads()
 	}
 	return resM, tea.Batch(cmd, bgCmd)
+}
+
+// dropPreReadyFetchErr swallows load-path fetch errors while the session
+// isn't ready yet (e.g. backend 409 "not connected" during startup). The
+// loading screen is up and everything refetches on ready, so surfacing
+// them in the top bar only leaves stale noise behind.
+func (x *m) dropPreReadyFetchErr(err error) bool {
+	if err == nil || x.status == "ready" {
+		return false
+	}
+	log.Printf("pre-ready fetch suppressed: %v", err)
+	return true
 }
 
 func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -42,22 +71,14 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.startedBackend, x.backend = v.started, v.cmd
 		x.status = "Connecting..."
 		return x, tea.Batch(
-			openWS(x.wsURL, x.apiToken),
-			postEmpty(x.client, x.baseURL+"/start", nil),
-			registerSession(x.client, x.baseURL, x.apiToken),
+			openWS(x.reqCtx(), x.wsURL, x.apiToken),
+			postEmpty(x.reqCtx(), x.client, x.baseURL+"/start", nil),
+			registerSession(x.reqCtx(), x.client, x.baseURL, x.apiToken),
 		)
 	case wsOpenMsg:
 		if v.err != nil {
 			x.wsDisconnected = true
-			if x.wsReconnectDelay == 0 {
-				x.wsReconnectDelay = time.Second
-			}
-			delay := x.wsReconnectDelay
-			if x.wsReconnectDelay*2 < 30*time.Second {
-				x.wsReconnectDelay *= 2
-			} else {
-				x.wsReconnectDelay = 30 * time.Second
-			}
+			delay := x.nextReconnectDelay()
 			x.err = ""
 			if x.status == "ready" {
 				return x, x.setTopBar(fmt.Sprintf("Reconnecting in %s…", delay.Round(time.Second)))
@@ -74,19 +95,11 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.ws, x.wsCh = v.conn, v.ch
 		return x, tea.Batch(readWS(x.wsCh), x.prefetchOnWSOpen())
 	case reconnectMsg:
-		return x, openWS(x.wsURL, x.apiToken)
+		return x, openWS(x.reqCtx(), x.wsURL, x.apiToken)
 	case wsEvtMsg:
 		if !v.ok {
 			x.wsDisconnected = true
-			if x.wsReconnectDelay == 0 {
-				x.wsReconnectDelay = time.Second
-			}
-			delay := x.wsReconnectDelay
-			if x.wsReconnectDelay*2 < 30*time.Second {
-				x.wsReconnectDelay *= 2
-			} else {
-				x.wsReconnectDelay = 30 * time.Second
-			}
+			delay := x.nextReconnectDelay()
 			if x.status == "ready" {
 				return x, tea.Batch(
 					x.setTopBar(fmt.Sprintf("Disconnected — reconnecting in %s…", delay.Round(time.Second))),
@@ -107,17 +120,14 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ready":
 			x.status = "ready"
 			x.qrRaw = ""
-			cmds = append(cmds, getChats(x.client, x.baseURL), getContacts(x.client, x.baseURL), getWhitelist(x.client, x.baseURL))
-			if x.active != "" && !x.demoMode {
-				cmds = append(cmds, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
-			}
+			cmds = append(cmds, getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL), getWhitelist(x.reqCtx(), x.client, x.baseURL))
 		case "chats:loaded":
-			cmds = append(cmds, getChats(x.client, x.baseURL))
+			cmds = append(cmds, getChats(x.reqCtx(), x.client, x.baseURL))
 			if x.active != "" && len(x.msgs[x.active]) == 0 {
-				cmds = append(cmds, getMsgs(x.client, x.baseURL, x.active, 120))
+				cmds = append(cmds, getMsgs(x.reqCtx(), x.client, x.baseURL, x.active, 120))
 			}
 		case "contacts:updated":
-			cmds = append(cmds, getContacts(x.client, x.baseURL))
+			cmds = append(cmds, getContacts(x.reqCtx(), x.client, x.baseURL))
 		case "status":
 			var st string
 			if err := json.Unmarshal(v.evt.Payload, &st); err != nil {
@@ -203,7 +213,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return x.msgs[wm.Key.RemoteJID][i].MessageTimestamp < x.msgs[wm.Key.RemoteJID][j].MessageTimestamp
 					})
 				}
-				x.mainCache.result = ""
+				x.invalidate()
 				if !wm.Key.FromMe && wm.Key.ID != "" {
 					if !activeViewing {
 						for i := range x.chats {
@@ -213,7 +223,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 							}
 						}
 					} else if !x.demoMode {
-						cmds = append(cmds, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": wm.Key.RemoteJID}, func([]byte) tea.Msg { return dataErr{} }))
+						cmds = append(cmds, postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/read", map[string]string{"chatId": wm.Key.RemoteJID}, func([]byte) tea.Msg { return dataErr{} }))
 					}
 					x.flashUntil[wm.Key.ID] = time.Now().Add(5 * time.Second)
 					x.msgActivityUntil = time.Now().Add(3 * time.Second)
@@ -255,9 +265,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				x.msgs[wm.Key.RemoteJID] = msgs
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
+				x.invalidate()
 			} else {
 				log.Printf("ws message:edited unmarshal: %v", err)
 			}
@@ -280,7 +288,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if updated {
 						x.msgs[rm.ChatID] = msgs
-						x.mainCache.result = ""
+						x.invalidate()
 					}
 				}
 			} else {
@@ -301,7 +309,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					delete(x.typingChats, tm.ChatID)
 				}
-				x.mainCache.result = ""
+				x.invalidate()
 				if x.sidebarCache != nil {
 					x.sidebarCache.contactsValid = false
 				}
@@ -327,11 +335,11 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.syncingGroups = false
 		if v.err != nil {
 			x.err = ""
-			if x.status == "ready" {
-				return x, x.setTopBar(v.err.Error())
-			}
 			if strings.Contains(v.err.Error(), "not connected") {
 				return x, nil
+			}
+			if x.status == "ready" {
+				return x, x.setTopBar(v.err.Error())
 			}
 			x.status = "Error: " + v.err.Error()
 		}
@@ -352,10 +360,10 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, x.setTopBar(v.msg)
 	case syncContactsDoneMsg:
 		x.syncingContacts = false
-		return x, tea.Batch(x.setTopBar(v.msg), getChats(x.client, x.baseURL), getContacts(x.client, x.baseURL))
+		return x, tea.Batch(x.setTopBar(v.msg), getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL))
 	case syncGroupsDoneMsg:
 		x.syncingGroups = false
-		return x, tea.Batch(x.setTopBar(v.msg), getChats(x.client, x.baseURL))
+		return x, tea.Batch(x.setTopBar(v.msg), getChats(x.reqCtx(), x.client, x.baseURL))
 	case cursorBlinkMsg:
 		if time.Since(x.lastTypeTime) < 1*time.Second {
 			x.cursorOn = true
@@ -387,6 +395,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, nextSpinnerTick()
 	case chatsMsg:
 		if v.err != nil {
+			if x.dropPreReadyFetchErr(v.err) {
+				return x, nil
+			}
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
@@ -395,17 +406,17 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.resortChats(selectedID)
 		x.ensureSideVisible(x.sideViewRows())
 		cmds := []tea.Cmd{}
-		// First paint: open the most recent chat so the pane isn't empty.
-		// active is only "" on a fresh session (logout clears chats too),
-		// and People-tab selection must not be hijacked.
+		// First paint: select the most recent chat so the pane isn't empty,
+		// but do NOT send a read receipt — the user hasn't explicitly opened it yet.
 		if x.active == "" && x.sidebarTab == "chats" && len(x.chats) > 0 {
 			x.sel = 0
-			mdl, openCmd := x.openSelectedChat()
-			if xm, ok := mdl.(m); ok {
-				x = xm
-			}
-			if openCmd != nil {
-				cmds = append(cmds, openCmd)
+			x.active = x.chats[0].ID
+			x.mode = "chat"
+			cmds = append(cmds, getMsgs(x.reqCtx(), x.client, x.baseURL, x.active, 120))
+			if strings.HasSuffix(x.active, "@g.us") {
+				if _, cached := x.groupPreviews[x.active]; !cached {
+					cmds = append(cmds, fetchGroupPreview(x.reqCtx(), x.client, x.baseURL, x.active))
+				}
 			}
 		}
 		if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
@@ -416,6 +427,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case contactsMsg:
 		if v.err != nil {
+			if x.dropPreReadyFetchErr(v.err) {
+				return x, nil
+			}
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
@@ -432,6 +446,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case msgsMsg:
 		if v.err != nil {
+			if x.dropPreReadyFetchErr(v.err) {
+				return x, nil
+			}
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
@@ -457,6 +474,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		delete(x.loadingOlder, v.chatID)
 		if v.err != nil {
+			if x.dropPreReadyFetchErr(v.err) {
+				return x, nil
+			}
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
@@ -486,11 +506,12 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		merged = append(merged, fresh...)
 		merged = append(merged, existing...)
 		x.msgs[v.chatID] = merged
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 	case aroundMsgsMsg:
 		if v.err != nil {
+			if x.dropPreReadyFetchErr(v.err) {
+				return x, nil
+			}
 			return x, x.setTopBar(v.err.Error())
 		}
 		if len(v.msgs) == 0 {
@@ -514,9 +535,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newerCount = 0
 		}
 		x.scroll = newerCount * 2
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 	case searchResultsMsg:
 		x.msgSearchLoading = false
 		if v.err != nil {
@@ -528,9 +547,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.msgSearchErr = ""
 		x.msgSearchResults = v.results
 		x.msgSearchSel = 0
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 	case fileProgressMsg:
 		if x.uploadProgress == nil {
 			x.uploadProgress = map[string]int{}
@@ -562,7 +579,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 					x.msgs[v.chatID] = filtered
 				}
 			}
-			x.mainCache.result = ""
+			x.invalidate()
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
@@ -607,12 +624,15 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				x.msgs[v.chatID] = append(x.msgs[v.chatID], v.msg)
 			}
 		}
-		x.mainCache.result = ""
+		x.invalidate()
 		x.scroll = 0
 		x.msgActivityUntil = time.Now().Add(3 * time.Second)
 		x.msgActivityType = "sent"
 	case whitelistLoadMsg:
 		if v.err != nil {
+			if x.dropPreReadyFetchErr(v.err) {
+				return x, nil
+			}
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
@@ -646,7 +666,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.selectedMsgID = ""
 		x.status = v.msg
 		x.err = ""
-		x.mainCache.result = ""
+		x.invalidate()
 		return x, tea.Batch(setTerminalTitleCmd("WhatZap"), x.setTopBar(v.msg), tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg { return tea.QuitMsg{} }))
 	case tea.MouseMsg:
 		if v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft && x.mode == "chat" && x.active != "" {
@@ -698,17 +718,17 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if x.downloadingMedia != nil {
 				delete(x.downloadingMedia, v.msgID)
 			}
+			if v.isPreview || strings.Contains(v.err.Error(), "not connected") {
+				return x, nil
+			}
 			return x, x.setTopBar(v.err.Error())
 		}
 		if x.downloadingMedia != nil {
 			delete(x.downloadingMedia, v.msgID)
 		}
 		if v.isPreview {
-			if x.downloadedMedia == nil {
-				x.downloadedMedia = make(map[string]string)
-			}
-			x.downloadedMedia[v.msgID] = v.path
-			x.mainCache.result = ""
+			x.rememberMedia(v.msgID, v.path)
+			x.invalidate()
 			return x, nil
 		}
 		return x, openFile(v.path)
@@ -756,10 +776,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			x.msgs[chatID] = msgs
-			if x.mainCache != nil {
-				x.mainCache.result = ""
-			}
-			return x, postJSON(x.client, x.baseURL+"/messages/edit", map[string]string{"chatId": chatID, "messageId": msgID, "text": txt}, nil)
+			x.invalidate()
+			return x, postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/edit", map[string]string{"chatId": chatID, "messageId": msgID, "text": txt}, nil)
 		}
 		if x.pendingAttachmentPath != "" {
 			if _, ok := x.whitelist[num(x.active)]; !ok {
@@ -782,9 +800,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
 			x.msgs[x.active] = append(x.msgs[x.active],
 				optimisticOutgoingMediaMessage(x.active, kind, fileName, txt, pendingID))
-			if x.mainCache != nil {
-				x.mainCache.result = ""
-			}
+			x.invalidate()
 			now := time.Now()
 			selectedID := x.selectedChatID()
 			for i := range x.chats {
@@ -805,7 +821,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			x.uploadChans[pendingID] = progressCh
 			return x, tea.Batch(
-				sendFile(x.client, x.baseURL, x.active, kind, path, txt, pendingID, progressCh),
+				sendFile(x.reqCtx(), x.client, x.baseURL, x.active, kind, path, txt, pendingID, progressCh),
 				listenFileProgress(progressCh),
 			)
 		}
@@ -825,9 +841,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
 		x.msgs[x.active] = append(x.msgs[x.active], optimisticOutgoingMessage(x.active, txt, pendingID, replyTo))
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 		now := time.Now()
 		selectedID := x.selectedChatID()
 		for i := range x.chats {
@@ -840,9 +854,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.scroll = 0
 		x.msgActivityUntil = time.Now().Add(3 * time.Second)
 		x.msgActivityType = "sent"
-		sendCmd := send(x.client, x.baseURL, x.active, txt, replyTo, pendingID)
+		sendCmd := send(x.reqCtx(), x.client, x.baseURL, x.active, txt, replyTo, pendingID)
 		if x.lastComposingChat != "" && !x.demoMode {
-			pauseCmd := postJSON(x.client, x.baseURL+"/typing", map[string]string{"chatId": x.lastComposingChat, "state": "paused"}, nil)
+			pauseCmd := postJSON(x.reqCtx(), x.client, x.baseURL+"/typing", map[string]string{"chatId": x.lastComposingChat, "state": "paused"}, nil)
 			x.lastComposingChat = ""
 			return x, tea.Batch(sendCmd, pauseCmd)
 		}
@@ -856,7 +870,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			inp := x.input + x.inputBuf
 			if inp != "" {
 				x.lastComposingChat = x.active
-				cmd = tea.Batch(cmd, postJSON(x.client, x.baseURL+"/typing", map[string]string{"chatId": x.active, "state": "composing"}, nil))
+				cmd = tea.Batch(cmd, postJSON(x.reqCtx(), x.client, x.baseURL+"/typing", map[string]string{"chatId": x.active, "state": "composing"}, nil))
 			}
 		}
 		return mdl, cmd
@@ -869,5 +883,5 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 // of waiting for more round trips. Safe pre-login: the backend serves
 // whatever is cached (possibly empty) without requiring a session.
 func (x m) prefetchOnWSOpen() tea.Cmd {
-	return tea.Batch(getChats(x.client, x.baseURL), getContacts(x.client, x.baseURL))
+	return tea.Batch(getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL))
 }

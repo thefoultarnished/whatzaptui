@@ -61,6 +61,11 @@ func (a *App) initPersistentResources() error {
 	if err != nil {
 		return err
 	}
+	// Single-writer: SQLite/WAL allows one writer; cap pool to 1 so
+	// concurrent writers serialize in-process instead of racing.
+	rawDB.SetMaxOpenConns(1)
+	rawDB.SetMaxIdleConns(1)
+	rawDB.SetConnMaxLifetime(0)
 	if _, err := rawDB.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		_ = rawDB.Close()
 		return err
@@ -429,10 +434,14 @@ func (a *App) backfillFTS() {
 			// backfill may revisit them — either way we converge to
 			// exactly one FTS row per triple, never duplicates.
 			for _, r := range pending {
-				_, _ = tx.Exec(`DELETE FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = ?`, r.chatID, r.msgID, r.fromMe)
+				if _, err := tx.Exec(`DELETE FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = ?`, r.chatID, r.msgID, r.fromMe); err != nil {
+					log.Printf("backfillFTS delete: %v", err)
+				}
 			}
 			for _, r := range pending {
-				_, _ = tx.Exec(`INSERT INTO messages_fts (chat_id, msg_id, from_me, body) VALUES (?, ?, ?, ?)`, r.chatID, r.msgID, r.fromMe, r.body)
+				if _, err := tx.Exec(`INSERT INTO messages_fts (chat_id, msg_id, from_me, body) VALUES (?, ?, ?, ?)`, r.chatID, r.msgID, r.fromMe, r.body); err != nil {
+					log.Printf("backfillFTS insert: %v", err)
+				}
 			}
 			if err := tx.Commit(); err != nil {
 				log.Printf("backfillFTS commit: %v", err)
@@ -551,9 +560,11 @@ func (a *App) purgeInvisibleProtocolMessages() {
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("purgeInvisibleProtocol: removed %d control message(s)", n)
-		_, _ = a.db.Exec(`DELETE FROM messages_fts WHERE NOT EXISTS (
+		if _, err := a.db.Exec(`DELETE FROM messages_fts WHERE NOT EXISTS (
 			SELECT 1 FROM messages m WHERE m.chat_id = messages_fts.chat_id
-			AND m.id = messages_fts.msg_id AND m.from_me = messages_fts.from_me)`)
+			AND m.id = messages_fts.msg_id AND m.from_me = messages_fts.from_me)`); err != nil {
+			log.Printf("purgeInvisibleProtocol fts cleanup: %v", err)
+		}
 	}
 }
 
@@ -721,14 +732,31 @@ func fetchAppStates(patches []appstate.WAPatchName, fetch func(context.Context, 
 }
 
 func (a *App) startPersistWorker() {
+	if a.stopPersist == nil {
+		a.stopPersist = make(chan struct{})
+	}
 	ticker := time.NewTicker(500 * time.Millisecond)
-	go func() {
-		for range ticker.C {
-			if atomic.CompareAndSwapUint32(&a.persistDirty, 1, 0) {
-				a.persistState()
+	go func(stop <-chan struct{}) {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if atomic.CompareAndSwapUint32(&a.persistDirty, 1, 0) {
+					a.persistState()
+				}
+			case <-stop:
+				return
 			}
 		}
-	}()
+	}(a.stopPersist)
+}
+
+func (a *App) stopPersistWorker() {
+	a.stopPersistOnce.Do(func() {
+		if a.stopPersist != nil {
+			close(a.stopPersist)
+		}
+	})
 }
 
 func (a *App) persistState() {
@@ -741,7 +769,9 @@ func (a *App) persistState() {
 	if shuttingDown {
 		return
 	}
-	_ = a.persistStateWithErr()
+	if err := a.persistStateWithErr(); err != nil {
+		log.Printf("persistState: %v", err)
+	}
 }
 
 func (a *App) persistStateWithErr() error {
@@ -784,6 +814,25 @@ func (a *App) persistStateWithErr() error {
 		}
 	}
 	return tx.Commit()
+}
+
+// withTx runs fn inside a single SQLite transaction.
+func (a *App) withTx(fn func(tx *sql.Tx) error) error {
+	if a.db == nil {
+		return fmt.Errorf("db not initialized")
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }
 
 // reconcileChatTimestampsFromDB queries the DB for the max message timestamp per
@@ -913,7 +962,7 @@ func (a *App) migrateLIDPermissions(lidUser, pnUser string) {
 	if a == nil || a.db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
 		return
 	}
-	_ = a.withPermissionDB(func(db *sql.DB) error {
+	if err := a.withPermissionDB(func(db *sql.DB) error {
 		var name string
 		var allowed int
 		err := db.QueryRow(`SELECT name, allowed FROM chat_permissions WHERE phone = ?`, lidUser).Scan(&name, &allowed)
@@ -928,9 +977,13 @@ func (a *App) migrateLIDPermissions(lidUser, pnUser string) {
 			log.Printf("migrateLIDPermissions db update: %v", err)
 			return err
 		}
-		_, _ = db.Exec(`DELETE FROM chat_permissions WHERE phone = ?`, lidUser)
+		if _, err := db.Exec(`DELETE FROM chat_permissions WHERE phone = ?`, lidUser); err != nil {
+			log.Printf("migrateLIDPermissions delete: %v", err)
+		}
 		return nil
-	})
+	}); err != nil {
+		log.Printf("migrateLIDPermissions: %v", err)
+	}
 }
 
 func (a *App) canonicalizeChatID(chatID string) string {

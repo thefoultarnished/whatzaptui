@@ -105,7 +105,9 @@ func resolveConfigPath() string {
 		return path
 	}
 	if data, err := os.ReadFile(legacyPath); err == nil {
-		_ = os.WriteFile(path, data, 0o644)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			log.Printf("migrate legacy config: %v", err)
+		}
 	}
 	return path
 }
@@ -881,7 +883,7 @@ func renderUnknownTag(label string) string {
 // the glyph is a visual marker. In the default text mode it returns the
 // plain bracketed text (e.g. "[image]").
 func mediaIconLabel(kind string) string {
-	if currentConfig.MediaIconStyle == "nerd" || currentConfig.MediaViewStyle == "glyph" || (currentConfig.MediaViewStyle == "pixel" && kind != "image") {
+	if currentConfig.MediaIconStyle == "nerd" || currentConfig.MediaViewStyle == "glyph" || (inlineMediaArt() && kind != "image") {
 		if g := nerdIconFor(kind); g != "" {
 			return g + " " + kind
 		}
@@ -1299,6 +1301,8 @@ func detectMediaSendKind(path string) (string, error) {
 		return "image", nil
 	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp", ".m4v":
 		return "video", nil
+	case ".mp3", ".m4a", ".ogg", ".wav", ".aac", ".flac", ".opus":
+		return "audio", nil
 	}
 
 	f, err := os.Open(path)
@@ -1318,6 +1322,9 @@ func detectMediaSendKind(path string) (string, error) {
 	}
 	if strings.HasPrefix(mimeType, "video/") {
 		return "video", nil
+	}
+	if strings.HasPrefix(mimeType, "audio/") {
+		return "audio", nil
 	}
 	return "document", nil
 }

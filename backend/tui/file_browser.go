@@ -206,9 +206,7 @@ func (x *m) loadFileBrowserDir(dir string) error {
 	x.rebuildFileBrowserFiltered()
 	x.fileBrowserIndex = 0
 	x.fileBrowserScroll = 0
-	if x.mainCache != nil {
-		x.mainCache.result = ""
-	}
+	x.invalidate()
 	return nil
 }
 
@@ -228,9 +226,7 @@ func (x *m) openFileBrowser() tea.Cmd {
 func (x *m) closeFileBrowser() {
 	x.fileBrowserOpen = false
 	x.fileBrowserFilter = ""
-	if x.mainCache != nil {
-		x.mainCache.result = ""
-	}
+	x.invalidate()
 }
 
 func (x *m) ensureFileBrowserVisible(viewRows int) {

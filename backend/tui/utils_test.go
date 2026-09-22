@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -340,22 +341,22 @@ func TestAPICommandsSurfaceBackendErrors(t *testing.T) {
 
 	client := srv.Client()
 
-	if msg := getChats(client, srv.URL)(); !strings.Contains(msg.(chatsMsg).err.Error(), "401 Unauthorized: bad api token") {
+	if msg := getChats(context.Background(), client, srv.URL)(); !strings.Contains(msg.(chatsMsg).err.Error(), "401 Unauthorized: bad api token") {
 		t.Fatalf("unexpected chats error: %v", msg.(chatsMsg).err)
 	}
-	if msg := getContacts(client, srv.URL)(); !strings.Contains(msg.(contactsMsg).err.Error(), "500 Internal Server Error: contacts store unavailable") {
+	if msg := getContacts(context.Background(), client, srv.URL)(); !strings.Contains(msg.(contactsMsg).err.Error(), "500 Internal Server Error: contacts store unavailable") {
 		t.Fatalf("unexpected contacts error: %v", msg.(contactsMsg).err)
 	}
-	if msg := getMsgs(client, srv.URL, "chat&1", 10)(); !strings.Contains(msg.(msgsMsg).err.Error(), "409 Conflict: not connected") {
+	if msg := getMsgs(context.Background(), client, srv.URL, "chat&1", 10)(); !strings.Contains(msg.(msgsMsg).err.Error(), "409 Conflict: not connected") {
 		t.Fatalf("unexpected messages error: %v", msg.(msgsMsg).err)
 	}
-	if msg := getWhitelist(client, srv.URL)(); !strings.Contains(msg.(whitelistLoadMsg).err.Error(), "500 Internal Server Error: db offline") {
+	if msg := getWhitelist(context.Background(), client, srv.URL)(); !strings.Contains(msg.(whitelistLoadMsg).err.Error(), "500 Internal Server Error: db offline") {
 		t.Fatalf("unexpected whitelist error: %v", msg.(whitelistLoadMsg).err)
 	}
-	if msg := downloadMedia(client, srv.URL, "chat-1", "msg&1", false)(); !strings.Contains(msg.(mediaDownloadMsg).err.Error(), "404 Not Found: media not found") {
+	if msg := downloadMedia(context.Background(), client, srv.URL, "chat-1", "msg&1", false)(); !strings.Contains(msg.(mediaDownloadMsg).err.Error(), "404 Not Found: media not found") {
 		t.Fatalf("unexpected media error: %v", msg.(mediaDownloadMsg).err)
 	}
-	if msg := setName(client, srv.URL, "", "Alex")(); !strings.Contains(msg.(whitelistSetMsg).err.Error(), "400 Bad Request: phone is required") {
+	if msg := setName(context.Background(), client, srv.URL, "", "Alex")(); !strings.Contains(msg.(whitelistSetMsg).err.Error(), "400 Bad Request: phone is required") {
 		t.Fatalf("unexpected rename error: %v", msg.(whitelistSetMsg).err)
 	}
 }
@@ -372,7 +373,7 @@ func TestSearchMsgsBuildsQueryAndDecodes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msg := searchMsgs(srv.Client(), srv.URL, "foo")()
+	msg := searchMsgs(context.Background(), srv.Client(), srv.URL, "foo")()
 	res, ok := msg.(searchResultsMsg)
 	if !ok {
 		t.Fatalf("expected searchResultsMsg, got %T", msg)
@@ -431,7 +432,7 @@ func TestSearchMsgsReturnsErrorOn5xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msg := searchMsgs(srv.Client(), srv.URL, "anything")()
+	msg := searchMsgs(context.Background(), srv.Client(), srv.URL, "anything")()
 	res := msg.(searchResultsMsg)
 	if res.err == nil {
 		t.Fatalf("expected error, got nil")

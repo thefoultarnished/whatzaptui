@@ -57,6 +57,7 @@ var mediaViewList = []struct {
 	{"text", "Text  [image]"},
 	{"glyph", "Glyph  " + nerdIconFor("image") + " image"},
 	{"pixel", "Pixel  inline art"},
+	{"full", "Full  terminal graphics"},
 }
 
 func buildMediaIconPickerItems() []pickerItem {

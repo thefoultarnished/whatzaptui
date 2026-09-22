@@ -324,8 +324,10 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const q = `SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
-		FROM messages WHERE chat_id = ? %s ORDER BY ts DESC LIMIT ?`
+	const qAll = `SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
+		FROM messages WHERE chat_id = ? ORDER BY ts DESC LIMIT ?`
+	const qBefore = `SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
+		FROM messages WHERE chat_id = ? AND ts < ? ORDER BY ts DESC LIMIT ?`
 	// Fetch limit+1 so we can detect whether more older messages exist.
 	fetch := limit + 1
 	var (
@@ -334,9 +336,9 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 	)
 	if beforeStr := strings.TrimSpace(r.URL.Query().Get("before")); beforeStr != "" {
 		beforeTS, _ := strconv.ParseInt(beforeStr, 10, 64)
-		rows, err = a.db.Query(fmt.Sprintf(q, "AND ts < ?"), chatID, beforeTS, fetch)
+		rows, err = a.db.Query(qBefore, chatID, beforeTS, fetch)
 	} else {
-		rows, err = a.db.Query(fmt.Sprintf(q, ""), chatID, fetch)
+		rows, err = a.db.Query(qAll, chatID, fetch)
 	}
 	if err != nil {
 		writeInternalErr(w, err)
@@ -492,13 +494,22 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	matchExpr := strings.Join(tokens, " ")
 
-	const baseQ = `
+	const baseQAll = `
 		SELECT DISTINCT f.chat_id, f.msg_id, f.from_me,
 		       snippet(messages_fts, 3, '<b>', '</b>', '...', 12) AS snip,
 		       COALESCE(m.ts, 0) AS ts
 		FROM messages_fts f
 		LEFT JOIN messages m ON m.chat_id = f.chat_id AND m.id = f.msg_id AND m.from_me = f.from_me
-		WHERE f.body MATCH ? %s
+		WHERE f.body MATCH ?
+		ORDER BY ts DESC
+		LIMIT ?`
+	const baseQChat = `
+		SELECT DISTINCT f.chat_id, f.msg_id, f.from_me,
+		       snippet(messages_fts, 3, '<b>', '</b>', '...', 12) AS snip,
+		       COALESCE(m.ts, 0) AS ts
+		FROM messages_fts f
+		LEFT JOIN messages m ON m.chat_id = f.chat_id AND m.id = f.msg_id AND m.from_me = f.from_me
+		WHERE f.body MATCH ? AND f.chat_id = ?
 		ORDER BY ts DESC
 		LIMIT ?`
 	var (
@@ -506,9 +517,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if chatID != "" {
-		rows, err = a.db.Query(fmt.Sprintf(baseQ, "AND f.chat_id = ?"), matchExpr, chatID, limit)
+		rows, err = a.db.Query(baseQChat, matchExpr, chatID, limit)
 	} else {
-		rows, err = a.db.Query(fmt.Sprintf(baseQ, ""), matchExpr, limit)
+		rows, err = a.db.Query(baseQAll, matchExpr, limit)
 	}
 	if err != nil {
 		writeInternalErr(w, err)

@@ -16,6 +16,17 @@ import (
 const successLoadingScreenName = "Success Loading Screen"
 
 func (x m) View() string {
+	// Flush pending terminal-graphics deletes before repainting: Bubble Tea
+	// repaints the whole screen every frame, so last frame's Kitty
+	// placements must be removed before new ones are issued during render.
+	dels := ""
+	if x.gfx != nil {
+		dels = x.gfx.takePrevDeletes()
+	}
+	return dels + x.viewInner()
+}
+
+func (x m) viewInner() string {
 	if x.w == 0 || x.h == 0 {
 		return "loading..."
 	}
@@ -47,7 +58,7 @@ func (x m) View() string {
 		logo := renderPiLogo()
 		title := logoStyle.Render("WhatZap")
 		subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
-		hint := mutedStyle.Render("Keep this window open")
+		hint := mutedStyle.Render("Keep this window open  •  graphics: " + x.gfxName())
 		statusMsgTemplate := func(body, progress string) string {
 			header := lipgloss.JoinVertical(lipgloss.Center, logo, "", title, subtitle)
 			content := header + "\n\n" + body
@@ -181,35 +192,6 @@ func (x m) View() string {
 			break
 		}
 	}
-	lastMsgID := ""
-	if msgs := x.msgs[x.active]; len(msgs) > 0 {
-		lastMsgID = msgs[len(msgs)-1].Key.ID
-	}
-	replyToID := ""
-	if x.replyTo != nil {
-		replyToID = x.replyTo.Key.ID
-	}
-	cacheKey := mainCacheKey{
-		active:           x.active,
-		themeName:        currentConfig.ThemeName,
-		msgCount:         len(x.msgs[x.active]),
-		lastMsgID:        lastMsgID,
-		scroll:           x.scroll,
-		w:                x.w,
-		h:                x.h,
-		atInput:          "",
-		replyToID:        replyToID,
-		selectedMsg:      x.selectedMsgID,
-		contactCount:     len(x.contacts) + len(x.names),
-		identityVer:      x.identityVersion,
-		spinnerFrame:     x.spinnerFrame,
-		inputH:           extraInputH,
-		pulseOn:          (x.replyPickMode || x.editPickMode) && x.pulseOn,
-		timestampNewLine: currentConfig.TimestampNewLine,
-		mediaIconStyle:   currentConfig.MediaIconStyle,
-		pointerIcon:      currentConfig.PointerIcon,
-		mediaViewStyle:   currentConfig.MediaViewStyle,
-	}
 	var main string
 	if x.themePicker.open {
 		main = x.themePicker.RenderTheme(rightW, mainH)
@@ -235,12 +217,17 @@ func (x m) View() string {
 		main = x.renderFileBrowser(rightW, mainH)
 	} else if x.emojiPickerOpen {
 		main = x.renderEmojiPickerPane(rightW, mainH)
-	} else if !hasFlash && x.mainCache.result != "" && x.mainCache.key == cacheKey {
+	} else if !hasFlash && x.mainCache != nil && x.mainCache.result != "" && x.mainCache.revision == x.revision && x.mainCache.w == rightW && x.mainCache.h == mainH {
 		main = x.mainCache.result
 	} else {
 		main = x.renderMain(rightW, mainH)
 		if !hasFlash {
-			x.mainCache.key = cacheKey
+			if x.mainCache == nil {
+				x.mainCache = &renderCache{}
+			}
+			x.mainCache.revision = x.revision
+			x.mainCache.w = rightW
+			x.mainCache.h = mainH
 			x.mainCache.result = main
 		}
 	}
@@ -1514,18 +1501,23 @@ func (x m) renderMain(w, h int) string {
 		}
 		numPixelLines := 0
 		var wrapped []string
-		if currentConfig.MediaViewStyle == "pixel" && isImageMsg {
+		if inlineMediaArt() && isImageMsg {
 			localPath := x.downloadedMedia[msg.Key.ID]
 			if localPath != "" {
-				pixelArt := renderPixelArt(localPath, availableW)
-				var pixelLines []string
-				if pixelArt != "" {
-					pixelLines = strings.Split(pixelArt, "\n")
-				} else {
-					pixelLines = []string{"[image]"}
+				var artLines []string
+				if currentConfig.MediaViewStyle == "full" {
+					artLines, _ = x.fullImageLines(msg, availableW)
 				}
-				numPixelLines = len(pixelLines)
-				wrapped = pixelLines
+				if artLines == nil {
+					pixelArt := renderPixelArt(localPath, availableW)
+					if pixelArt != "" {
+						artLines = strings.Split(pixelArt, "\n")
+					} else {
+						artLines = []string{"[image]"}
+					}
+				}
+				numPixelLines = len(artLines)
+				wrapped = artLines
 			} else {
 				wrapped = []string{"[downloading preview...]"}
 			}
@@ -1773,7 +1765,7 @@ func (x m) renderMain(w, h int) string {
 				if currentConfig.TimestampNewLine && !isMediaMsg {
 					spacing = 2
 				}
-				outgoingBodyW = max(outgoingBodyW, lipgloss.Width(ln)+spacing+extra)
+				outgoingBodyW = max(outgoingBodyW, lipgloss.Width(stripGraphicsSeqs(ln))+spacing+extra)
 			}
 			// Block must fit the widest text line OR the timestamp, whichever is wider.
 			lastLineW := runeDisplayWidth(wrapped[len(wrapped)-1] + " ")
@@ -1877,7 +1869,7 @@ func (x m) renderMain(w, h int) string {
 					Foreground(receivedName)).
 					Render(iconPad))
 			}
-			if currentConfig.MediaViewStyle == "pixel" && isImageMsg && i < numPixelLines {
+			if inlineMediaArt() && isImageMsg && i < numPixelLines {
 				lineParts = append(lineParts, ln)
 			} else {
 				lineParts = append(lineParts, renderStyledMessageText(ln, bodyStyle, tokenStyle, isMediaMsg, msgBody))
@@ -1885,7 +1877,7 @@ func (x m) renderMain(w, h int) string {
 			if msg.Key.FromMe && i == len(wrapped)-1 {
 				// Float timestamp to the right of the last line if it fits and
 				// 2-line mode is off; otherwise it goes on its own line below.
-				lastW := runeDisplayWidth(ln + " ")
+				lastW := runeDisplayWidth(stripGraphicsSeqs(ln) + " ")
 				if !currentConfig.TimestampNewLine && lastW+timeSuffixW <= outgoingBlockW {
 					pad := outgoingBlockW - lastW - timeSuffixW
 					lineParts = append(lineParts, bodyStyle.Render(strings.Repeat(" ", pad+1)))
@@ -1896,7 +1888,7 @@ func (x m) renderMain(w, h int) string {
 			}
 			if msg.Key.FromMe {
 				if currentConfig.TimestampNewLine && !isMediaMsg {
-					contentW := lipgloss.Width(strings.Join(lineParts, ""))
+					contentW := lipgloss.Width(stripGraphicsSeqs(strings.Join(lineParts, "")))
 					fillW := max(0, outgoingBlockW-outgoingIconW-2-contentW)
 					lineParts = append([]string{strings.Repeat(" ", fillW)}, lineParts...)
 					lineParts = append(lineParts, "  ", lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)), " ")
@@ -1913,13 +1905,18 @@ func (x m) renderMain(w, h int) string {
 					// the timestamp extending further right. Manually pad
 					// with spaces (stripping ANSI for width measurement) to
 					// avoid lipgloss.Align quirks with pre-styled content.
-					visualW := lipgloss.Width(bodyContent)
-					targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1-outgoingIconW)
-					if currentConfig.TimestampNewLine {
-						targetW = max(1, w-2-outgoingIconW)
-					}
-					if visualW < targetW {
-						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
+					// Full-graphics image lines are already block-width, so
+					// padding would only push the image right: skip it.
+					isFullImg := currentConfig.MediaViewStyle == "full" && isImageMsg && i < numPixelLines
+					if !isFullImg {
+						visualW := lipgloss.Width(stripGraphicsSeqs(bodyContent))
+						targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1-outgoingIconW)
+						if currentConfig.TimestampNewLine {
+							targetW = max(1, w-2-outgoingIconW)
+						}
+						if visualW < targetW {
+							bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
+						}
 					}
 					if currentConfig.TimestampNewLine {
 						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)) + " "
@@ -1927,7 +1924,7 @@ func (x m) renderMain(w, h int) string {
 				} else if isMediaMsg {
 					// Last line of media (caption/name + timestamp):
 					// right-align within the full chat width.
-					visualW := lipgloss.Width(bodyContent)
+					visualW := lipgloss.Width(stripGraphicsSeqs(bodyContent))
 					targetW := max(1, w-2-outgoingIconW)
 					if visualW < targetW {
 						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
@@ -1939,7 +1936,7 @@ func (x m) renderMain(w, h int) string {
 					bodyContent = indent + bodyContent
 				}
 			}
-			lastBodyPlainW = runeDisplayWidth(ln)
+			lastBodyPlainW = runeDisplayWidth(stripGraphicsSeqs(ln))
 			if !msg.Key.FromMe && i == 0 && isGroup {
 				lastBodyPlainW += runeDisplayWidth(senderName + ": ")
 			} else if !msg.Key.FromMe && !isGroup {

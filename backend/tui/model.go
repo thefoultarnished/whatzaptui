@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os/exec"
@@ -10,29 +11,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type mainCacheKey struct {
-	active          string
-	themeName       string
-	msgCount        int
-	lastMsgID       string
-	scroll          int
-	w, h            int
-	atInput         string
-	replyToID       string
-	selectedMsg     string
-	contactCount    int
-	identityVer     int
-	spinnerFrame    int
-	inputH          int
-	pulseOn         bool
-	timestampNewLine bool
-	mediaIconStyle  string
-	pointerIcon     string
-	mediaViewStyle  string
-}
+// renderCache stores the last-rendered main pane. It is validated by a
+// revision counter: every Update bumps m.revision, so any state mutation
+// invalidates the cache by construction. No manual field tracking.
 type renderCache struct {
-	key    mainCacheKey
-	result string
+	revision uint64
+	w, h     int
+	result   string
 }
 
 type sidebarCache struct {
@@ -173,6 +158,8 @@ type env struct {
 type m struct {
 	baseURL, wsURL, backendDir, apiToken     string
 	client                                   *http.Client
+	apiCtx                                   context.Context
+	apiCancel                                context.CancelFunc
 	demoMode                                 bool
 	w, h                                     int
 	status, err                              string
@@ -280,9 +267,12 @@ type m struct {
 	windowTitle                              string
 	sidebarCache                             *sidebarCache
 	mainCache                                *renderCache
+	revision                                 uint64 // bumped on every Update; validates mainCache
+	gfx                                      *gfxState
 	inputBuf                                 string
 	inputFlushScheduled                      bool
 	downloadedMedia                          map[string]string
+	mediaOrder                               []string // FIFO insertion order for downloadedMedia eviction
 	downloadingMedia                         map[string]bool
 	drafts                                   map[string]string // chatID -> unsent composer text
 }
@@ -429,5 +419,21 @@ func (x m) Init() tea.Cmd {
 	if x.demoMode {
 		return tea.Batch(initDemo(), nextCursorBlink(), nextSpinnerTick(), setTerminalTitleCmd("WhatZap"), bgCmd)
 	}
-	return tea.Batch(ensureBackend(x.client, x.baseURL, x.backendDir, x.apiToken), nextCursorBlink(), nextSpinnerTick(), setTerminalTitleCmd("WhatZap"), bgCmd)
+	return tea.Batch(ensureBackend(x.reqCtx(), x.client, x.baseURL, x.backendDir, x.apiToken), nextCursorBlink(), nextSpinnerTick(), setTerminalTitleCmd("WhatZap"), bgCmd)
+}
+
+// reqCtx returns the model's request context, falling back to
+// context.Background when none was assigned (e.g. in tests).
+func (x m) reqCtx() context.Context {
+	if x.apiCtx != nil {
+		return x.apiCtx
+	}
+	return context.Background()
+}
+
+// cancelRequests aborts in-flight API requests. Called on quit.
+func (x m) cancelRequests() {
+	if x.apiCancel != nil {
+		x.apiCancel()
+	}
 }

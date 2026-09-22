@@ -171,7 +171,7 @@ func main() {
 		}
 	}()
 
-	addr := backendHost + ":" + backendPort
+	addr := backendHost + ":" + backendListenPort()
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           app.handler(),
@@ -202,6 +202,7 @@ func main() {
 	app.mu.Lock()
 	app.shuttingDown = true
 	app.mu.Unlock()
+	app.stopPersistWorker()
 
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

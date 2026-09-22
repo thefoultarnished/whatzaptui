@@ -165,6 +165,53 @@ func TestNotConnectedDataErrDoesNotCrashLoadingScreen(t *testing.T) {
 	if got.status != "Connecting..." {
 		t.Fatalf("status = %q, want preserved Connecting...", got.status)
 	}
+
+	// "not connected" error must NOT flash in topBar when ready
+	x = m{status: "ready"}
+	mdl, cmd := x.updateInner(dataErr{err: &mockStatusErr{"409 Conflict: not connected"}})
+	got = mdl.(m)
+	if got.topBarMsg != "" || cmd != nil {
+		t.Fatalf("not connected error should not be shown in topBar when ready: got %q", got.topBarMsg)
+	}
+}
+
+func TestReadyEventNeverSendsReadReceipt(t *testing.T) {
+	var markReadHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/messages/read":
+			markReadHit = true
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	wsCh := make(chan env, 1)
+	wsCh <- env{}
+	x := m{
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		status:     "Connecting...",
+		active:     "111@s.whatsapp.net",
+		sidebarTab: "chats",
+		wsCh:       wsCh,
+	}
+	_, cmd := x.updateInner(wsEvtMsg{evt: env{Type: "ready"}, ok: true})
+	if cmd != nil {
+		if batch, ok := cmd().(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if c != nil {
+					_ = c()
+				}
+			}
+		}
+	}
+	if markReadHit {
+		t.Fatalf("ready event must never automatically send /messages/read on bootup")
+	}
 }
 
 type mockStatusErr struct{ msg string }

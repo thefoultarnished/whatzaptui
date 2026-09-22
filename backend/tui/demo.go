@@ -83,7 +83,7 @@ func (x *m) loadDemoState() {
 	x.scroll = 0
 	x.rebuildContactIndex()
 	x.markIdentityChanged()
-	x.mainCache.result = ""
+	x.invalidate()
 }
 
 func demoTextMsg(id, chatID string, fromMe bool, participant string, ts time.Time, text string) wireMsg {

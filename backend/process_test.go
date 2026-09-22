@@ -17,11 +17,15 @@ import (
 
 // Startup check.
 func TestBackendProcessStartsAndServesHealth(t *testing.T) {
-	guard, err := net.Listen("tcp", "127.0.0.1:8787")
+	// Throwaway port: bind :0 to let the OS pick a free one instead of
+	// fighting over the fixed :8787.
+	free, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skip("127.0.0.1:8787 is already in use")
+		t.Fatalf("grab free port: %v", err)
 	}
-	_ = guard.Close()
+	port := strings.TrimPrefix(free.Addr().String(), "127.0.0.1:")
+	_ = free.Close()
+	base := "http://127.0.0.1:" + port
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -61,6 +65,7 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 	runCmd.Dir = tmpDir
 	runCmd.Env = append(os.Environ(),
 		"WHATZAP_DATA_DIR="+dataDir,
+		"WHATZAP_PORT="+port,
 	)
 	logPath := filepath.Join(tmpDir, "backend.log")
 	logFile, err := os.Create(logPath)
@@ -84,7 +89,7 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 	}()
 
 	client := &http.Client{Timeout: 2 * time.Second}
-	healthURL := "http://127.0.0.1:8787/health"
+	healthURL := base + "/health"
 	var lastErr error
 	ready := false
 	timedOut := false
@@ -116,7 +121,7 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 		t.Fatalf("backend health did not become ready: %v: %s", lastErr, strings.TrimSpace(string(rawLog)))
 	}
 
-	unauthReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8787/contacts", nil)
+	unauthReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
 	unauthRes, err := client.Do(unauthReq)
 	if err != nil {
 		t.Fatalf("unauthorized request failed: %v", err)
@@ -126,7 +131,7 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 		t.Fatalf("unauthorized contacts status = %d, want %d", unauthRes.StatusCode, http.StatusUnauthorized)
 	}
 
-	authReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8787/contacts", nil)
+	authReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
 	authReq.Header.Set(authHeaderName, "Bearer "+apiToken)
 	authRes, err := client.Do(authReq)
 	if err != nil {

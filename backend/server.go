@@ -30,6 +30,15 @@ var maxHeaderBytes = 64 * 1024
 const backendHost = "127.0.0.1"
 const backendPort = "8787"
 
+// backendListenPort is backendPort unless WHATZAP_PORT overrides it
+// (used by process tests to bind a throwaway port instead of :8787).
+func backendListenPort() string {
+	if p := strings.TrimSpace(os.Getenv("WHATZAP_PORT")); p != "" {
+		return p
+	}
+	return backendPort
+}
+
 // allowedBackendOrigin is the single browser origin allowed to
 // drive the backend. Pre-fix, any loopback origin was allowed
 // (any port, any hostname resolving to 127.0.0.0/8 or ::1) — a
@@ -88,7 +97,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/block", a.handleBlock)
 	mux.HandleFunc("/group/members", a.handleGroupMembers)
 	mux.HandleFunc("/session/register", a.handleSessionRegister)
-	return withCORS(a.withAuth(mux))
+	return withRecovery(withCORS(a.withAuth(mux)))
 }
 
 func (a *App) withAuth(next http.Handler) http.Handler {
@@ -458,8 +467,14 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	if targetDB == nil {
 		if _, err := os.Stat(dbPath); err == nil {
-			tempDB, _ = sql.Open("sqlite", "file:"+dbPath)
-			targetDB = tempDB
+			var err error
+			tempDB, err = sql.Open("sqlite", "file:"+dbPath)
+			if err != nil {
+				log.Printf("logout backup open: %v", err)
+				tempDB = nil
+			} else {
+				targetDB = tempDB
+			}
 		}
 	}
 	if targetDB != nil {
@@ -503,12 +518,9 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 				a.client.Store.ID = nil
 			}
 		}
-		// Nil out a.client so any racing reader (event handlers,
-		// other HTTP handlers) early-outs on their existing nil check
-		// instead of calling methods on a Disconnected client.
-		a.client = nil
 	}
 	a.mu.Lock()
+	a.client = nil
 	a.started = false
 	a.connected = false
 	a.needsBootstrapSync = false
@@ -538,7 +550,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		} else {
 			if err := os.RemoveAll(a.cacheDir); err != nil {
 				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
-			} else if err := os.MkdirAll(a.cacheDir, 0o755); err != nil {
+			} else if err := os.MkdirAll(a.cacheDir, 0o700); err != nil {
 				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
 			}
 		}
@@ -551,7 +563,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 			}
 			a.mu.Unlock()
 			if restoreDB == nil {
-				if err := os.MkdirAll(a.cacheDir, 0o755); err == nil {
+				if err := os.MkdirAll(a.cacheDir, 0o700); err == nil {
 					tempRestoreDB, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 					if err == nil {
 						restoreDB = tempRestoreDB
@@ -559,17 +571,26 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if restoreDB != nil {
-				_, _ = restoreDB.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
+				if _, err := restoreDB.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
 					phone   TEXT PRIMARY KEY,
 					name    TEXT NOT NULL DEFAULT '',
 					allowed INTEGER NOT NULL DEFAULT 0
-				)`)
-				tx, err := restoreDB.Begin()
-				if err == nil {
-					for _, p := range backup {
-						_, _ = tx.Exec(`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`, p.Phone, p.Name, p.Allowed)
+				)`); err != nil {
+					log.Printf("logout restore schema: %v", err)
+				} else {
+					tx, err := restoreDB.Begin()
+					if err == nil {
+						for _, p := range backup {
+							if _, err := tx.Exec(`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`, p.Phone, p.Name, p.Allowed); err != nil {
+								log.Printf("logout restore insert: %v", err)
+							}
+						}
+						if err := tx.Commit(); err != nil {
+							log.Printf("logout restore commit: %v", err)
+						}
+					} else {
+						log.Printf("logout restore begin: %v", err)
 					}
-					_ = tx.Commit()
 				}
 				if tempRestoreDB != nil {
 					_ = tempRestoreDB.Close()
@@ -587,6 +608,18 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Logged out successfully"})
+}
+
+func withRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("panic recovered: %s %s: %v", r.Method, r.URL.Path, rec)
+				writeErr(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func withCORS(next http.Handler) http.Handler {

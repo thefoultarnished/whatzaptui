@@ -336,14 +336,14 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 	// Always mark read so the phone badge clears even when local count was stale,
 	// but only dispatch to the network if the WhatsApp session is already ready.
 	batch := []tea.Cmd{
-		getMsgs(x.client, x.baseURL, x.active, 120),
+		getMsgs(x.reqCtx(), x.client, x.baseURL, x.active, 120),
 	}
 	if x.status == "ready" {
-		batch = append(batch, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
+		batch = append(batch, postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
 	}
 	if strings.HasSuffix(x.active, "@g.us") {
 		if _, cached := x.groupPreviews[x.active]; !cached {
-			batch = append(batch, fetchGroupPreview(x.client, x.baseURL, x.active))
+			batch = append(batch, fetchGroupPreview(x.reqCtx(), x.client, x.baseURL, x.active))
 		}
 	}
 	if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
@@ -382,11 +382,11 @@ func (x *m) maybeLoadOlder() tea.Cmd {
 		x.loadingOlder = map[string]bool{}
 	}
 	x.loadingOlder[chatID] = true
-	return getMsgsBefore(x.client, x.baseURL, chatID, 100, oldest)
+	return getMsgsBefore(x.reqCtx(), x.client, x.baseURL, chatID, 100, oldest)
 }
 
 func (x *m) triggerBackgroundDownloads() tea.Cmd {
-	if x.active == "" {
+	if x.status != "ready" || x.active == "" {
 		return nil
 	}
 	items := x.msgs[x.active]
@@ -397,6 +397,7 @@ func (x *m) triggerBackgroundDownloads() tea.Cmd {
 	}
 	if x.downloadedMedia == nil {
 		x.downloadedMedia = make(map[string]string)
+		x.mediaOrder = nil
 	}
 	totalLines := 0
 	for i := len(items) - 1; i >= 0; i-- {
@@ -412,7 +413,7 @@ func (x *m) triggerBackgroundDownloads() tea.Cmd {
 			if _, downloaded := x.downloadedMedia[msgID]; !downloaded {
 				if _, downloading := x.downloadingMedia[msgID]; !downloading {
 					x.downloadingMedia[msgID] = true
-					cmds = append(cmds, downloadMedia(x.client, x.baseURL, x.active, msgID, true))
+					cmds = append(cmds, downloadMedia(x.reqCtx(), x.client, x.baseURL, x.active, msgID, true))
 				}
 			}
 		}

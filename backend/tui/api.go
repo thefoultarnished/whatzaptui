@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -21,7 +22,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
-
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -99,9 +99,6 @@ func backendBinPath(dir string) string {
 	return filepath.Join(dir, name)
 }
 
-// backendBinStale reports whether the backend binary is missing or older
-// than any Go source in dir, in which case ensureBackend rebuilds it once
-// instead of paying `go run` compile time on every launch.
 func backendBinStale(dir string) bool {
 	st, err := os.Stat(backendBinPath(dir))
 	if err != nil {
@@ -116,17 +113,18 @@ func backendBinStale(dir string) bool {
 	return false
 }
 
-func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
+func ensureBackend(ctx context.Context, c *http.Client, base, dir, apiToken string) tea.Cmd {
 	return func() tea.Msg {
-		if health(c, base) == nil {
-			if err := probeAuth(c, base, apiToken); err != nil {
+		if health(ctx, c, base) == nil {
+			if err := probeAuth(ctx, c, base, apiToken); err != nil {
 				return initMsg{err: err}
 			}
 			return initMsg{}
 		}
 		var cmd *exec.Cmd
 		binPath := backendBinPath(dir)
-		if backendBinStale(dir) {
+		srcs, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		if backendBinStale(dir) && len(srcs) > 0 {
 			goBin := "go"
 			if runtime.GOOS == "windows" {
 				goBin = "go.exe"
@@ -134,12 +132,28 @@ func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
 			build := exec.Command(goBin, "build", "-o", binPath, ".")
 			build.Dir = dir
 			if out, err := build.CombinedOutput(); err != nil {
-				return initMsg{err: formatBackendStartupError("backend build failed", string(out))}
+				msg := strings.TrimSpace(string(out))
+				if msg == "" {
+					msg = err.Error()
+				}
+				return initMsg{err: formatBackendStartupError("backend build failed", msg)}
+			}
+		}
+		if !exists(binPath) {
+			if exe, err := os.Executable(); err == nil {
+				cand := filepath.Join(filepath.Dir(exe), filepath.Base(binPath))
+				if exists(cand) {
+					binPath = cand
+				}
 			}
 		}
 		cmd = exec.Command(binPath)
 		cmd.Dir = dir
-		// S-1: no token in the env — the backend reads its token from
+		if !exists(dir) {
+			if exe, err := os.Executable(); err == nil {
+				cmd.Dir = filepath.Dir(exe)
+			}
+		}
 		// <data-root>/backend/session.token (written by resolveSessionToken
 		// before ensureBackend is called), so the child just inherits the
 		// normal environment.
@@ -155,8 +169,8 @@ func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
 		}()
 		deadline := time.Now().Add(35 * time.Second)
 		for time.Now().Before(deadline) {
-			if health(c, base) == nil {
-				if err := probeAuth(c, base, apiToken); err != nil {
+			if health(ctx, c, base) == nil {
+				if err := probeAuth(ctx, c, base, apiToken); err != nil {
 					return initMsg{err: err}
 				}
 				return initMsg{started: true, cmd: cmd}
@@ -175,8 +189,8 @@ func ensureBackend(c *http.Client, base, dir, apiToken string) tea.Cmd {
 	}
 }
 
-func health(c *http.Client, base string) error {
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/health", nil)
+func health(ctx context.Context, c *http.Client, base string) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/health", nil)
 	res, err := c.Do(req)
 	if err != nil {
 		return err
@@ -188,8 +202,8 @@ func health(c *http.Client, base string) error {
 	return nil
 }
 
-func probeAuth(c *http.Client, base, apiToken string) error {
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/contacts", nil)
+func probeAuth(ctx context.Context, c *http.Client, base, apiToken string) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
 	attachAuthHeader(req, apiToken)
 	res, err := c.Do(req)
 	if err != nil {
@@ -206,17 +220,18 @@ func probeAuth(c *http.Client, base, apiToken string) error {
 	return nil
 }
 
-func openWS(url, apiToken string) tea.Cmd {
+func openWS(ctx context.Context, url, apiToken string) tea.Cmd {
 	return func() tea.Msg {
 		header := http.Header{}
 		header.Set(authHeaderName, "Bearer "+apiToken)
-		conn, _, err := websocket.DefaultDialer.Dial(url, header)
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, header)
 		if err != nil {
 			return wsOpenMsg{err: err}
 		}
-		ch := make(chan env)
+		ch := make(chan env, 64)
 		go func() {
 			defer close(ch)
+			defer conn.Close()
 			for {
 				_, b, err := conn.ReadMessage()
 				if err != nil {
@@ -224,7 +239,11 @@ func openWS(url, apiToken string) tea.Cmd {
 				}
 				var e env
 				if json.Unmarshal(b, &e) == nil {
-					ch <- e
+					select {
+					case ch <- e:
+					default:
+						log.Printf("openWS: drop event, buffer full")
+					}
 				}
 			}
 		}()
@@ -234,14 +253,14 @@ func openWS(url, apiToken string) tea.Cmd {
 func readWS(ch <-chan env) tea.Cmd {
 	return func() tea.Msg { e, ok := <-ch; return wsEvtMsg{evt: e, ok: ok} }
 }
-func postEmpty(c *http.Client, url string, ok func([]byte) tea.Msg) tea.Cmd {
-	return postJSON(c, url, map[string]string{}, ok)
+func postEmpty(ctx context.Context, c *http.Client, url string, ok func([]byte) tea.Msg) tea.Cmd {
+	return postJSON(ctx, c, url, map[string]string{}, ok)
 }
 
-func postJSON(c *http.Client, url string, body any, ok func([]byte) tea.Msg) tea.Cmd {
+func postJSON(ctx context.Context, c *http.Client, url string, body any, ok func([]byte) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(body)
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(url))
 		res, err := c.Do(req)
@@ -260,10 +279,10 @@ func postJSON(c *http.Client, url string, body any, ok func([]byte) tea.Msg) tea
 	}
 }
 
-func logout(c *http.Client, base string) tea.Cmd {
+func logout(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]string{})
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/logout", bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/logout", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
@@ -294,9 +313,9 @@ func logout(c *http.Client, base string) tea.Cmd {
 	}
 }
 
-func getChats(c *http.Client, base string) tea.Cmd {
+func getChats(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/chats", nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/chats", nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -315,9 +334,9 @@ func getChats(c *http.Client, base string) tea.Cmd {
 		return chatsMsg{chats: out.Chats}
 	}
 }
-func getContacts(c *http.Client, base string) tea.Cmd {
+func getContacts(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/contacts", nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -337,9 +356,9 @@ func getContacts(c *http.Client, base string) tea.Cmd {
 	}
 }
 
-func fetchGroupPreview(c *http.Client, base, jid string) tea.Cmd {
+func fetchGroupPreview(ctx context.Context, c *http.Client, base, jid string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 			base+"/group/members?jid="+url.QueryEscape(jid), nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
@@ -360,13 +379,13 @@ func fetchGroupPreview(c *http.Client, base, jid string) tea.Cmd {
 		return groupPreviewMsg{jid: jid, preview: groupPreview{members: out.Members, total: out.Total}}
 	}
 }
-func getMsgs(c *http.Client, base, chatID string, limit int) tea.Cmd {
-	return getMsgsBefore(c, base, chatID, limit, 0)
+func getMsgs(ctx context.Context, c *http.Client, base, chatID string, limit int) tea.Cmd {
+	return getMsgsBefore(ctx, c, base, chatID, limit, 0)
 }
 
 // getMsgsBefore fetches up to `limit` messages older than `before` (unix seconds).
 // Pass before=0 for the initial fetch (returns the most recent messages).
-func getMsgsBefore(c *http.Client, base, chatID string, limit int, before int64) tea.Cmd {
+func getMsgsBefore(ctx context.Context, c *http.Client, base, chatID string, limit int, before int64) tea.Cmd {
 	return func() tea.Msg {
 		q := url.Values{}
 		q.Set("chatId", chatID)
@@ -375,7 +394,7 @@ func getMsgsBefore(c *http.Client, base, chatID string, limit int, before int64)
 			q.Set("before", strconv.FormatInt(before, 10))
 		}
 		u := base + "/messages?" + q.Encode()
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -409,14 +428,14 @@ func getMsgsBefore(c *http.Client, base, chatID string, limit int, before int64)
 	}
 }
 
-func getMsgsAround(c *http.Client, base, chatID, msgID string, limit int) tea.Cmd {
+func getMsgsAround(ctx context.Context, c *http.Client, base, chatID, msgID string, limit int) tea.Cmd {
 	return func() tea.Msg {
 		q := url.Values{}
 		q.Set("chatId", chatID)
 		q.Set("around", msgID)
 		q.Set("limit", strconv.Itoa(limit))
 		u := base + "/messages?" + q.Encode()
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -437,13 +456,13 @@ func getMsgsAround(c *http.Client, base, chatID, msgID string, limit int) tea.Cm
 	}
 }
 
-func searchMsgs(c *http.Client, base, query string) tea.Cmd {
+func searchMsgs(ctx context.Context, c *http.Client, base, query string) tea.Cmd {
 	return func() tea.Msg {
 		q := url.Values{}
 		q.Set("q", query)
 		q.Set("limit", "50")
 		u := base + "/search?" + q.Encode()
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -463,7 +482,7 @@ func searchMsgs(c *http.Client, base, query string) tea.Cmd {
 	}
 }
 
-func send(c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID string) tea.Cmd {
+func send(ctx context.Context, c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID string) tea.Cmd {
 	return func() tea.Msg {
 		payload := map[string]any{"chatId": chatID, "text": text}
 		if replyTo != nil {
@@ -481,7 +500,7 @@ func send(c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID
 			payload["replyToParticipant"] = participant
 		}
 		b, _ := json.Marshal(payload)
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/messages/send", bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/messages/send", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
@@ -554,7 +573,7 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingID string, progressCh chan fileProgressMsg) tea.Cmd {
+func sendFile(ctx context.Context, c *http.Client, base, chatID, kind, path, caption string, pendingID string, progressCh chan fileProgressMsg) tea.Cmd {
 	return func() tea.Msg {
 		// The outer cmd owns closing the progress channel. The inner
 		// writer goroutine is joined via doneCh before we return, so
@@ -615,7 +634,7 @@ func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingI
 		// Per-call client with no timeout — 150MB uploads over slow links can
 		// easily exceed the shared 12s default.
 		uploadClient := &http.Client{Timeout: 0}
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/messages/send-file", pr)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/messages/send-file", pr)
 		if err != nil {
 			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
 		}
@@ -642,6 +661,7 @@ func sendFile(c *http.Client, base, chatID, kind, path, caption string, pendingI
 	}
 }
 func (x m) cleanup() {
+	x.cancelRequests()
 	if x.demoMode {
 		return
 	}
@@ -661,9 +681,9 @@ func (x m) cleanup() {
 	_ = x.backend.Process.Kill()
 }
 
-func getWhitelist(c *http.Client, base string) tea.Cmd {
+func getWhitelist(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/whitelist", nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/whitelist", nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -697,13 +717,13 @@ func getWhitelist(c *http.Client, base string) tea.Cmd {
 	}
 }
 
-func downloadMedia(c *http.Client, base, chatID, msgID string, isPreview bool) tea.Cmd {
+func downloadMedia(ctx context.Context, c *http.Client, base, chatID, msgID string, isPreview bool) tea.Cmd {
 	return func() tea.Msg {
 		q := url.Values{}
 		q.Set("chatId", chatID)
 		q.Set("msgId", msgID)
 		u := base + "/media/download?" + q.Encode()
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
 		if err != nil {
@@ -768,7 +788,7 @@ func openFile(path string) tea.Cmd {
 		var cmd *exec.Cmd
 		switch runtime.GOOS {
 		case "windows":
-			cmd = exec.Command("cmd", "/c", "start", "", path)
+			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
 		case "darwin":
 			cmd = exec.Command("open", path)
 		default:
@@ -781,10 +801,10 @@ func openFile(path string) tea.Cmd {
 	}
 }
 
-func setName(c *http.Client, base, phone, name string) tea.Cmd {
+func setName(ctx context.Context, c *http.Client, base, phone, name string) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]any{"phone": phone, "name": name})
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/names/set", bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/names/set", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
@@ -799,10 +819,10 @@ func setName(c *http.Client, base, phone, name string) tea.Cmd {
 	}
 }
 
-func setWhitelistEntry(c *http.Client, base, phone, name string, allowed int) tea.Cmd {
+func setWhitelistEntry(ctx context.Context, c *http.Client, base, phone, name string, allowed int) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]any{"phone": phone, "name": name, "allowed": allowed})
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/whitelist/set", bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/whitelist/set", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)
@@ -832,10 +852,10 @@ func apiTokenFromURL(base string) string {
 // registerSession tells the backend which TUI process (by PID) is the
 // active session (A-1). Called once after ensureBackend succeeds; the
 // backend uses this to rotate the session token if this process exits.
-func registerSession(c *http.Client, base, apiToken string) tea.Cmd {
+func registerSession(ctx context.Context, c *http.Client, base, apiToken string) tea.Cmd {
 	return func() tea.Msg {
 		body, _ := json.Marshal(map[string]int{"pid": os.Getpid()})
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/session/register", bytes.NewReader(body))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session/register", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		attachAuthHeader(req, apiToken)
 		res, err := c.Do(req)
@@ -847,10 +867,10 @@ func registerSession(c *http.Client, base, apiToken string) tea.Cmd {
 	}
 }
 
-func syncContacts(c *http.Client, base string) tea.Cmd {
+func syncContacts(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	longClient := *c
 	longClient.Timeout = 5 * time.Minute
-	return postEmpty(&longClient, base+"/sync/contacts", func(raw []byte) tea.Msg {
+	return postEmpty(ctx, &longClient, base+"/sync/contacts", func(raw []byte) tea.Msg {
 		var out struct {
 			Updated      int `json:"updated"`
 			Enriched     int `json:"enriched"`
@@ -870,10 +890,10 @@ func syncContacts(c *http.Client, base string) tea.Cmd {
 	})
 }
 
-func syncGroups(c *http.Client, base string) tea.Cmd {
+func syncGroups(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	longClient := *c
 	longClient.Timeout = 5 * time.Minute
-	return postEmpty(&longClient, base+"/sync/groups", func(raw []byte) tea.Msg {
+	return postEmpty(ctx, &longClient, base+"/sync/groups", func(raw []byte) tea.Msg {
 		var out struct {
 			Updated int `json:"updated"`
 			Total   int `json:"total"`
@@ -889,10 +909,10 @@ type blockMsg struct {
 	err error
 }
 
-func blockContact(c *http.Client, base, chatID string) tea.Cmd {
+func blockContact(ctx context.Context, c *http.Client, base, chatID string) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]string{"chatId": chatID})
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/block", bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/block", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)

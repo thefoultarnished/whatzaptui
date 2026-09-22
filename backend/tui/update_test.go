@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -407,7 +408,7 @@ func TestSendFileBuildsMultipartCorrectly(t *testing.T) {
 
 	c := &http.Client{Timeout: 5 * time.Second}
 	progressCh := make(chan fileProgressMsg, 16)
-	cmd := sendFile(c, srv.URL, "15551230001@s.whatsapp.net", "image", filePath, "hello caption", "pending-1", progressCh)
+	cmd := sendFile(context.Background(), c, srv.URL, "15551230001@s.whatsapp.net", "image", filePath, "hello caption", "pending-1", progressCh)
 	if cmd == nil {
 		t.Fatal("sendFile returned nil cmd")
 	}
@@ -473,7 +474,7 @@ func TestSendFileRejectsMissingFile(t *testing.T) {
 	t.Setenv("WHATZAP_API_TOKEN", "test-token")
 	c := &http.Client{Timeout: 5 * time.Second}
 	progressCh := make(chan fileProgressMsg, 16)
-	cmd := sendFile(c, srv.URL, "15551230001@s.whatsapp.net", "image", missing, "", "pending-x", progressCh)
+	cmd := sendFile(context.Background(), c, srv.URL, "15551230001@s.whatsapp.net", "image", missing, "", "pending-x", progressCh)
 	msg := cmd()
 	sm, ok := msg.(sentMsg)
 	if !ok {
@@ -1811,6 +1812,23 @@ func TestEndKeyNoOpInSidebar(t *testing.T) {
 }
 
 // --- WS reconnect backoff ---
+
+func TestNextReconnectDelayHelper(t *testing.T) {
+	x := m{}
+	if d := x.nextReconnectDelay(); d != time.Second {
+		t.Fatalf("first = %v, want 1s", d)
+	}
+	if d := x.nextReconnectDelay(); d != 2*time.Second {
+		t.Fatalf("second = %v, want 2s", d)
+	}
+	x.wsReconnectDelay = 20 * time.Second
+	if d := x.nextReconnectDelay(); d != 20*time.Second {
+		t.Fatalf("cap-step = %v, want 20s", d)
+	}
+	if x.wsReconnectDelay != 30*time.Second {
+		t.Fatalf("capped at %v, want 30s", x.wsReconnectDelay)
+	}
+}
 
 func TestWSReconnectBackoffDoubles(t *testing.T) {
 	model := m{

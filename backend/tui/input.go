@@ -41,22 +41,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if x.confirmDialog.open {
 		action, done := x.confirmDialog.Handle(k)
 		if !done {
-			if x.mainCache != nil {
-				x.mainCache.result = ""
-			}
+			x.invalidate()
 			return x, nil
 		}
 		pending := x.confirmDialog.action
 		x.confirmDialog.Close()
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 		if action != "confirm" {
 			return x, x.setTopBar("Cancelled")
 		}
 		switch pending {
 		case "logout":
-			return x, logout(x.client, x.baseURL)
+			return x, logout(x.reqCtx(), x.client, x.baseURL)
 		case "whitelistall":
 			return x, x.doWhitelistAll()
 		case "blacklistall":
@@ -67,6 +63,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch k.String() {
 	case "ctrl+c":
+		x.cancelRequests()
 		return x, tea.Quit
 	case "alt+c":
 		x.replyPickMode = false
@@ -79,7 +76,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		x.sel = 0
 		x.sideScroll = 0
-		x.mainCache.result = ""
+		x.invalidate()
 		x.ensureSideVisible(x.sideViewRows())
 		return x, nil
 	case "alt+p":
@@ -92,7 +89,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.searchInput = ""
 		x.sel = 0
 		x.sideScroll = 0
-		x.mainCache.result = ""
+		x.invalidate()
 		x.ensureSideVisible(x.sideViewRows())
 		return x, nil
 	case "alt+s":
@@ -134,7 +131,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if msgs[i].MediaProto != "" {
 					return x, tea.Batch(
 						x.setTopBar("Opening media..."),
-						downloadMedia(x.client, x.baseURL, x.active, msgs[i].Key.ID, false),
+						downloadMedia(x.reqCtx(), x.client, x.baseURL, x.active, msgs[i].Key.ID, false),
 					)
 				}
 			}
@@ -165,7 +162,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if x.editPickMode {
 				x.editPickMode = false
 				x.selectedMsgID = ""
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			}
 			cands := x.editPickCandidates()
@@ -176,7 +173,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.editPickMode = true
 			x.editPickIndex = len(cands) - 1
 			x.selectedMsgID = cands[x.editPickIndex].Key.ID
-			x.mainCache.result = ""
+			x.invalidate()
 			return x, nil
 		}
 		return x, nil
@@ -211,7 +208,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				x.replyPickIndex = picked
 			}
 			x.selectedMsgID = cands[x.replyPickIndex].Key.ID
-			x.mainCache.result = ""
+			x.invalidate()
 			return x, nil
 		}
 		return x, nil
@@ -225,7 +222,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if x.fontTestOpen {
 		if k.Type == tea.KeyEsc {
 			x.fontTestOpen = false
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -233,13 +230,13 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action, done := x.themePicker.HandleTheme(k)
 		if !done {
 			applyThemeByName(x.themePicker.SelectedKey())
-			x.mainCache.result = ""
+			x.invalidate()
 		} else if action == "confirm" {
 			applyThemeByName(x.themePicker.Close(true))
 			saveConfig()
 		} else {
 			applyThemeByName(x.themePicker.Close(false))
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -247,14 +244,14 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action, done := x.pointerPicker.Handle(k)
 		if !done {
 			receivedMsgIcon = x.pointerPicker.SelectedKey()
-			x.mainCache.result = ""
+			x.invalidate()
 		} else if action == "confirm" {
 			receivedMsgIcon = x.pointerPicker.Close(true)
 			currentConfig.PointerIcon = receivedMsgIcon
 			saveConfig()
 		} else {
 			receivedMsgIcon = x.pointerPicker.Close(false)
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -262,7 +259,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		_, done := x.helpPicker.HandleHelp(k)
 		if done {
 			x.helpPicker.Close(false)
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -271,7 +268,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if done {
 			if action == "confirm" {
 				msg := x.settingsPicker.toggleSetting()
-				x.mainCache.result = ""
+				x.invalidate()
 
 				// Handle mouse enable/disable command for the toggle
 				var cmd tea.Cmd
@@ -309,11 +306,11 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
 					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 				}
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			}
 			x.settingsPicker.Close(false)
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -321,18 +318,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action, done := x.typingAnimationPicker.Handle(k)
 		if !done {
 			currentConfig.TypingAnimationStyle = x.typingAnimationPicker.SelectedKey()
-			x.mainCache.result = ""
+			x.invalidate()
 		} else if action == "confirm" {
 			currentConfig.TypingAnimationStyle = x.typingAnimationPicker.Close(true)
 			saveConfig()
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		} else {
 			x.typingAnimationPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -340,18 +337,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action, done := x.mediaIconPicker.Handle(k)
 		if !done {
 			currentConfig.MediaIconStyle = x.mediaIconPicker.SelectedKey()
-			x.mainCache.result = ""
+			x.invalidate()
 		} else if action == "confirm" {
 			currentConfig.MediaIconStyle = x.mediaIconPicker.Close(true)
 			saveConfig()
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		} else {
 			x.mediaIconPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -359,18 +356,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action, done := x.mediaViewPicker.Handle(k)
 		if !done {
 			currentConfig.MediaViewStyle = x.mediaViewPicker.SelectedKey()
-			x.mainCache.result = ""
+			x.invalidate()
 		} else if action == "confirm" {
 			currentConfig.MediaViewStyle = x.mediaViewPicker.Close(true)
 			saveConfig()
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		} else {
 			x.mediaViewPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -378,18 +375,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		action, done := x.userlistIconPicker.Handle(k)
 		if !done {
 			currentConfig.UserlistIconStyle = x.userlistIconPicker.SelectedKey()
-			x.mainCache.result = ""
+			x.invalidate()
 		} else if action == "confirm" {
 			currentConfig.UserlistIconStyle = x.userlistIconPicker.Close(true)
 			saveConfig()
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		} else {
 			x.userlistIconPicker.Close(false)
 			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 			x.settingsPicker.Open("")
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -403,9 +400,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.msgSearchSel = 0
 		x.msgSearchLoading = false
 		x.msgSearchErr = ""
-		if x.mainCache != nil {
-			x.mainCache.result = ""
-		}
+		x.invalidate()
 		return x, nil
 	}
 	switch x.mode {
@@ -505,34 +500,26 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.msgSearchSel = 0
 			x.msgSearchLoading = false
 			x.msgSearchErr = ""
-			if x.mainCache != nil {
-				x.mainCache.result = ""
-			}
+			x.invalidate()
 			return x, nil
 		case tea.KeyBackspace:
 			if x.msgSearchInput != "" {
 				x.msgSearchInput = graphemeDeleteLast(x.msgSearchInput)
 				x.msgSearchResults = nil
 				x.msgSearchSel = 0
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
+				x.invalidate()
 			}
 			return x, nil
 		case tea.KeyUp:
 			if len(x.msgSearchResults) > 0 {
 				x.msgSearchSel = wrappedIndex(x.msgSearchSel, len(x.msgSearchResults), -1)
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
+				x.invalidate()
 			}
 			return x, nil
 		case tea.KeyDown:
 			if len(x.msgSearchResults) > 0 {
 				x.msgSearchSel = wrappedIndex(x.msgSearchSel, len(x.msgSearchResults), 1)
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
+				x.invalidate()
 			}
 			return x, nil
 		case tea.KeyEnter:
@@ -541,10 +528,8 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if q != "" && len(x.msgSearchResults) == 0 && !x.msgSearchLoading {
 				x.msgSearchLoading = true
 				x.msgSearchErr = ""
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
-				return x, searchMsgs(x.client, x.baseURL, q)
+				x.invalidate()
+				return x, searchMsgs(x.reqCtx(), x.client, x.baseURL, q)
 			}
 			// Second Enter (with results): jump to selected.
 			if len(x.msgSearchResults) == 0 {
@@ -564,19 +549,15 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.msgSearchResults = nil
 			x.msgSearchSel = 0
 			x.msgSearchErr = ""
-			if x.mainCache != nil {
-				x.mainCache.result = ""
-			}
+			x.invalidate()
 			// Fetch 100 messages centred on the hit (50 before + target + 50 after).
-			return x, getMsgsAround(x.client, x.baseURL, hit.ChatID, hit.MessageID, 100)
+			return x, getMsgsAround(x.reqCtx(), x.client, x.baseURL, hit.ChatID, hit.MessageID, 100)
 		default:
 			if len(k.Runes) > 0 {
 				x.msgSearchInput += string(k.Runes)
 				x.msgSearchResults = nil
 				x.msgSearchSel = 0
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
+				x.invalidate()
 			}
 			return x, nil
 		}
@@ -623,7 +604,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				x.selectedMsgID = cands[x.replyPickIndex].Key.ID
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			case tea.KeyDown:
 				if x.replyPickIndex < len(cands)-1 {
@@ -637,7 +618,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 				x.selectedMsgID = cands[x.replyPickIndex].Key.ID
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			case tea.KeyEnter:
 				cp := cands[x.replyPickIndex]
@@ -645,13 +626,13 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				x.replyPickMode = false
 				x.selectedMsgID = ""
 				x.scroll = 0
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			case tea.KeyEsc, tea.KeyTab:
 				x.replyPickMode = false
 				x.selectedMsgID = ""
 				x.scroll = 0
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			default:
 				if k.String() == "r" {
@@ -660,7 +641,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.replyPickMode = false
 					x.selectedMsgID = ""
 					x.scroll = 0
-					x.mainCache.result = ""
+					x.invalidate()
 					return x, nil
 				}
 				if k.String() == "o" {
@@ -668,10 +649,10 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					if cp.MediaProto != "" {
 						x.replyPickMode = false
 						x.selectedMsgID = ""
-						x.mainCache.result = ""
+						x.invalidate()
 						return x, tea.Batch(
 							x.setTopBar("Opening media..."),
-							downloadMedia(x.client, x.baseURL, x.active, cp.Key.ID, false),
+							downloadMedia(x.reqCtx(), x.client, x.baseURL, x.active, cp.Key.ID, false),
 						)
 					}
 					return x, x.setTopBar("No media on this message")
@@ -690,7 +671,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					x.replyPickMode = false
 					x.selectedMsgID = ""
-					x.mainCache.result = ""
+					x.invalidate()
 					x.openEmojiPicker()
 					return x, nil
 				}
@@ -701,7 +682,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					x.replyPickMode = false
 					x.selectedMsgID = ""
-					x.mainCache.result = ""
+					x.invalidate()
 					// Remove from local state immediately
 					if msgs, ok := x.msgs[x.active]; ok {
 						for i, msg := range msgs {
@@ -713,7 +694,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return x, tea.Batch(
 						x.setTopBar("Message deleted"),
-						postJSON(x.client, x.baseURL+"/messages/delete", map[string]any{
+						postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/delete", map[string]any{
 							"chatId":    x.active,
 							"messageId": cp.Key.ID,
 							// A-16: backend's messages table PK is
@@ -747,14 +728,14 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.editPickIndex--
 				}
 				x.selectedMsgID = cands[x.editPickIndex].Key.ID
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			case tea.KeyDown:
 				if x.editPickIndex < len(cands)-1 {
 					x.editPickIndex++
 				}
 				x.selectedMsgID = cands[x.editPickIndex].Key.ID
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			case tea.KeyEnter:
 				cp := cands[x.editPickIndex]
@@ -763,12 +744,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				x.inputBuf = ""
 				x.editPickMode = false
 				x.selectedMsgID = ""
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			case tea.KeyEsc, tea.KeyTab:
 				x.editPickMode = false
 				x.selectedMsgID = ""
-				x.mainCache.result = ""
+				x.invalidate()
 				return x, nil
 			default:
 				if k.String() == "a" {
@@ -778,7 +759,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.inputBuf = ""
 					x.editPickMode = false
 					x.selectedMsgID = ""
-					x.mainCache.result = ""
+					x.invalidate()
 					return x, nil
 				}
 				return x, nil
@@ -850,9 +831,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !x.sidebarFocused && x.active != "" {
 				x.scroll = 0
 				x.selectedMsgID = ""
-				if x.mainCache != nil {
-					x.mainCache.result = ""
-				}
+				x.invalidate()
 				// Clear local unread count immediately.
 				for i := range x.chats {
 					if x.chats[i].ID == x.active {
@@ -863,8 +842,8 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Reload most-recent page and always mark chat as read so the
 				// phone's unread badge clears even when local count was stale.
 				return x, tea.Batch(
-					getMsgs(x.client, x.baseURL, x.active, 120),
-					postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }),
+					getMsgs(x.reqCtx(), x.client, x.baseURL, x.active, 120),
+					postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }),
 				)
 			}
 		case tea.KeyEsc:
@@ -1051,7 +1030,7 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyEsc:
 			x.fileBrowserPathMode = false
 			x.fileBrowserPathBuf = ""
-			x.mainCache.result = ""
+			x.invalidate()
 		case tea.KeyEnter:
 			target := strings.TrimSpace(x.fileBrowserPathBuf)
 			target = strings.Trim(target, `"'`)
@@ -1063,20 +1042,20 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return x, x.setTopBar(fmt.Sprintf("Path not found: %s", target))
 				}
 			}
-			x.mainCache.result = ""
+			x.invalidate()
 		case tea.KeyBackspace:
 			runes := []rune(x.fileBrowserPathBuf)
 			if len(runes) > 0 {
 				x.fileBrowserPathBuf = string(runes[:len(runes)-1])
 			}
-			x.mainCache.result = ""
+			x.invalidate()
 		case tea.KeyRunes:
 			for _, r := range k.Runes {
 				if r >= 32 && r != 127 {
 					x.fileBrowserPathBuf += string(r)
 				}
 			}
-			x.mainCache.result = ""
+			x.invalidate()
 		}
 		return x, nil
 	}
@@ -1084,7 +1063,7 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "alt+f" {
 		x.fileBrowserPathMode = true
 		x.fileBrowserPathBuf = ""
-		x.mainCache.result = ""
+		x.invalidate()
 		return x, nil
 	}
 
@@ -1095,7 +1074,7 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.rebuildFileBrowserFiltered()
 			x.fileBrowserIndex = 0
 			x.fileBrowserScroll = 0
-			x.mainCache.result = ""
+			x.invalidate()
 			return x, nil
 		}
 		x.closeFileBrowser()
@@ -1103,12 +1082,12 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyUp:
 		x.fileBrowserIndex = wrappedIndex(x.fileBrowserIndex, len(x.fileBrowserFiltered), -1)
 		x.ensureFileBrowserVisible(rows)
-		x.mainCache.result = ""
+		x.invalidate()
 		return x, nil
 	case tea.KeyDown:
 		x.fileBrowserIndex = wrappedIndex(x.fileBrowserIndex, len(x.fileBrowserFiltered), 1)
 		x.ensureFileBrowserVisible(rows)
-		x.mainCache.result = ""
+		x.invalidate()
 		return x, nil
 	case tea.KeyTab:
 		x.fileBrowserSortRecent = !x.fileBrowserSortRecent
@@ -1119,7 +1098,7 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.fileBrowserIndex = 0
 			x.fileBrowserScroll = 0
 		}
-		x.mainCache.result = ""
+		x.invalidate()
 		return x, nil
 	case tea.KeyBackspace:
 		if x.fileBrowserFilter != "" {
@@ -1128,7 +1107,7 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.rebuildFileBrowserFiltered()
 			x.fileBrowserIndex = 0
 			x.fileBrowserScroll = 0
-			x.mainCache.result = ""
+			x.invalidate()
 			return x, nil
 		}
 		if x.fileBrowserDir == "" {
@@ -1170,7 +1149,7 @@ func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.rebuildFileBrowserFiltered()
 		x.fileBrowserIndex = 0
 		x.fileBrowserScroll = 0
-		x.mainCache.result = ""
+		x.invalidate()
 		return x, nil
 	}
 	// swallow all other keys (ctrl, alt combos, etc.)
@@ -1227,10 +1206,10 @@ func (x m) handleEmojiPicker(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			rxnMsg.MessageTimestamp = time.Now().Unix()
 			x.msgs[chatID] = append(x.msgs[chatID], rxnMsg)
-			x.mainCache.result = ""
+			x.invalidate()
 			return x, tea.Batch(
 				x.setTopBar("Reacted "+emoji),
-				postJSON(x.client, x.baseURL+"/messages/react", map[string]string{
+				postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/react", map[string]string{
 					"chatId":    chatID,
 					"messageId": msgID,
 					"sender":    sender,
