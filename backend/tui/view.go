@@ -276,7 +276,7 @@ func (x m) View() string {
 		// border meets it, so the divider reads as continuous from the
 		// very top of the frame.
 		topRow := lipgloss.NewStyle().Foreground(muted).Render(
-			"╭" + strings.Repeat("─", leftW+1) + "┬" + strings.Repeat("─", max(0, outerW-leftW-2)) + "╮")
+			"╭" + strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╮")
 		frame = lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody)
 	}
 	if x.mode == "msgsearch" {
