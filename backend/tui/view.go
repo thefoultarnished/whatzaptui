@@ -269,20 +269,59 @@ func (x m) View() string {
 		framedBody := lipgloss.NewStyle().
 			Width(outerW).
 			Height(outerH).
-			Border(lipgloss.RoundedBorder(), false, true, true, true).
+			Border(lipgloss.RoundedBorder(), false, true, false, true).
 			BorderForeground(muted).
 			Render(inner)
-		// Use a "┬" junction in the top border where the sidebar's right
-		// border meets it, so the divider reads as continuous from the
-		// very top of the frame.
+		framedBody = connectFrameJunctions(framedBody)
+		// Use a "┬" junction in the top border and a "┴" junction in the
+		// bottom border where the vertical divider meets them, so the divider
+		// reads as continuous from the very top to the very bottom of the frame.
 		topRow := lipgloss.NewStyle().Foreground(muted).Render(
 			"╭" + strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╮")
-		frame = lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody)
+		botRow := lipgloss.NewStyle().Foreground(muted).Render(
+			"╰" + strings.Repeat("─", leftW) + "┴" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╯")
+		frame = lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody, botRow)
 	}
 	if x.mode == "msgsearch" {
 		return x.renderSearchOverlay(frame, outerW, outerH)
 	}
 	return frame
+}
+
+func connectFrameJunctions(framedBody string) string {
+	lines := strings.Split(framedBody, "\n")
+	for i, l := range lines {
+		plain := stripAnsi(l)
+		plainRunes := []rune(plain)
+		if len(plainRunes) < 2 {
+			continue
+		}
+		needLeft := plainRunes[0] == '│' && plainRunes[1] == '─'
+		needRight := plainRunes[len(plainRunes)-1] == '│' && plainRunes[len(plainRunes)-2] == '─'
+		if !needLeft && !needRight {
+			continue
+		}
+
+		runes := []rune(l)
+		if needLeft {
+			for j, r := range runes {
+				if r == '│' {
+					runes[j] = '├'
+					break
+				}
+			}
+		}
+		if needRight {
+			for j := len(runes) - 1; j >= 0; j-- {
+				if runes[j] == '│' {
+					runes[j] = '┤'
+					break
+				}
+			}
+		}
+		lines[i] = string(runes)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (x m) renderSearchOverlay(frame string, outerW, outerH int) string {
@@ -558,12 +597,10 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	centerStr := lipgloss.NewStyle().Width(centerW).Render(centerContent)
 	headLine := leftStr + centerStr + rightStr
 	headBlock := lipgloss.NewStyle().Width(contentW).Render(headLine)
-	// Keep the same "│" glyph (instead of a "┬" junction) directly below the
-	// header's divider so it reads as one continuous vertical line into the
-	// sidebar's border below, with no reliance on box-drawing junction glyphs
-	// rendering flush in every font.
+	// Use a 4-way cross junction "┼" where the vertical divider intersects
+	// the horizontal header separator so lines connect in all four directions.
 	borderRow := lipgloss.NewStyle().Foreground(muted).
-		Render(strings.Repeat("─", leftW) + "│" + strings.Repeat("─", max(0, contentW-leftW-1)))
+		Render(strings.Repeat("─", leftW) + "┼" + strings.Repeat("─", max(0, contentW-leftW-1)))
 	return lipgloss.JoinVertical(lipgloss.Left, headBlock, borderRow)
 }
 
@@ -636,18 +673,11 @@ func (x m) renderCommandBox(leftW int) string {
 	if !x.leftInputFocused && x.leftInput == "" {
 		cmdContent = cmdBadge + ghostStyle.Render(" Ctrl+K for commands")
 	}
-	leftBorderColor := muted
-	if x.leftInputFocused {
-		leftBorderColor = accent
-	}
-	// Use a "┤" junction for the top-right corner, so the sidebar's right
-	// border continues straight down into this box's right border instead
-	// of breaking at a plain "┐" corner.
-	topRow := lipgloss.NewStyle().Foreground(leftBorderColor).
-		Render(strings.Repeat("─", leftW) + "┤")
+	topRow := lipgloss.NewStyle().Foreground(muted).
+		Render(strings.Repeat("─", leftW) + "┼")
 	contentRow := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, true, false, false).
-		BorderForeground(leftBorderColor).
+		BorderForeground(muted).
 		Width(leftW).
 		Foreground(text).
 		Render(cmdContent)
@@ -679,7 +709,7 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	textAreaW := max(1, rightW-1-sendBadgeW-sendGap)
 	var inputDisplay string
 	if inputLocked {
-		inputDisplay = lipgloss.NewStyle().Foreground(muted).Render(" blacklisted | Ctrl+K then /whitelist")
+		inputDisplay = lipgloss.NewStyle().Foreground(red).Render(" blacklisted | Ctrl+K then /whitelist")
 	} else if x.inputAllSelected {
 		inputDisplay = lipgloss.NewStyle().Foreground(text).Render(" ") +
 			lipgloss.NewStyle().Foreground(buttonInk).Background(accent).Render(typedInput)
@@ -759,17 +789,9 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	if showSend {
 		rightContent = lipgloss.JoinHorizontal(lipgloss.Top, textRendered, " "+sendBadge)
 	}
-	rightBorderColor := muted
-	if rightFocused && x.active != "" {
-		if _, ok := x.whitelist[num(x.active)]; ok {
-			rightBorderColor = brand
-		} else {
-			rightBorderColor = red
-		}
-	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(rightBorderColor).
+		BorderForeground(muted).
 		Foreground(text).
 		Render(rightContent)
 }
@@ -886,8 +908,8 @@ func (x m) renderSide(w, h int) string {
 
 	// Divider rows span the full width (instead of the padded content area)
 	// so the "─" line reaches all the way to the left edge of the sidebar.
-	tabsDivider := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", w) + "│")
-	searchDivider := lipgloss.NewStyle().Foreground(underlineColor).Render(strings.Repeat("─", w) + "│")
+	tabsDivider := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", w) + "┤")
+	searchDivider := lipgloss.NewStyle().Foreground(underlineColor).Render(strings.Repeat("─", w) + "┤")
 
 	viewRows := max(1, h-4)
 	maxStart := max(0, len(f)-viewRows)
