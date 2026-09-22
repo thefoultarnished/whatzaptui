@@ -246,3 +246,25 @@ func TestWhitelistLoadMsgAppliesDefault(t *testing.T) {
 			got.defaultAllowed, got.denied, got.whitelist)
 	}
 }
+
+func TestSetWhitelistDefault404HintsStaleBackend(t *testing.T) {
+	withTempAPIEnv(t)
+	// Simulate a stale backend that predates POST /whitelist/default:
+	// the default Go mux answers 404 with plain "404 page not found".
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	msg := setWhitelistDefault(context.Background(), srv.Client(), srv.URL, 1)()
+	got, ok := msg.(whitelistSetMsg)
+	if !ok {
+		t.Fatalf("msg type = %T, want whitelistSetMsg", msg)
+	}
+	if got.err == nil {
+		t.Fatal("err = nil, want stale-backend hint")
+	}
+	if !strings.Contains(got.err.Error(), "out of date") {
+		t.Fatalf("err = %q, want stale-backend hint", got.err.Error())
+	}
+}

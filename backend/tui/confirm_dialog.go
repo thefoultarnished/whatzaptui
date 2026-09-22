@@ -86,12 +86,16 @@ func (d *confirmDialog) Render(w, h int) string {
 	}
 	lines = append(lines, ln(""))
 
-	activePanelBg := lipgloss.Color(currentTheme.ShortcutActive)
-	activeBg := lipgloss.NewStyle().Background(activePanelBg)
+	// Selected button: accent blended toward the panel background so it
+	// reads as "theme colored" without the full-bright accent fill.
+	// (Raw ShortcutActive is near-invisible on dark themes and washed
+	// out on light ones.) Text stays the theme text color for contrast.
+	selBg := lipgloss.Color(blendHex(string(accent), string(panelBg), 0.55))
+	activeBg := lipgloss.NewStyle().Background(selBg)
 
 	renderButton := func(label string, active bool) string {
 		if active {
-			return activeBg.Foreground(accent).Bold(true).Padding(0, 2).Render(label)
+			return activeBg.Foreground(text).Bold(true).Padding(0, 2).Render(label)
 		}
 		return bg(lipgloss.NewStyle().Foreground(text)).Padding(0, 2).Render(label)
 	}

@@ -17,6 +17,8 @@ import (
 	"unicode"
 
 	"github.com/gorilla/websocket"
+
+	"whatzap/backend/tokenlock"
 )
 
 var maxUploadBytes int64 = 150 * 1024 * 1024
@@ -202,6 +204,12 @@ func (a *App) rotateTokenIfSessionDead() {
 	if err := os.WriteFile(a.tokenPath, []byte(newToken), 0o600); err != nil {
 		log.Printf("[session] rotate token: write %s: %v", a.tokenPath, err)
 		return
+	}
+	// 0600 is a no-op on Windows (files inherit the folder DACL), so
+	// restrict the ACL explicitly. A failure is logged, not fatal: an
+	// unrestricted fresh token still beats keeping a possibly leaked one.
+	if err := tokenlock.RestrictFileToCurrentUser(a.tokenPath); err != nil {
+		log.Printf("[session] rotate token: restrict %s: %v", a.tokenPath, err)
 	}
 
 	a.mu.Lock()

@@ -1022,6 +1022,18 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid chatId")
 		return
 	}
+	// Whitelist is checked before the connection state so a non-whitelisted
+	// chat is always rejected with 403, even when disconnected (mirrors
+	// handleEditMessage).
+	allowed, err := a.isChatAllowed(req.ChatID)
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	if !allowed {
+		writeErr(w, http.StatusForbidden, "chat not whitelisted")
+		return
+	}
 	if !a.requireConnectedClient(w) {
 		return
 	}

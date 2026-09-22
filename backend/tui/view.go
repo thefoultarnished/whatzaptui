@@ -536,13 +536,13 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 
 	centerContent := " "
 	if x.topBarMsg != "" && x.topBarShown > 0 {
-		centerContent = " " + purpleStyle.Render(graphemeSliceN(x.topBarMsg, x.topBarShown))
+		centerContent = " " + amberStyle.Render(graphemeSliceN(x.topBarMsg, x.topBarShown))
 	} else if x.syncingContacts {
 		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
-		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing contacts...", purpleStyle, shineStyle, x.shineFrame)
+		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing contacts...", amberStyle, shineStyle, x.shineFrame)
 	} else if x.syncingGroups {
 		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
-		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing groups...", purpleStyle, shineStyle, x.shineFrame)
+		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing groups...", amberStyle, shineStyle, x.shineFrame)
 	} else if x.active != "" {
 		displayName := x.nameFor(x.active)
 		var avatarStr string

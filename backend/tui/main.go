@@ -12,6 +12,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"whatzap/backend/tokenlock"
 )
 
 func main() {
@@ -32,53 +34,53 @@ func main() {
 	defer apiCancel()
 	for {
 		model := m{
-			baseURL:          "http://127.0.0.1:8787",
-			wsURL:            "ws://127.0.0.1:8787/ws",
-			backendDir:       backendDir,
-			apiToken:         apiToken,
-			client:           &http.Client{Timeout: 12 * time.Second},
-			apiCtx:           apiCtx,
-			apiCancel:        apiCancel,
-			gfx:              newGfxState(),
-			demoMode:         demoMode,
-			status:           "Starting backend...",
-			mode:             "nav",
-			sidebarTab:       "chats",
-			contacts:         map[string]contact{},
-			contactsByNumber: map[string]contact{},
-			msgs:             map[string][]wireMsg{},
-			loadingOlder:     map[string]bool{},
-			noMoreOlder:      map[string]bool{},
-			uploadProgress:   map[string]int{},
-			whitelist:        map[string]string{},
-			names:            map[string]string{},
-			groupPreviews:    map[string]groupPreview{},
-			sel:              0,
-			scroll:           0,
-			sideScroll:       0,
-			active:           "",
-			search:           "",
-			input:            "",
-			err:              "",
-			topBarMsg:        "",
-			topBarShown:      0,
-			topBarVer:        0,
-			cursorOn:         true,
-			pulseOn:          false,
-			flashUntil:       map[string]time.Time{},
-			typingChats:      map[string]time.Time{},
-			lastNotifyAt:     map[string]time.Time{},
-			soundEnabled:     currentConfig.SoundEnabled,
-			soundProfile:     normalizeSoundProfile(currentConfig.SoundProfile),
-			sidebarFocused:   false,
-			startedBackend:   false,
-			mouseEnabled:     currentConfig.MouseEnabled,
-			sidebarCache:     &sidebarCache{},
-			mainCache:        &renderCache{},
-			themePicker:      picker{title: "Select Theme", items: buildThemePickerItems()},
-			pointerPicker:    picker{title: "Select Pointer Icon", items: buildPointerPickerItems()},
-			helpPicker:       picker{title: "Commands", items: buildHelpPickerItems()},
-			settingsPicker:   picker{title: "Settings", items: buildSettingsPickerItems()},
+			baseURL:               "http://127.0.0.1:8787",
+			wsURL:                 "ws://127.0.0.1:8787/ws",
+			backendDir:            backendDir,
+			apiToken:              apiToken,
+			client:                &http.Client{Timeout: 12 * time.Second},
+			apiCtx:                apiCtx,
+			apiCancel:             apiCancel,
+			gfx:                   newGfxState(),
+			demoMode:              demoMode,
+			status:                "Starting backend...",
+			mode:                  "nav",
+			sidebarTab:            "chats",
+			contacts:              map[string]contact{},
+			contactsByNumber:      map[string]contact{},
+			msgs:                  map[string][]wireMsg{},
+			loadingOlder:          map[string]bool{},
+			noMoreOlder:           map[string]bool{},
+			uploadProgress:        map[string]int{},
+			whitelist:             map[string]string{},
+			names:                 map[string]string{},
+			groupPreviews:         map[string]groupPreview{},
+			sel:                   0,
+			scroll:                0,
+			sideScroll:            0,
+			active:                "",
+			search:                "",
+			input:                 "",
+			err:                   "",
+			topBarMsg:             "",
+			topBarShown:           0,
+			topBarVer:             0,
+			cursorOn:              true,
+			pulseOn:               false,
+			flashUntil:            map[string]time.Time{},
+			typingChats:           map[string]time.Time{},
+			lastNotifyAt:          map[string]time.Time{},
+			soundEnabled:          currentConfig.SoundEnabled,
+			soundProfile:          normalizeSoundProfile(currentConfig.SoundProfile),
+			sidebarFocused:        false,
+			startedBackend:        false,
+			mouseEnabled:          currentConfig.MouseEnabled,
+			sidebarCache:          &sidebarCache{},
+			mainCache:             &renderCache{},
+			themePicker:           picker{title: "Select Theme", items: buildThemePickerItems()},
+			pointerPicker:         picker{title: "Select Pointer Icon", items: buildPointerPickerItems()},
+			helpPicker:            picker{title: "Commands", items: buildHelpPickerItems()},
+			settingsPicker:        picker{title: "Settings", items: buildSettingsPickerItems()},
 			typingAnimationPicker: picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()},
 		}
 		if demoMode {
@@ -140,6 +142,12 @@ func resolveSessionToken() (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(buf)
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		return "", fmt.Errorf("write session token: %w", err)
+	}
+	// 0600 is a no-op on Windows (files inherit the folder DACL), so
+	// restrict the ACL explicitly. Unlike rotation, this runs at startup
+	// where failure is visible, so fail closed.
+	if err := tokenlock.RestrictFileToCurrentUser(path); err != nil {
+		return "", fmt.Errorf("restrict session token: %w", err)
 	}
 	return token, nil
 }

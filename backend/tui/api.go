@@ -858,6 +858,9 @@ func setWhitelistDefault(ctx context.Context, c *http.Client, base string, allow
 		defer res.Body.Close()
 		if res.StatusCode/100 != 2 {
 			raw, _ := io.ReadAll(res.Body)
+			if res.StatusCode == http.StatusNotFound {
+				return whitelistSetMsg{err: fmt.Errorf("%s on /whitelist/default: backend is out of date - stop backend.exe and restart WhatZap to pick up /whitelistall and /blacklistall", res.Status)}
+			}
 			return whitelistSetMsg{err: fmt.Errorf("%s %s", res.Status, strings.TrimSpace(string(raw)))}
 		}
 		return whitelistSetMsg{}
