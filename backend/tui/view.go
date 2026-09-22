@@ -406,6 +406,67 @@ func renderPiLogo() string {
 
 	return r0 + "\n" + r1 + "\n" + r2 + "\n" + r3 + "\n" + r4
 }
+func renderChatBubbleLogo(compact bool, frame ...int) string {
+	baseColors := []lipgloss.Color{
+		lipgloss.Color("#e040fb"), // pink
+		lipgloss.Color("#d946ef"), // magenta
+		lipgloss.Color("#c026d3"), // purple
+		lipgloss.Color("#a855f7"), // violet
+		lipgloss.Color("#818cf8"), // indigo
+		lipgloss.Color("#6366f1"), // blue
+		lipgloss.Color("#38bdf8"), // sky
+		lipgloss.Color("#06b6d4"), // cyan
+		lipgloss.Color("#00f5d4"), // electric cyan
+	}
+	palette := make([]lipgloss.Color, 0, len(baseColors)*2-2)
+	palette = append(palette, baseColors...)
+	for i := len(baseColors) - 2; i > 0; i-- {
+		palette = append(palette, baseColors[i])
+	}
+	shift := 0
+	if len(frame) > 0 {
+		shift = frame[0] % len(palette)
+	}
+
+	var wBubble []string
+	if compact {
+		wBubble = []string{
+			"   ▄████████████▄   ",
+			"  ██▒  █ █  █  ▒██  ",
+			"  █    ██ █ █    █  ",
+			"  ██▒  █   ██  ▒██  ",
+			"   ▀████████████▀ ▀█",
+		}
+	} else {
+		wBubble = []string{
+			"   ▄████████████▄   ",
+			"  ██▒          ▒██  ",
+			"  █   █  ██  █   █  ",
+			"  █   █ █  █ █   █  ",
+			"  ██▒  █    █  ▒██  ",
+			"   ▀████████████▀   ",
+			"             ▀█▄    ",
+		}
+	}
+	var lines []string
+	for _, row := range wBubble {
+		runes := []rune(row)
+		w := len(runes)
+		var sb strings.Builder
+		for colIdx, ch := range runes {
+			if ch == ' ' {
+				sb.WriteRune(' ')
+				continue
+			}
+			baseIdx := (colIdx * len(palette)) / w
+			colorIdx := (baseIdx + shift) % len(palette)
+			sb.WriteString(lipgloss.NewStyle().Foreground(palette[colorIdx]).Render(string(ch)))
+		}
+		lines = append(lines, sb.String())
+	}
+	return strings.Join(lines, "\n")
+}
+
 
 func (x m) loadingPulse() string {
 	steps := []string{
@@ -524,89 +585,215 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		percent = 100
 	}
 
-	statusText := "Connecting your session..."
-	if activeIdx != -1 {
-		switch stages[activeIdx].label {
-		case "Backend":
-			statusText = "Starting backend server..."
-		case "Session":
-			statusText = "Resuming WhatsApp session..."
-		case "Chats":
-			statusText = "Syncing recent chats..."
-		case "Contacts":
-			statusText = "Loading address book..."
-		}
-	} else if doneCount == len(stages) {
-		statusText = "Session ready, launching..."
-	}
+	// 1. Logo, Title, Subtitle
+	logo := renderChatBubbleLogo(innerH < 26, x.spinnerFrame)
+	titleWhat := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#818cf8")).Render("What")
+	titleZap := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00f5d4")).Render("Zap")
+	title := titleWhat + titleZap
+	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Render("Private WhatsApp in your terminal")
 
-	cardW := min(54, max(36, innerW-4))
-	if innerW < 40 {
+	// 2. Card Dimensions
+	cardW := min(66, max(44, innerW-4))
+	if innerW < 44 {
 		cardW = max(24, innerW-2)
 	}
+	innerBoxW := cardW - 2
+	borderCol := lipgloss.Color("#1e3a5f")
+	borderSt := lipgloss.NewStyle().Foreground(borderCol)
 
-	barW := min(26, max(12, cardW-18))
-	filled := (barW * percent) / 100
-	if filled > barW {
-		filled = barW
-	}
-	empty := barW - filled
-	barStr := lipgloss.NewStyle().Foreground(brand).Render(strings.Repeat("█", filled)) +
-		lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("░", empty))
-	pctStr := accentStyle.Copy().Bold(false).Render(fmt.Sprintf("%3d%%", percent))
-	progressRow := barStr + " " + pctStr
-
-	stepperBlock := x.renderBootStages()
-
-	p1 := mutedStyle.Render("[") + accentStyle.Copy().Bold(false).Render("⚡ :8787") + mutedStyle.Render("]")
-	p2 := mutedStyle.Render("[") + accentStyle.Copy().Bold(false).Render("🖼️ "+x.gfxName()) + mutedStyle.Render("]")
-	p3 := mutedStyle.Render("[") + accentStyle.Copy().Bold(false).Render("🔒 whatsmeow") + mutedStyle.Render("]")
-	pillRow := p1 + " " + p2 + " " + p3
-
-	logo := renderPiLogo()
-	title := logoStyle.Render("WhatZap")
-	subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
-	statusHeader := accentStyle.Copy().Bold(false).Render(spinnerFrames[x.spinnerFrame] + " " + statusText)
-	hint := mutedStyle.Render("Keep this window open")
-	if x.sessionReady {
-		hint = mutedStyle.Render("Keep this window open  •  press any key to enter")
+	cardRow := func(content string) string {
+		visW := lipgloss.Width(content)
+		pad := max(0, innerBoxW-visW)
+		return borderSt.Render("│") + content + strings.Repeat(" ", pad) + borderSt.Render("│")
 	}
 
-	var sections []string
-	if innerH >= 23 {
-		sections = []string{
+	// 3. Top Border with dots, title, and version tag
+	dotPink := lipgloss.NewStyle().Foreground(lipgloss.Color("#f472b6")).Render("●")
+	dotPurple := lipgloss.NewStyle().Foreground(lipgloss.Color("#c084fc")).Render("●")
+	dotCyan := lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("●")
+	dots := dotPink + " " + dotPurple + " " + dotCyan
+
+	headerTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("CONNECTING TO WHATSAPP")
+	verTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("v0.1.0")
+
+	fixedW := 43
+	availDashes := max(2, cardW-fixedW)
+	leftDashes := availDashes / 2
+	rightDashes := availDashes - leftDashes
+
+	topBorder := borderSt.Render("╭─") + " " + dots + " " +
+		borderSt.Render(strings.Repeat("─", leftDashes)+" ") +
+		headerTitle + " " +
+		borderSt.Render(strings.Repeat("─", rightDashes)+" ") +
+		verTag + " " +
+		borderSt.Render("─╮")
+
+	divider := borderSt.Render("├" + strings.Repeat("─", innerBoxW) + "┤")
+	botBorder := borderSt.Render("╰" + strings.Repeat("─", innerBoxW) + "╯")
+
+	// 5. Checklist Rows
+	checkMint := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399"))
+	labelWhite := lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0"))
+	valMuted := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	valActive := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399"))
+
+	backendDone := x.status != "" && x.status != "Starting backend..." && x.status != "Starting demo..."
+	sessionDone := x.status == "ready" || x.sessionReady
+	chatsDone := len(x.chats) > 0
+	contactsDone := len(x.contacts) > 0
+
+	type checkItem struct {
+		label  string
+		val    string
+		done   bool
+		active bool
+	}
+	items := []checkItem{
+		{label: "Backend", val: "ready", done: backendDone, active: stages[0].state == "active"},
+		{label: "Session", val: "ready", done: sessionDone, active: stages[1].state == "active"},
+		{label: "Chats", val: plural(len(x.chats), "chat"), done: chatsDone, active: stages[2].state == "active"},
+		{label: "Contacts", val: plural(len(x.contacts), "contact"), done: contactsDone, active: stages[3].state == "active"},
+		{label: "Encryption", val: "active", done: true, active: false},
+	}
+
+	indent := strings.Repeat(" ", max(2, (innerBoxW-34)/2))
+	var checkLines []string
+	for _, it := range items {
+		var icon string
+		valStr := valMuted.Render(it.val)
+		if it.label == "Encryption" {
+			valStr = valActive.Render("active")
+		}
+		if it.done {
+			icon = checkMint.Render("✓")
+		} else if it.active {
+			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render(spinnerFrames[x.spinnerFrame])
+			valStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("syncing...")
+		} else {
+			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("·")
+			valStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("waiting")
+		}
+		rowText := indent + icon + "   " + labelWhite.Render(fmt.Sprintf("%-12s", it.label)) + "   " + valStr
+		checkLines = append(checkLines, cardRow(rowText))
+	}
+
+	// 6. Metadata Badges Row
+	b1 := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("[ ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render(":8787") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(" ]")
+
+	deviceVal := "none"
+	if x.active != "" {
+		deviceVal = "active"
+	}
+	b2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("[ ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("device: ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Render(deviceVal) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(" ]")
+
+	b3 := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("[ ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#22d3ee")).Render("🔒 whatsmeow") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(" ]")
+
+	badgeRowPad := max(1, (innerBoxW-lipgloss.Width(b1)-lipgloss.Width(b2)-lipgloss.Width(b3))/4)
+	badgeSp := strings.Repeat(" ", badgeRowPad)
+	metaRow := cardRow(badgeSp + b1 + badgeSp + b2 + badgeSp + b3)
+
+	// 6. Assemble Main Window Card
+	blankRow := cardRow("")
+	var cardRows []string
+	if innerH >= 24 {
+		cardRows = append(cardRows,
+			topBorder,
+			blankRow,
+		)
+		cardRows = append(cardRows, checkLines...)
+		cardRows = append(cardRows,
+			blankRow,
+			divider,
+			blankRow,
+			metaRow,
+			blankRow,
+			botBorder,
+		)
+	} else {
+		cardRows = append(cardRows,
+			topBorder,
+		)
+		cardRows = append(cardRows, checkLines...)
+		cardRows = append(cardRows,
+			divider,
+			metaRow,
+			botBorder,
+		)
+	}
+	cardBox := strings.Join(cardRows, "\n")
+
+	// 8. Command Action Bar
+	cmdW := cardW
+	cmdInner := cmdW - 2
+	btnEnter := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399")).Render("[ENTER]") +
+		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Open client")
+	btnQ := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("[Q]") +
+		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Quit")
+	btnR := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("[R]") +
+		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Reconnect")
+	sep := borderSt.Render("│")
+
+	cmdContent := btnEnter + "   " + sep + "   " + btnQ + "   " + sep + "   " + btnR
+	cmdVis := lipgloss.Width(cmdContent)
+	cmdPad := max(0, cmdInner-cmdVis)
+	cmdLeftPad := strings.Repeat(" ", cmdPad/2)
+	cmdRightPad := strings.Repeat(" ", cmdPad-cmdPad/2)
+
+	cmdBox := borderSt.Render("╭"+strings.Repeat("─", cmdInner)+"╮") + "\n" +
+		borderSt.Render("│") + cmdLeftPad + cmdContent + cmdRightPad + borderSt.Render("│") + "\n" +
+		borderSt.Render("╰"+strings.Repeat("─", cmdInner)+"╯")
+
+	// 9. Hint at Bottom
+	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("Press any key to continue")
+
+	// 10. Assemble Full View
+	var allSections []string
+	if innerH >= 34 {
+		allSections = []string{
 			logo,
 			"",
 			title,
 			subtitle,
 			"",
-			statusHeader,
-			progressRow,
+			cardBox,
 			"",
-			stepperBlock,
+			cmdBox,
 			"",
-			pillRow,
 			hint,
 		}
-	} else if innerH >= 18 {
-		sections = []string{
+	} else if innerH >= 24 {
+		allSections = []string{
 			logo,
 			title + "  •  " + subtitle,
-			statusHeader,
-			progressRow,
-			stepperBlock,
-			pillRow,
+			cardBox,
+			cmdBox,
+			hint,
+		}
+	} else if innerH >= 19 {
+		allSections = []string{
+			logo,
+			title,
+			cardBox,
+			cmdContent,
+			hint,
 		}
 	} else {
-		sections = []string{
-			logo,
-			title + " " + progressRow,
-			stepperBlock,
+		allSections = []string{
+			title,
+			cardBox,
+			hint,
 		}
 	}
 
-	cardBody := lipgloss.JoinVertical(lipgloss.Center, sections...)
-	return renderStatusBox(cardBody, innerW, innerH, outerW, outerH)
+	body := lipgloss.JoinVertical(lipgloss.Center, allSections...)
+	return renderStatusBox(body, innerW, innerH, outerW, outerH)
 }
 
 func (x m) renderHeaderContainer(contentW, leftW int) string {

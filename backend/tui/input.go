@@ -226,10 +226,26 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x.handleLeftInput(k)
 	}
 	if x.status != "ready" {
-		if x.sessionReady && !strings.HasPrefix(x.status, "Error:") && !strings.HasPrefix(strings.ToLower(x.status), "logged out") {
-			x.status = "ready"
+		switch k.String() {
+		case "q", "Q":
+			return x, tea.Quit
+		case "r", "R":
+			x.status = "Connecting..."
+			x.sessionReady = false
 			x.invalidate()
-			return x, x.refreshWindowTitleCmd()
+			return x, openWS(x.reqCtx(), x.wsURL, x.apiToken)
+		case "enter":
+			if x.sessionReady && !strings.HasPrefix(x.status, "Error:") && !strings.HasPrefix(strings.ToLower(x.status), "logged out") {
+				x.status = "ready"
+				x.invalidate()
+				return x, x.refreshWindowTitleCmd()
+			}
+		default:
+			if x.sessionReady && !strings.HasPrefix(x.status, "Error:") && !strings.HasPrefix(strings.ToLower(x.status), "logged out") {
+				x.status = "ready"
+				x.invalidate()
+				return x, x.refreshWindowTitleCmd()
+			}
 		}
 		return x, nil
 	}
