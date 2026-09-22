@@ -21,6 +21,8 @@ var pointerList = []struct {
 	{"⦿", "Target"},
 	{"❯", "Chevron"},
 	{"⁕", "Asterisk"},
+	{"\U000F0335", "Lightbulb"},
+	{"\U000F0171", "Microchip"},
 	{"│", "Connected Line"},
 	{"┃", "Thick Connected Line"},
 	{"║", "Double Connected Line"},

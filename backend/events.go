@@ -87,7 +87,9 @@ func (a *App) bindEvents() {
 			}
 			// Sync plumbing (history sync notifications, key shares, ...) is
 			// not chat content: drop it before it reaches storage or the UI.
-			if isInvisibleProtocolMessage(v.Message) {
+			// Check both the raw envelope and the unwrapped effective message —
+			// some protocol messages arrive nested inside DeviceSentMessage.
+			if isInvisibleProtocolMessage(v.Message) || isInvisibleProtocolMessage(effectiveMessage(v.Message)) {
 				return
 			}
 			msg := a.toWireMessage(v)

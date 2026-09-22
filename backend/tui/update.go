@@ -108,6 +108,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.status = "ready"
 			x.qrRaw = ""
 			cmds = append(cmds, getChats(x.client, x.baseURL), getContacts(x.client, x.baseURL), getWhitelist(x.client, x.baseURL))
+			if x.active != "" && !x.demoMode {
+				cmds = append(cmds, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
+			}
 		case "chats:loaded":
 			cmds = append(cmds, getChats(x.client, x.baseURL))
 			if x.active != "" && len(x.msgs[x.active]) == 0 {
@@ -326,6 +329,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.err = ""
 			if x.status == "ready" {
 				return x, x.setTopBar(v.err.Error())
+			}
+			if strings.Contains(v.err.Error(), "not connected") {
+				return x, nil
 			}
 			x.status = "Error: " + v.err.Error()
 		}

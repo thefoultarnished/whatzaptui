@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -39,5 +40,40 @@ func TestLoadingStages(t *testing.T) {
 		if s.label == "Session" && s.state != "done" {
 			t.Fatalf("session stage at ready = %q, want done", s.state)
 		}
+	}
+}
+
+func TestRenderPiLogo(t *testing.T) {
+	logo := renderPiLogo()
+	lines := strings.Split(logo, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("renderPiLogo lines count = %d, want 5", len(lines))
+	}
+	for i, line := range lines {
+		plain := ansiStripRe.ReplaceAllString(line, "")
+		if len([]rune(plain)) != 12 {
+			t.Errorf("line %d plain rune length = %d, want 12 (line: %q)", i, len([]rune(plain)), plain)
+		}
+	}
+	if !strings.Contains(logo, "█") || !strings.Contains(logo, "▒") {
+		t.Errorf("renderPiLogo missing block or dither characters")
+	}
+}
+
+func TestLoadingScreenContainsPiLogo(t *testing.T) {
+	model := m{
+		w:      80,
+		h:      24,
+		status: "Connecting...",
+	}
+	view := model.View()
+	if !strings.Contains(view, "WhatZap") {
+		t.Errorf("loading screen missing title 'WhatZap'")
+	}
+	if !strings.Contains(view, "█") {
+		t.Errorf("loading screen missing Pi logo full block '█'")
+	}
+	if !strings.Contains(view, "▒") {
+		t.Errorf("loading screen missing Pi logo dither block '▒'")
 	}
 }

@@ -823,10 +823,7 @@ func renderProtocolMessage(v map[string]any) string {
 		}
 		return anomalyTagStyle.Render("[disappearing messages changed]")
 	default:
-		if typ == "" {
-			return ""
-		}
-		return anomalyTagStyle.Render("[system: " + strings.ToLower(strings.ReplaceAll(typ, "_", " ")) + "]")
+		return ""
 	}
 }
 

@@ -90,3 +90,83 @@ func TestChatsMsgPreservesExistingActive(t *testing.T) {
 		t.Fatalf("active = %q, want preserved 222", got.active)
 	}
 }
+
+func TestChatsMsgDoesNotMarkReadBeforeReady(t *testing.T) {
+	var markReadHit bool
+	var msgsHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/messages":
+			msgsHit = true
+			_, _ = w.Write([]byte(`{"messages":[]}`))
+		case "/messages/read":
+			markReadHit = true
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	x := m{
+		client:        srv.Client(),
+		baseURL:       srv.URL,
+		status:        "Connecting...",
+		sidebarTab:    "chats",
+		msgs:          map[string][]wireMsg{},
+		contacts:      map[string]contact{},
+		whitelist:     map[string]string{},
+		names:         map[string]string{},
+		drafts:        map[string]string{},
+		groupPreviews: map[string]groupPreview{},
+		sidebarCache:  &sidebarCache{},
+		mainCache:     &renderCache{},
+	}
+	newChats := []chat{
+		{ID: "111@s.whatsapp.net", ConversationTimestamp: 200},
+	}
+	mdl, cmd := x.updateInner(chatsMsg{chats: newChats})
+	got := mdl.(m)
+	if got.active != "111@s.whatsapp.net" {
+		t.Fatalf("active = %q, want 111", got.active)
+	}
+	if cmd != nil {
+		if batch, ok := cmd().(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if c != nil {
+					_ = c()
+				}
+			}
+		}
+	}
+	if !msgsHit {
+		t.Fatalf("expected /messages fetch for auto-opened chat")
+	}
+	if markReadHit {
+		t.Fatalf("did not expect /messages/read while status is Connecting...")
+	}
+}
+
+func TestNotConnectedDataErrDoesNotCrashLoadingScreen(t *testing.T) {
+	x := m{
+		status: "Connecting...",
+	}
+	mdl, _ := x.updateInner(dataErr{err: http.ErrHandlerTimeout})
+	got := mdl.(m)
+	if got.status != "Error: "+http.ErrHandlerTimeout.Error() {
+		t.Fatalf("status = %q, want fatal Error", got.status)
+	}
+
+	// "not connected" error must NOT overwrite loading status
+	x = m{status: "Connecting..."}
+	mdl, _ = x.updateInner(dataErr{err: &mockStatusErr{"409 Conflict: not connected"}})
+	got = mdl.(m)
+	if got.status != "Connecting..." {
+		t.Fatalf("status = %q, want preserved Connecting...", got.status)
+	}
+}
+
+type mockStatusErr struct{ msg string }
+
+func (e *mockStatusErr) Error() string { return e.msg }

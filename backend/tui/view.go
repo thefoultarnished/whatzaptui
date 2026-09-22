@@ -44,11 +44,17 @@ func (x m) View() string {
 			innerH = max(1, outerH-2)
 		}
 		statusBody := x.status
+		logo := renderPiLogo()
 		title := logoStyle.Render("WhatZap")
 		subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
 		hint := mutedStyle.Render("Keep this window open")
 		statusMsgTemplate := func(body, progress string) string {
-			return title + "\n" + subtitle + "\n\n" + body + "\n" + progress + "\n\n" + hint
+			header := lipgloss.JoinVertical(lipgloss.Center, logo, "", title, subtitle)
+			content := header + "\n\n" + body
+			if progress != "" {
+				content += "\n" + progress
+			}
+			return content + "\n\n" + hint
 		}
 		if x.status == "qr" {
 			if x.qrRaw != "" {
@@ -344,6 +350,33 @@ func (x m) renderSearchOverlay(frame string, outerW, outerH int) string {
 		Background(lipgloss.Color(currentTheme.Background)).
 		Render(body)
 	return lipgloss.Place(outerW+2, outerH+2, lipgloss.Center, lipgloss.Center, popup, lipgloss.WithWhitespaceChars(" "))
+}
+
+func renderPiLogo() string {
+	c1 := lipgloss.Color("#fe5fd7") // Magenta
+	c2 := lipgloss.Color("#d65ed6") // Orchid
+	c3 := lipgloss.Color("#ad60d6") // Purple
+	c4 := lipgloss.Color("#875ffe") // Indigo
+	c5 := lipgloss.Color("#5e86fc") // Blue
+	c6 := lipgloss.Color("#5eaed7") // Cyan
+
+	s1 := lipgloss.NewStyle().Foreground(c1)
+	s2 := lipgloss.NewStyle().Foreground(c2)
+	s3 := lipgloss.NewStyle().Foreground(c3)
+	s4 := lipgloss.NewStyle().Foreground(c4)
+	s5 := lipgloss.NewStyle().Foreground(c5)
+	s6 := lipgloss.NewStyle().Foreground(c6)
+
+	const block = "█"
+	const dither = "▒"
+
+	r0 := s1.Render(block+block) + s2.Render(block+block+block+block) + s3.Render(block+block+block+block) + s4.Render(block+block)
+	r1 := "   " + s3.Render(block+block) + "  " + s4.Render(block+block) + "   "
+	r2 := "   " + s3.Render(block) + s4.Render(block) + "  " + s4.Render(block) + s5.Render(block) + "   "
+	r3 := "   " + s4.Render(dither+dither) + "  " + s5.Render(block+block) + "   "
+	r4 := "       " + s6.Render(block+block) + "   "
+
+	return r0 + "\n" + r1 + "\n" + r2 + "\n" + r3 + "\n" + r4
 }
 
 func (x m) loadingPulse() string {

@@ -535,21 +535,11 @@ func (a *App) backfillReceipt() {
 }
 
 // purgeInvisibleProtocolMessages deletes stored protocol control messages
-// (history sync notifications, key shares, ...) that pre-fix builds saved
-// as visible chat content, plus their orphaned FTS rows. Runs once per DB
-// via the fts_backfill_meta flag table. New arrivals are dropped at ingest
-// (see isInvisibleProtocolMessage), so this only cleans legacy rows.
+// (history sync notifications, peer data op responses, key shares, ...) that
+// should never appear as chat content, plus their orphaned FTS rows.
+// Runs every startup — the DELETE is a no-op when there is nothing to clean.
 func (a *App) purgeInvisibleProtocolMessages() {
 	if a.db == nil {
-		return
-	}
-	if _, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
-		log.Printf("purgeInvisibleProtocol: meta table: %v", err)
-		return
-	}
-	var done int
-	_ = a.db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'protocol_purge'`).Scan(&done)
-	if done == 1 {
 		return
 	}
 	res, err := a.db.Exec(`DELETE FROM messages
@@ -565,8 +555,6 @@ func (a *App) purgeInvisibleProtocolMessages() {
 			SELECT 1 FROM messages m WHERE m.chat_id = messages_fts.chat_id
 			AND m.id = messages_fts.msg_id AND m.from_me = messages_fts.from_me)`)
 	}
-	_, _ = a.db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('protocol_purge', 1)
-		ON CONFLICT(key) DO UPDATE SET val = excluded.val`)
 }
 
 func (a *App) loadState() {

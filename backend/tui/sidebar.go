@@ -333,10 +333,13 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 		return x, nil
 	}
 
-	// Always mark read so the phone badge clears even when local count was stale.
+	// Always mark read so the phone badge clears even when local count was stale,
+	// but only dispatch to the network if the WhatsApp session is already ready.
 	batch := []tea.Cmd{
 		getMsgs(x.client, x.baseURL, x.active, 120),
-		postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }),
+	}
+	if x.status == "ready" {
+		batch = append(batch, postJSON(x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
 	}
 	if strings.HasSuffix(x.active, "@g.us") {
 		if _, cached := x.groupPreviews[x.active]; !cached {
