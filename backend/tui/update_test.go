@@ -1291,8 +1291,8 @@ func TestKeyConfirmDialogYesRunsWhitelistAll(t *testing.T) {
 	if got.confirmDialog.open {
 		t.Fatalf("confirmDialog should be closed after confirming")
 	}
-	if _, ok := got.whitelist["15551230001"]; !ok {
-		t.Fatalf("whitelist = %v, want 15551230001 added after confirm", got.whitelist)
+	if !got.defaultAllowed {
+		t.Fatalf("defaultAllowed = false, want true after confirming whitelistall")
 	}
 }
 

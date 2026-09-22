@@ -54,7 +54,17 @@ func (x m) activeChatWhitelisted() bool {
 	if x.active == "" {
 		return false
 	}
-	_, ok := x.whitelist[num(x.active)]
+	return x.isAllowed(num(x.active))
+}
+
+// isAllowed reports whether a phone may be messaged. An explicit per-chat
+// row wins; otherwise the global default applies: default-allow means
+// everything except denied overrides, default-deny means only whitelisted.
+func (x m) isAllowed(n string) bool {
+	if x.defaultAllowed {
+		return !x.denied[n]
+	}
+	_, ok := x.whitelist[n]
 	return ok
 }
 

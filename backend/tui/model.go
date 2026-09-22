@@ -199,6 +199,8 @@ type m struct {
 	backend                                  *exec.Cmd
 	startedBackend                           bool
 	whitelist                                map[string]string // phone -> name, allowed=1 only (send gating)
+	denied                                   map[string]bool   // phone -> true, allowed=0 overrides while defaultAllowed
+	defaultAllowed                           bool              // global default from backend (see /whitelist/default)
 	names                                    map[string]string // phone -> custom display name (all contacts)
 	groupPreviews                            map[string]groupPreview
 	replyTo                                  *wireMsg          // message being replied to, nil if none
@@ -366,9 +368,11 @@ type logoutMsg struct {
 }
 type reconnectMsg struct{}
 type whitelistLoadMsg struct {
-	whitelist map[string]string // allowed=1 only
-	names     map[string]string // all custom names
-	err       error
+	whitelist      map[string]string // allowed=1 only
+	denied         map[string]bool   // allowed=0 overrides
+	defaultAllowed bool              // global default
+	names          map[string]string // all custom names
+	err            error
 }
 type whitelistSetMsg struct{ err error }
 type topBarClearMsg struct{ ver int }

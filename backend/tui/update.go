@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -637,6 +638,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return x, x.setTopBar(v.err.Error())
 		}
 		x.whitelist = v.whitelist
+		x.denied = v.denied
+		x.defaultAllowed = v.defaultAllowed
 		x.names = v.names
 		x.markIdentityChanged()
 	case whitelistSetMsg:
@@ -703,6 +706,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clipboardPasteMsg:
 		if v.err != nil {
 			return x, x.setTopBar("Clipboard: " + v.err.Error())
+		}
+		if info, err := os.Stat(v.path); err != nil || info.IsDir() {
+			return x, x.setTopBar("Clipboard: file not found")
 		}
 		x.setPendingAttachment(v.path)
 		x.input = ""
@@ -780,7 +786,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return x, postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/edit", map[string]string{"chatId": chatID, "messageId": msgID, "text": txt}, nil)
 		}
 		if x.pendingAttachmentPath != "" {
-			if _, ok := x.whitelist[num(x.active)]; !ok {
+			if !x.isAllowed(num(x.active)) {
 				return x, x.setTopBar("Not whitelisted - use /whitelist to enable")
 			}
 			if x.demoMode {
@@ -831,7 +837,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := x.handleSlash(strings.TrimSpace(txt)); handled {
 			return x, cmd
 		}
-		if _, ok := x.whitelist[num(x.active)]; !ok {
+		if !x.isAllowed(num(x.active)) {
 			return x, x.setTopBar("Not whitelisted - use /whitelist to enable")
 		}
 		replyTo := x.replyTo

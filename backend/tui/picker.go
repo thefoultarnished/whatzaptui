@@ -14,13 +14,25 @@ type pickerItem struct {
 }
 
 type picker struct {
-	open     bool
-	idx      int
-	original string
-	title    string
-	items    []pickerItem
+	open      bool
+	singleCol bool
+	idx       int
+	original  string
+	title     string
+	items     []pickerItem
 }
 
+func (p *picker) isSingleCol() bool {
+	if p.singleCol || len(p.items) <= 4 {
+		return true
+	}
+	for _, item := range p.items {
+		if runeDisplayWidth(item.label) > 20 {
+			return true
+		}
+	}
+	return false
+}
 func (p *picker) Open(currentKey string) {
 	p.open = true
 	p.original = currentKey
@@ -72,6 +84,26 @@ func (p *picker) rightColLen() int {
 // Handle processes a key event. Returns ("confirm", true), ("cancel", true),
 // or ("", false) if the picker just moved.
 func (p *picker) Handle(k tea.KeyMsg) (action string, done bool) {
+	if p.isSingleCol() {
+		switch k.Type {
+		case tea.KeyUp, tea.KeyLeft:
+			p.idx--
+			if p.idx < 0 {
+				p.idx = len(p.items) - 1
+			}
+		case tea.KeyDown, tea.KeyRight:
+			p.idx++
+			if p.idx >= len(p.items) {
+				p.idx = 0
+			}
+		case tea.KeyEnter:
+			return "confirm", true
+		case tea.KeyEsc:
+			return "cancel", true
+		}
+		return "", false
+	}
+
 	col, row := p.colRow()
 	rows := p.rows()
 	rightLen := p.rightColLen()
@@ -115,15 +147,59 @@ func (p *picker) Handle(k tea.KeyMsg) (action string, done bool) {
 }
 
 func (p *picker) Render(w, h int) string {
-	pickerW := min(54, max(44, w/2))
-	colW := (pickerW - 6) / 2
-
 	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(muted)
 	activeStyle := lipgloss.NewStyle().Foreground(brand).Bold(true)
 	inactiveStyle := lipgloss.NewStyle().Foreground(text)
 	divStyle := lipgloss.NewStyle().Foreground(muted)
 	keyStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+
+	if p.isSingleCol() {
+		maxLabelW := 0
+		for _, item := range p.items {
+			lw := runeDisplayWidth(item.label)
+			if lw > maxLabelW {
+				maxLabelW = lw
+			}
+		}
+		pickerW := min(max(54, maxLabelW+8), max(40, w-4))
+
+		hint := hintStyle.Render("  ") +
+			keyStyle.Render("↑↓") + hintStyle.Render(" navigate  ") +
+			keyStyle.Render("Enter") + hintStyle.Render(" confirm  ") +
+			keyStyle.Render("Esc") + hintStyle.Render(" cancel")
+
+		lines := []string{}
+		lines = append(lines, titleStyle.Render("  "+p.title))
+		lines = append(lines, divStyle.Render("  "+strings.Repeat("─", pickerW-4)))
+
+		for i, item := range p.items {
+			var cell string
+			if i == p.idx {
+				cell = activeStyle.Render(fmt.Sprintf("▶ %s", item.label))
+			} else {
+				cell = inactiveStyle.Render(fmt.Sprintf("  %s", item.label))
+			}
+			lines = append(lines, "  "+cell)
+		}
+
+		lines = append(lines, divStyle.Render("  "+strings.Repeat("─", pickerW-4)))
+		lines = append(lines, hint)
+
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Width(pickerW).
+			Render(strings.Join(lines, "\n"))
+
+		return lipgloss.NewStyle().
+			Width(w).
+			Height(max(1, h)).
+			Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
+	}
+
+	pickerW := min(54, max(44, w/2))
+	colW := (pickerW - 6) / 2
 
 	hint := hintStyle.Render("  ") +
 		keyStyle.Render("↑↓←→") + hintStyle.Render(" navigate  ") +

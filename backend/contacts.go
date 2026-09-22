@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -347,7 +348,78 @@ func (a *App) handleGetWhitelist(w http.ResponseWriter, r *http.Request) {
 	if result == nil {
 		result = []entry{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"contacts": result})
+	defaultAllowed, err := a.loadDefaultAllowed()
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contacts": result, "defaultAllowed": defaultAllowed})
+}
+
+// loadDefaultAllowed reports the global whitelist default. Missing table
+// row (fresh DBs predate it, it is only ever INSERTed) means deny. A DB
+// error is returned so callers can 500 instead of silently failing closed.
+func (a *App) loadDefaultAllowed() (bool, error) {
+	var allowed int
+	err := a.withPermissionDB(func(db *sql.DB) error {
+		err := db.QueryRow(`SELECT allowed FROM whitelist_default WHERE id = 1`).Scan(&allowed)
+		if errors.Is(err, sql.ErrNoRows) {
+			allowed = 0
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return allowed == 1, nil
+}
+
+// handleSetWhitelistDefault flips the global default in one call and aligns
+// every per-chat row with it in a single UPDATE, so /whitelistall and
+// /blacklistall are O(1) network-wise. Row names are preserved; rows that
+// already match keep their values, so subsequent per-chat /whitelist and
+// /blacklist commands work as opt-in/opt-out overrides of the new default.
+func (a *App) handleSetWhitelistDefault(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Allowed int `json:"allowed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Allowed != 0 && req.Allowed != 1 {
+		writeErr(w, http.StatusBadRequest, "allowed must be 0 or 1")
+		return
+	}
+	err := a.withPermissionDB(func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(`INSERT INTO whitelist_default (id, allowed) VALUES (1, ?)
+			ON CONFLICT(id) DO UPDATE SET allowed=excluded.allowed`, req.Allowed); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE chat_permissions SET allowed = ?`, req.Allowed); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		if err.Error() == "permission store unavailable" {
+			writeErr(w, http.StatusConflict, err.Error())
+		} else {
+			writeInternalErr(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // normalizeWhitelistPhone validates and normalizes a phone string
@@ -484,7 +556,7 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jid = jid.ToNonAD()
-	log.Printf("handleBlock: raw=%s canonical=%s parsed=%s server=%s", rawChatID, req.ChatID, jid.String(), jid.Server)
+	log.Printf("handleBlock: canonical=%s parsed=%s server=%s", req.ChatID, jid.String(), jid.Server)
 	var altJID types.JID
 	_, err = a.client.UpdateBlocklist(context.Background(), jid, events.BlocklistChangeActionBlock)
 	if err != nil {
@@ -502,8 +574,7 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to block %s (alt: %s): %s", jid.String(), altJID.String(), err.Error())
-		writeErr(w, http.StatusInternalServerError, errMsg)
+		writeInternalErr(w, fmt.Errorf("failed to block %s (alt: %s): %w", jid.String(), altJID.String(), err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

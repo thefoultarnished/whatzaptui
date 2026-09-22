@@ -85,6 +85,19 @@ func (c *wsClient) write(data []byte) error {
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }
 
+// ping sends a WebSocket ping under the client's write lock so it can run
+// concurrently with broadcast writes. gorilla/websocket answers pings
+// automatically on the peer side.
+func (c *wsClient) ping() error {
+	if c == nil || c.conn == nil {
+		return fmt.Errorf("websocket client unavailable")
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	return c.conn.WriteMessage(websocket.PingMessage, nil)
+}
+
 type App struct {
 	mu sync.RWMutex
 

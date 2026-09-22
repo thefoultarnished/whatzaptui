@@ -223,6 +223,7 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 	}
 	a.state.Chats[chatID] = chat
 
+	prevNotify := a.state.Contacts[chatID].Notify
 	if msg.PushName != "" && !msg.Key.FromMe && !strings.HasSuffix(chatID, "@g.us") {
 		ct := a.state.Contacts[chatID]
 		ct.ID = chatID
@@ -236,7 +237,10 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 	if msg.Key.FromMe {
 		permName = ""
 	}
-	go a.upsertPermission(phoneFromJID(chatID), permName)
+	// prevNotify is the push name the permission row was last written with,
+	// so upsertPermission can tell its own auto-captured name apart from a
+	// user-set /rename name (which never matches a push name).
+	go a.upsertPermission(phoneFromJID(chatID), permName, prevNotify)
 }
 
 func receiptStatusFromType(t types.ReceiptType) string {
@@ -565,10 +569,11 @@ func (a *App) isChatAllowed(chatID string) (bool, error) {
 	err := a.withPermissionDB(func(db *sql.DB) error {
 		return db.QueryRow(`SELECT allowed FROM chat_permissions WHERE phone = ?`, phone).Scan(&allowed)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		// No per-chat row: fall back to the global default.
+		return a.loadDefaultAllowed()
+	}
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
 		return false, err
 	}
 	return allowed == 1, nil
@@ -1092,6 +1097,17 @@ func (a *App) handleEditMessage(w http.ResponseWriter, r *http.Request) {
 	chatJID, err := types.ParseJID(req.ChatID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid chatId")
+		return
+	}
+	// Whitelist is checked before the connection state so a non-whitelisted
+	// chat is always rejected with 403, even when disconnected.
+	allowed, err := a.isChatAllowed(req.ChatID)
+	if err != nil {
+		writeInternalErr(w, err)
+		return
+	}
+	if !allowed {
+		writeErr(w, http.StatusForbidden, "chat not whitelisted")
 		return
 	}
 	if !a.requireConnectedClient(w) {

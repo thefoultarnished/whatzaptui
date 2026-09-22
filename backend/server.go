@@ -69,6 +69,15 @@ var httpIdleTimeout = 2 * time.Minute
 // sessionGraceDuration to sessionGraceDuration+30s.
 var sessionGraceDuration = 60 * time.Second
 
+// A-12: WebSocket heartbeat. The server pings every client every
+// wsPingPeriod; a client that neither sends data nor answers pings within
+// wsPongWait is dropped, so a stalled connection can't park its read-loop
+// goroutine (and its wsClients entry) forever. Vars, not consts, so tests
+// can shrink them.
+var wsPongWait = 60 * time.Second
+var wsPingPeriod = 54 * time.Second
+var wsReadLimit int64 = 64 << 10
+
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", a.handleHealth)
@@ -87,6 +96,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/logout", a.handleLogout)
 	mux.HandleFunc("/whitelist", a.handleGetWhitelist)
 	mux.HandleFunc("/whitelist/set", a.handleSetWhitelist)
+	mux.HandleFunc("/whitelist/default", a.handleSetWhitelistDefault)
 	mux.HandleFunc("/names/set", a.handleSetName)
 	mux.HandleFunc("/media/download", a.handleMediaDownload)
 	mux.HandleFunc("/typing", a.handleTyping)
@@ -375,7 +385,34 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A-12: bound the read loop. Without a read deadline a stalled
+	// connection parks the goroutine below (and its wsClients entry)
+	// forever. The server pings every wsPingPeriod; a client silent for
+	// wsPongWait is dropped. The TUI answers pings automatically
+	// (gorilla/websocket default), so healthy idle clients stay connected.
+	conn.SetReadLimit(wsReadLimit)
+	_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	})
+	done := make(chan struct{})
 	go func() {
+		ticker := time.NewTicker(wsPingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := client.ping(); err != nil {
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	go func() {
+		defer close(done)
 		defer func() {
 			a.wsMu.Lock()
 			delete(a.wsClients, conn)
@@ -430,6 +467,195 @@ func (a *App) handleStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+type permissionBackup struct {
+	Phone   string
+	Name    string
+	Allowed int
+}
+
+func (a *App) hasRuntimeResources() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.client != nil || a.storeContainer != nil
+}
+
+func (a *App) backupPermissions(dbPath string) ([]permissionBackup, bool) {
+	var backup []permissionBackup
+	var defaultAllowed bool
+	var tempDB *sql.DB
+	a.mu.Lock()
+	targetDB := a.db
+	a.mu.Unlock()
+	if targetDB == nil {
+		if _, err := os.Stat(dbPath); err == nil {
+			var err error
+			tempDB, err = sql.Open("sqlite", "file:"+dbPath)
+			if err != nil {
+				log.Printf("logout backup open: %v", err)
+				tempDB = nil
+			} else {
+				targetDB = tempDB
+			}
+		}
+	}
+	if targetDB != nil {
+		rows, err := targetDB.Query(`SELECT phone, name, allowed FROM chat_permissions`)
+		if err == nil {
+			for rows.Next() {
+				var p permissionBackup
+				if err := rows.Scan(&p.Phone, &p.Name, &p.Allowed); err == nil {
+					backup = append(backup, p)
+				}
+			}
+			rows.Close()
+		}
+		var def int
+		if err := targetDB.QueryRow(`SELECT allowed FROM whitelist_default WHERE id = 1`).Scan(&def); err == nil {
+			defaultAllowed = def == 1
+		}
+		if tempDB != nil {
+			_ = tempDB.Close()
+		}
+	}
+	return backup, defaultAllowed
+}
+
+func (a *App) disconnectAndLogoutClient() []error {
+	if a.client == nil {
+		return nil
+	}
+	var errs []error
+	// Remote logout is best-effort. Even if the server is unreachable, we
+	// want to tear down local state. Cap the network call at 5s so a hung
+	// WhatsApp server can't hold logoutMu forever.
+	if a.client.Store != nil && a.client.Store.ID != nil {
+		logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := a.client.Logout(logoutCtx); err != nil {
+			errs = append(errs, fmt.Errorf("remote logout failed: %w", err))
+		}
+		logoutCancel()
+	}
+	a.client.Disconnect()
+	if a.client.Store != nil && a.client.Store.ID != nil {
+		if err := a.client.Store.Delete(context.Background()); err != nil {
+			errs = append(errs, fmt.Errorf("store delete failed: %w", err))
+		} else {
+			a.client.Store.ID = nil
+		}
+	}
+	return errs
+}
+
+func (a *App) resetRuntimeState() []error {
+	var errs []error
+	a.mu.Lock()
+	a.client = nil
+	a.started = false
+	a.connected = false
+	a.needsBootstrapSync = false
+	a.state = PersistedState{
+		Chats:    map[string]Chat{},
+		Contacts: map[string]Contact{},
+	}
+	// Close all DB connections before deleting files (required on Windows to release file locks).
+	if a.storeContainer != nil {
+		if err := a.storeContainer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("store container close failed: %w", err))
+		}
+		a.storeContainer = nil
+	}
+	if a.db != nil {
+		if err := a.db.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("db close failed: %w", err))
+		}
+		a.db = nil
+	}
+	a.mu.Unlock()
+	return errs
+}
+
+func (a *App) restorePermissions(dbPath string, backup []permissionBackup, defaultAllowed bool) {
+	if len(backup) == 0 && !defaultAllowed {
+		return
+	}
+	var restoreDB *sql.DB
+	var tempRestoreDB *sql.DB
+	a.mu.Lock()
+	if a.db != nil {
+		restoreDB = a.db
+	}
+	a.mu.Unlock()
+	if restoreDB == nil {
+		if err := os.MkdirAll(a.cacheDir, 0o700); err == nil {
+			tempRestoreDB, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+			if err == nil {
+				restoreDB = tempRestoreDB
+			}
+		}
+	}
+	if restoreDB != nil {
+		if _, err := restoreDB.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
+			phone   TEXT PRIMARY KEY,
+			name    TEXT NOT NULL DEFAULT '',
+			allowed INTEGER NOT NULL DEFAULT 0
+		)`); err != nil {
+			log.Printf("logout restore schema: %v", err)
+		} else if _, err := restoreDB.Exec(`CREATE TABLE IF NOT EXISTS whitelist_default (
+			id      INTEGER PRIMARY KEY CHECK (id = 1),
+			allowed INTEGER NOT NULL DEFAULT 0
+		)`); err != nil {
+			log.Printf("logout restore default schema: %v", err)
+		} else {
+			tx, err := restoreDB.Begin()
+			if err == nil {
+				def := 0
+				if defaultAllowed {
+					def = 1
+				}
+				if _, err := tx.Exec(`INSERT INTO whitelist_default (id, allowed) VALUES (1, ?)
+					ON CONFLICT(id) DO UPDATE SET allowed=excluded.allowed`, def); err != nil {
+					log.Printf("logout restore default insert: %v", err)
+				}
+				for _, p := range backup {
+					if _, err := tx.Exec(`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`, p.Phone, p.Name, p.Allowed); err != nil {
+						log.Printf("logout restore insert: %v", err)
+					}
+				}
+				if err := tx.Commit(); err != nil {
+					log.Printf("logout restore commit: %v", err)
+				}
+			} else {
+				log.Printf("logout restore begin: %v", err)
+			}
+		}
+		if tempRestoreDB != nil {
+			_ = tempRestoreDB.Close()
+		}
+	}
+}
+
+func (a *App) teardownAndReinitStorage(hadRuntimeResources bool, dbPath string, backup []permissionBackup, defaultAllowed bool) error {
+	if strings.TrimSpace(a.cacheDir) == "" {
+		return a.persistStateWithErr()
+	}
+	if hadRuntimeResources {
+		if err := a.resetPersistentStorage(); err != nil {
+			return fmt.Errorf("state cleanup failed: %w", err)
+		}
+	} else {
+		if err := os.RemoveAll(a.cacheDir); err != nil {
+			return fmt.Errorf("state cleanup failed: %w", err)
+		} else if err := os.MkdirAll(a.cacheDir, 0o700); err != nil {
+			return fmt.Errorf("state cleanup failed: %w", err)
+		}
+	}
+	a.restorePermissions(dbPath, backup, defaultAllowed)
+	if err := a.persistStateWithErr(); err != nil {
+		return fmt.Errorf("state cleanup failed: %w", err)
+	}
+	return nil
+}
+
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -455,154 +681,18 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		a.shuttingDown = false
 	}()
 
-	var backup []struct {
-		Phone   string
-		Name    string
-		Allowed int
-	}
 	dbPath := filepath.Join(a.cacheDir, "store.db")
-	var tempDB *sql.DB
-	a.mu.Lock()
-	targetDB := a.db
-	a.mu.Unlock()
-	if targetDB == nil {
-		if _, err := os.Stat(dbPath); err == nil {
-			var err error
-			tempDB, err = sql.Open("sqlite", "file:"+dbPath)
-			if err != nil {
-				log.Printf("logout backup open: %v", err)
-				tempDB = nil
-			} else {
-				targetDB = tempDB
-			}
-		}
-	}
-	if targetDB != nil {
-		rows, err := targetDB.Query(`SELECT phone, name, allowed FROM chat_permissions`)
-		if err == nil {
-			for rows.Next() {
-				var p struct {
-					Phone   string
-					Name    string
-					Allowed int
-				}
-				if err := rows.Scan(&p.Phone, &p.Name, &p.Allowed); err == nil {
-					backup = append(backup, p)
-				}
-			}
-			rows.Close()
-		}
-		if tempDB != nil {
-			_ = tempDB.Close()
-		}
+	backup, defaultAllowed := a.backupPermissions(dbPath)
+	hadRuntimeResources := a.hasRuntimeResources()
+
+	var errs []error
+	errs = append(errs, a.disconnectAndLogoutClient()...)
+	errs = append(errs, a.resetRuntimeState()...)
+
+	if err := a.teardownAndReinitStorage(hadRuntimeResources, dbPath, backup, defaultAllowed); err != nil {
+		errs = append(errs, err)
 	}
 
-	hadRuntimeResources := a.client != nil || a.storeContainer != nil
-	var errs []error
-	// Remote logout is best-effort. Even if the server is unreachable, we
-	// want to tear down local state. Cap the network call at 5s so a hung
-	// WhatsApp server can't hold logoutMu forever.
-	if a.client != nil {
-		if a.client.Store != nil && a.client.Store.ID != nil {
-			logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := a.client.Logout(logoutCtx); err != nil {
-				errs = append(errs, fmt.Errorf("remote logout failed: %w", err))
-			}
-			logoutCancel()
-		}
-		a.client.Disconnect()
-		if a.client.Store != nil && a.client.Store.ID != nil {
-			if err := a.client.Store.Delete(context.Background()); err != nil {
-				errs = append(errs, fmt.Errorf("store delete failed: %w", err))
-			} else {
-				a.client.Store.ID = nil
-			}
-		}
-	}
-	a.mu.Lock()
-	a.client = nil
-	a.started = false
-	a.connected = false
-	a.needsBootstrapSync = false
-	a.state = PersistedState{
-		Chats:    map[string]Chat{},
-		Contacts: map[string]Contact{},
-	}
-	// Close all DB connections before deleting files (required on Windows to release file locks).
-	if a.storeContainer != nil {
-		if err := a.storeContainer.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("store container close failed: %w", err))
-		}
-		a.storeContainer = nil
-	}
-	if a.db != nil {
-		if err := a.db.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("db close failed: %w", err))
-		}
-		a.db = nil
-	}
-	a.mu.Unlock()
-	if strings.TrimSpace(a.cacheDir) != "" {
-		if hadRuntimeResources {
-			if err := a.resetPersistentStorage(); err != nil {
-				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
-			}
-		} else {
-			if err := os.RemoveAll(a.cacheDir); err != nil {
-				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
-			} else if err := os.MkdirAll(a.cacheDir, 0o700); err != nil {
-				errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
-			}
-		}
-		if len(backup) > 0 {
-			var restoreDB *sql.DB
-			var tempRestoreDB *sql.DB
-			a.mu.Lock()
-			if a.db != nil {
-				restoreDB = a.db
-			}
-			a.mu.Unlock()
-			if restoreDB == nil {
-				if err := os.MkdirAll(a.cacheDir, 0o700); err == nil {
-					tempRestoreDB, err = sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
-					if err == nil {
-						restoreDB = tempRestoreDB
-					}
-				}
-			}
-			if restoreDB != nil {
-				if _, err := restoreDB.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
-					phone   TEXT PRIMARY KEY,
-					name    TEXT NOT NULL DEFAULT '',
-					allowed INTEGER NOT NULL DEFAULT 0
-				)`); err != nil {
-					log.Printf("logout restore schema: %v", err)
-				} else {
-					tx, err := restoreDB.Begin()
-					if err == nil {
-						for _, p := range backup {
-							if _, err := tx.Exec(`INSERT OR REPLACE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)`, p.Phone, p.Name, p.Allowed); err != nil {
-								log.Printf("logout restore insert: %v", err)
-							}
-						}
-						if err := tx.Commit(); err != nil {
-							log.Printf("logout restore commit: %v", err)
-						}
-					} else {
-						log.Printf("logout restore begin: %v", err)
-					}
-				}
-				if tempRestoreDB != nil {
-					_ = tempRestoreDB.Close()
-				}
-			}
-		}
-		if err := a.persistStateWithErr(); err != nil {
-			errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
-		}
-	} else if err := a.persistStateWithErr(); err != nil {
-		errs = append(errs, fmt.Errorf("state cleanup failed: %w", err))
-	}
 	if len(errs) > 0 {
 		writeInternalErr(w, errors.Join(errs...))
 		return

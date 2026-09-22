@@ -360,3 +360,67 @@ func TestInputDividerColorUniformOnFocus(t *testing.T) {
 		t.Errorf("right focused divider missing proper junctions: %q", plainRight)
 	}
 }
+
+func TestRenderStartupViewStages(t *testing.T) {
+	for _, borderless := range []bool{false, true} {
+		currentConfig.Borderless = borderless
+		for _, status := range []string{"Connecting...", "Error: auth failed", "Logged out", "qr"} {
+			model := m{
+				w:      80,
+				h:      24,
+				status: status,
+				qrRaw:  "fake-qr-code-data",
+			}
+			out := model.renderStartupView(80)
+			if strings.TrimSpace(out) == "" {
+				t.Fatalf("borderless=%v, status=%s: empty startup view", borderless, status)
+			}
+			if status == "qr" {
+				if !strings.Contains(out, "Link a Device") {
+					t.Fatalf("borderless=%v, status=%s: missing QR link hint: %q", borderless, status, out)
+				}
+			} else {
+				if !strings.Contains(out, "WhatZap") {
+					t.Fatalf("borderless=%v, status=%s: missing WhatZap logo/title: %q", borderless, status, out)
+				}
+			}
+		}
+	}
+}
+
+func TestRenderOuterAppFrameModes(t *testing.T) {
+	inner := "header\nbody-content"
+	// 1. Borderless mode
+	currentConfig.Borderless = true
+	frame := renderOuterAppFrame(inner, 80, 24, 25)
+	if strings.Contains(frame, "╭") || strings.Contains(frame, "╰") {
+		t.Fatalf("borderless frame should not contain border corners: %q", frame)
+	}
+
+	// 2. Bordered mode
+	currentConfig.Borderless = false
+	frameBordered := renderOuterAppFrame(inner, 80, 24, 25)
+	if !strings.Contains(frameBordered, "╭") || !strings.Contains(frameBordered, "╰") {
+		t.Fatalf("bordered frame missing border corners: %q", frameBordered)
+	}
+	if !strings.Contains(frameBordered, "┬") || !strings.Contains(frameBordered, "┴") {
+		t.Fatalf("bordered frame missing divider junctions: %q", frameBordered)
+	}
+}
+
+func TestRenderRightMainPickerPrecedence(t *testing.T) {
+	model := m{
+		w: 80,
+		h: 24,
+		confirmDialog: confirmDialog{
+			open:    true,
+			title:   "Log out?",
+			message: "Are you sure?",
+		},
+		mainCache: &renderCache{},
+	}
+	out := model.renderRightMain(50, 20)
+	if !strings.Contains(out, "Log out?") {
+		t.Fatalf("renderRightMain should render confirmDialog when open: %q", out)
+	}
+}

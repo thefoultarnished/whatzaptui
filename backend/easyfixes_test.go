@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -261,5 +262,60 @@ func TestHandleProfilePictureAndMediaDownloadValidation(t *testing.T) {
 	app.handler().ServeHTTP(mRec, mReq)
 	if mRec.Code != http.StatusConflict {
 		t.Fatalf("GET /media/download disconnected status = %d, want 409", mRec.Code)
+	}
+}
+
+func TestBackupAndRestorePermissions(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	// Seed permissions
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551234567', 'Test Contact', 1)`); err != nil {
+		t.Fatalf("seed permissions: %v", err)
+	}
+
+	dbPath := filepath.Join(app.cacheDir, "store.db")
+	backup, defaultAllowed := app.backupPermissions(dbPath)
+	if len(backup) != 1 || backup[0].Phone != "15551234567" || backup[0].Name != "Test Contact" || backup[0].Allowed != 1 {
+		t.Fatalf("backupPermissions returned unexpected backup: %+v", backup)
+	}
+	if defaultAllowed {
+		t.Fatalf("backupPermissions defaultAllowed = true, want false")
+	}
+
+	// Flip the global default and verify it round-trips too.
+	if _, err := app.db.Exec(`INSERT INTO whitelist_default (id, allowed) VALUES (1, 1)`); err != nil {
+		t.Fatalf("seed default: %v", err)
+	}
+	backup, defaultAllowed = app.backupPermissions(dbPath)
+	if !defaultAllowed {
+		t.Fatalf("backupPermissions defaultAllowed = false, want true")
+	}
+
+	// Drop the tables to simulate wiped DB
+	if _, err := app.db.Exec(`DROP TABLE chat_permissions`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := app.db.Exec(`DROP TABLE whitelist_default`); err != nil {
+		t.Fatalf("drop default table: %v", err)
+	}
+
+	// Restore
+	app.restorePermissions(dbPath, backup, defaultAllowed)
+
+	var phone, name string
+	var allowed int
+	if err := app.db.QueryRow(`SELECT phone, name, allowed FROM chat_permissions WHERE phone = '15551234567'`).Scan(&phone, &name, &allowed); err != nil {
+		t.Fatalf("restore query failed: %v", err)
+	}
+	if phone != "15551234567" || name != "Test Contact" || allowed != 1 {
+		t.Fatalf("restored data mismatch: phone=%s, name=%s, allowed=%d", phone, name, allowed)
+	}
+	var def int
+	if err := app.db.QueryRow(`SELECT allowed FROM whitelist_default WHERE id = 1`).Scan(&def); err != nil {
+		t.Fatalf("restore default query failed: %v", err)
+	}
+	if def != 1 {
+		t.Fatalf("restored default = %d, want 1", def)
 	}
 }

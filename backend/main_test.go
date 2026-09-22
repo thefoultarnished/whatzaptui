@@ -43,6 +43,12 @@ func newTestApp(t *testing.T) *App {
 	)`); err != nil {
 		t.Fatalf("create chat_permissions: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS whitelist_default (
+		id      INTEGER PRIMARY KEY CHECK (id = 1),
+		allowed INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		t.Fatalf("create whitelist_default: %v", err)
+	}
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS messages (
 			id           TEXT NOT NULL,
@@ -488,6 +494,10 @@ func TestHandleLogoutPreservesChatPermissions(t *testing.T) {
 	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
 		phone   TEXT PRIMARY KEY,
 		name    TEXT NOT NULL DEFAULT '',
+		allowed INTEGER NOT NULL DEFAULT 0
+	)`)
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS whitelist_default (
+		id      INTEGER PRIMARY KEY CHECK (id = 1),
 		allowed INTEGER NOT NULL DEFAULT 0
 	)`)
 	_, err = db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Alex', 1)`)
@@ -1201,7 +1211,7 @@ func TestUpsertPermissionSkipsNilDB(t *testing.T) {
 	_ = app.db.Close()
 	app.db = nil
 
-	app.upsertPermission("15551230001", "Alex")
+	app.upsertPermission("15551230001", "Alex", "")
 }
 
 func TestUpsertPermissionSkipsDuringShutdown(t *testing.T) {
@@ -1210,7 +1220,7 @@ func TestUpsertPermissionSkipsDuringShutdown(t *testing.T) {
 	app.shuttingDown = true
 	app.mu.Unlock()
 
-	app.upsertPermission("15551230001", "Alex")
+	app.upsertPermission("15551230001", "Alex", "")
 
 	rows, err := app.db.Query(`SELECT phone, name, allowed FROM chat_permissions`)
 	if err != nil {
@@ -1219,6 +1229,211 @@ func TestUpsertPermissionSkipsDuringShutdown(t *testing.T) {
 	defer rows.Close()
 	if rows.Next() {
 		t.Fatalf("expected no permission rows during shutdown")
+	}
+}
+
+func TestUpsertPermissionRefreshesPushNamePreservesRename(t *testing.T) {
+	app := newTestApp(t)
+
+	// First message from a contact creates the row.
+	app.upsertPermission("15551230001", "Old Name", "")
+	// Contact changes their WhatsApp push name: row follows it.
+	app.upsertPermission("15551230001", "New Name", "Old Name")
+
+	var name string
+	if err := app.db.QueryRow(`SELECT name FROM chat_permissions WHERE phone = '15551230001'`).Scan(&name); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if name != "New Name" {
+		t.Fatalf("name = %q, want refreshed push name (New Name)", name)
+	}
+
+	// User renames the contact locally via /names/set.
+	req := httptest.NewRequest(http.MethodPost, "/names/set", bytes.NewBufferString(`{"phone":"15551230001","name":"My Buddy"}`))
+	rec := httptest.NewRecorder()
+	app.handleSetName(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set name status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// A later push-name change must not clobber the custom name...
+	app.upsertPermission("15551230001", "Changed Again", "New Name")
+	// ...and our own outgoing messages (empty name) must not clear it either.
+	app.upsertPermission("15551230001", "", "Changed Again")
+
+	if err := app.db.QueryRow(`SELECT name FROM chat_permissions WHERE phone = '15551230001'`).Scan(&name); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if name != "My Buddy" {
+		t.Fatalf("name = %q, want My Buddy", name)
+	}
+}
+
+// A-12: the server must ping WS clients and drop ones that stay silent,
+// so a stalled connection can't park its read-loop goroutine forever.
+func TestHandleWSHeartbeatPingsAndDropsSilentClient(t *testing.T) {
+	oldPong, oldPing := wsPongWait, wsPingPeriod
+	wsPongWait = 300 * time.Millisecond
+	wsPingPeriod = 100 * time.Millisecond
+	defer func() { wsPongWait, wsPingPeriod = oldPong, oldPing }()
+
+	app := newTestApp(t)
+	srv := httptest.NewServer(app.handler())
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	header := http.Header{}
+	header.Set(authHeaderName, "Bearer "+app.apiToken)
+	header.Set("Origin", allowedBackendOrigin)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Read the connect snapshot (proves the server registered us).
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := conn.ReadMessage(); err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+
+	// From here on we never pong: every server ping is observed but not
+	// answered, so the server must drop us after wsPongWait.
+	pings := make(chan struct{}, 8)
+	conn.SetPingHandler(func(string) error {
+		select {
+		case pings <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected a read error once the server drops the silent client")
+	}
+	select {
+	case <-pings:
+	default:
+		t.Fatal("server never pinged the client")
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		app.wsMu.Lock()
+		n := len(app.wsClients)
+		app.wsMu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("server never removed the silent client from wsClients")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Whitelist default: a missing per-chat row falls back to the global flag,
+// an explicit row always wins.
+func TestIsChatAllowedFallsBackToDefault(t *testing.T) {
+	app := newTestApp(t)
+	chat := "15551230001@s.whatsapp.net"
+
+	if ok, err := app.isChatAllowed(chat); err != nil || ok {
+		t.Fatalf("no row, no default: got ok=%v err=%v, want false", ok, err)
+	}
+
+	if _, err := app.db.Exec(`INSERT INTO whitelist_default (id, allowed) VALUES (1, 1)`); err != nil {
+		t.Fatalf("seed default: %v", err)
+	}
+	if ok, err := app.isChatAllowed(chat); err != nil || !ok {
+		t.Fatalf("no row, default allow: got ok=%v err=%v, want true", ok, err)
+	}
+	if ok, err := app.isChatAllowed("15551239999@s.whatsapp.net"); err != nil || !ok {
+		t.Fatalf("unknown chat, default allow: got ok=%v err=%v, want true", ok, err)
+	}
+
+	// Explicit deny beats default allow.
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Alex', 0)`); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+	if ok, err := app.isChatAllowed(chat); err != nil || ok {
+		t.Fatalf("explicit deny, default allow: got ok=%v err=%v, want false", ok, err)
+	}
+
+	// Explicit allow beats default deny.
+	if _, err := app.db.Exec(`UPDATE whitelist_default SET allowed = 0 WHERE id = 1`); err != nil {
+		t.Fatalf("flip default: %v", err)
+	}
+	if _, err := app.db.Exec(`UPDATE chat_permissions SET allowed = 1 WHERE phone = '15551230001'`); err != nil {
+		t.Fatalf("flip row: %v", err)
+	}
+	if ok, err := app.isChatAllowed(chat); err != nil || !ok {
+		t.Fatalf("explicit allow, default deny: got ok=%v err=%v, want true", ok, err)
+	}
+}
+
+func TestHandleSetWhitelistDefault(t *testing.T) {
+	app := newTestApp(t)
+	post := func(body string) *httptest.ResponseRecorder {
+		req := authorizedRequest(
+			httptest.NewRequest(http.MethodPost, "/whitelist/default", strings.NewReader(body)),
+			app,
+		)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		app.handler().ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(`{"allowed":2}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("allowed=2 status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Seed one denied and one allowed row (names must survive the flip).
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES
+		('15551230001', 'Alex', 0), ('15551230002', 'Sam', 1)`); err != nil {
+		t.Fatalf("seed rows: %v", err)
+	}
+	if rec := post(`{"allowed":1}`); rec.Code != http.StatusOK {
+		t.Fatalf("allow-all status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var a1, a2 int
+	var n1 string
+	if err := app.db.QueryRow(`SELECT allowed, name FROM chat_permissions WHERE phone = '15551230001'`).Scan(&a1, &n1); err != nil {
+		t.Fatalf("query row1: %v", err)
+	}
+	if err := app.db.QueryRow(`SELECT allowed FROM chat_permissions WHERE phone = '15551230002'`).Scan(&a2); err != nil {
+		t.Fatalf("query row2: %v", err)
+	}
+	if a1 != 1 || a2 != 1 || n1 != "Alex" {
+		t.Fatalf("rows after allow-all: got (%d,%q) and %d, want (1,Alex) and 1", a1, n1, a2)
+	}
+
+	// GET /whitelist must expose the flag.
+	getReq := authorizedRequest(httptest.NewRequest(http.MethodGet, "/whitelist", nil), app)
+	getRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", getRec.Code)
+	}
+	var got struct {
+		DefaultAllowed bool `json:"defaultAllowed"`
+	}
+	if err := json.NewDecoder(getRec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.DefaultAllowed {
+		t.Fatalf("defaultAllowed = false, want true")
+	}
+
+	if rec := post(`{"allowed":0}`); rec.Code != http.StatusOK {
+		t.Fatalf("block-all status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := app.db.QueryRow(`SELECT allowed FROM chat_permissions WHERE phone = '15551230001'`).Scan(&a1); err != nil {
+		t.Fatalf("query row1: %v", err)
+	}
+	if a1 != 0 {
+		t.Fatalf("row after block-all = %d, want 0", a1)
 	}
 }
 
@@ -2383,6 +2598,10 @@ func TestEditMessageInDBUpdatesFTS(t *testing.T) {
 // before touching the DB or attempting BuildEdit/SendMessage.
 func TestHandleEditMessageRequiresConnectedClient(t *testing.T) {
 	app := newTestApp(t)
+	// Whitelist the chat so the request reaches the connection check.
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Alex', 1)`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
 	body := `{"chatId":"15551230001@s.whatsapp.net","messageId":"m1","text":"new text"}`
 	req := authorizedRequest(
 		httptest.NewRequest(http.MethodPost, "/messages/edit", strings.NewReader(body)),
@@ -2410,6 +2629,45 @@ func TestHandleEditMessageRejectsEmptyText(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Editing sends new content, so it must enforce the whitelist like
+// /messages/send and /messages/send-file do. The check runs before the
+// connection check, so a non-whitelisted chat gets 403 even while
+// disconnected; a whitelisted one proceeds to the 409 not-connected error.
+func TestHandleEditMessageRejectsNonWhitelistedChat(t *testing.T) {
+	app := newTestApp(t)
+	body := `{"chatId":"15551239999@s.whatsapp.net","messageId":"m1","text":"new text"}`
+	req := authorizedRequest(
+		httptest.NewRequest(http.MethodPost, "/messages/edit", strings.NewReader(body)),
+		app,
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleEditMessageWhitelistedWithoutClientIsConflict(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Alex', 1)`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	body := `{"chatId":"15551230001@s.whatsapp.net","messageId":"m1","text":"new text"}`
+	req := authorizedRequest(
+		httptest.NewRequest(http.MethodPost, "/messages/edit", strings.NewReader(body)),
+		app,
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -3657,11 +3915,19 @@ func TestHandleMarkReadPersistIsAsyncAfterMarkRead(t *testing.T) {
 func TestHandleBlockValidation(t *testing.T) {
 	app := newTestApp(t)
 
+	// 1. GET returns 405
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/block", nil)
 	app.handleBlock(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected StatusMethodNotAllowed, got %d", rec.Code)
+	}
+	// 2. POST when disconnected returns 409
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/block", bytes.NewBufferString(`{"chatId":"15551230001@s.whatsapp.net"}`))
+	app.handleBlock(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 not connected, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 }
 

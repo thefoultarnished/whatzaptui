@@ -100,6 +100,18 @@ func (a *App) initPersistentResources() error {
 		_ = rawDB.Close()
 		return err
 	}
+	// Global whitelist default (single row, id = 1). When allowed = 1,
+	// chats without a per-chat row are allowed and allowed = 0 rows act
+	// as opt-out overrides; when 0 (default), chats without a row are
+	// denied. Lets /whitelistall and /blacklistall flip one flag (plus a
+	// single UPDATE) instead of one HTTP call per chat.
+	if _, err := rawDB.Exec(`CREATE TABLE IF NOT EXISTS whitelist_default (
+		id      INTEGER PRIMARY KEY CHECK (id = 1),
+		allowed INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		_ = rawDB.Close()
+		return err
+	}
 	if _, err := rawDB.Exec(`
 		CREATE TABLE IF NOT EXISTS messages (
 			id           TEXT NOT NULL,
@@ -1112,7 +1124,13 @@ func (a *App) migrateStateCanonicalIDs(state *PersistedState) {
 	state.Contacts = newContacts
 }
 
-func (a *App) upsertPermission(phone, name string) {
+// upsertPermission records that a sender exists (allowed stays 0) and keeps
+// the auto-captured push name fresh. The row is only (re)written when its
+// stored name is empty or still matches prevName — the push name last
+// captured for this contact. Anything else was set by the user via /rename
+// and is left alone, so a contact who changes their WhatsApp name picks up
+// the new name on their next message instead of keeping the first one forever.
+func (a *App) upsertPermission(phone, name, prevName string) {
 	if phone == "" {
 		return
 	}
@@ -1127,8 +1145,11 @@ func (a *App) upsertPermission(phone, name string) {
 		return
 	}
 	if _, err := db.Exec(
-		`INSERT OR IGNORE INTO chat_permissions (phone, name, allowed) VALUES (?, ?, 0)`,
-		phone, name,
+		`INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, 0)
+		 ON CONFLICT(phone) DO UPDATE SET name = excluded.name
+		 WHERE excluded.name != ''
+		   AND (chat_permissions.name = '' OR chat_permissions.name = ?)`,
+		phone, name, prevName,
 	); err != nil {
 		log.Printf("upsertPermission %s: %v", phone, err)
 	}

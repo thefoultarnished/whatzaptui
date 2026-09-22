@@ -699,21 +699,25 @@ func getWhitelist(ctx context.Context, c *http.Client, base string) tea.Cmd {
 				Name    string `json:"name"`
 				Allowed int    `json:"allowed"`
 			} `json:"contacts"`
+		DefaultAllowed bool `json:"defaultAllowed"`
 		}
 		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 			return whitelistLoadMsg{err: err}
 		}
 		wl := map[string]string{}
+		denied := map[string]bool{}
 		names := map[string]string{}
 		for _, e := range out.Contacts {
 			if e.Allowed == 1 {
 				wl[e.Phone] = e.Name
+			} else {
+				denied[e.Phone] = true
 			}
 			if e.Name != "" {
 				names[e.Phone] = e.Name
 			}
 		}
-		return whitelistLoadMsg{whitelist: wl, names: names}
+		return whitelistLoadMsg{whitelist: wl, denied: denied, defaultAllowed: out.DefaultAllowed, names: names}
 	}
 }
 
@@ -823,6 +827,28 @@ func setWhitelistEntry(ctx context.Context, c *http.Client, base, phone, name st
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]any{"phone": phone, "name": name, "allowed": allowed})
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/whitelist/set", bytes.NewReader(b))
+		req.Header.Set("content-type", "application/json")
+		attachAuthHeader(req, apiTokenFromURL(base))
+		res, err := c.Do(req)
+		if err != nil {
+			return whitelistSetMsg{err: err}
+		}
+		defer res.Body.Close()
+		if res.StatusCode/100 != 2 {
+			raw, _ := io.ReadAll(res.Body)
+			return whitelistSetMsg{err: fmt.Errorf("%s %s", res.Status, strings.TrimSpace(string(raw)))}
+		}
+		return whitelistSetMsg{}
+	}
+}
+
+// setWhitelistDefault flips the global whitelist default in one call
+// (see POST /whitelist/default). Per-chat rows all align server-side, so
+// no per-chat loop is needed.
+func setWhitelistDefault(ctx context.Context, c *http.Client, base string, allowed int) tea.Cmd {
+	return func() tea.Msg {
+		b, _ := json.Marshal(map[string]any{"allowed": allowed})
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/whitelist/default", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
 		res, err := c.Do(req)

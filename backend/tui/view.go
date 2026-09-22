@@ -38,75 +38,7 @@ func (x m) viewInner() string {
 	}
 	// Success Loading Screen: shown after login until status becomes "ready".
 	if x.status != "ready" {
-		var outerW, outerH int
-		if currentConfig.Borderless {
-			outerW = x.w
-			outerH = x.h
-		} else {
-			outerW = frameW
-			outerH = max(3, x.h-2)
-		}
-		var innerW, innerH int
-		if currentConfig.Borderless {
-			innerW = outerW
-			innerH = outerH
-		} else {
-			innerW = max(1, outerW-2)
-			innerH = max(1, outerH-2)
-		}
-		statusBody := x.status
-		logo := renderPiLogo()
-		title := logoStyle.Render("WhatZap")
-		subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
-		hint := mutedStyle.Render("Keep this window open  •  graphics: " + x.gfxName())
-		statusMsgTemplate := func(body, progress string) string {
-			header := lipgloss.JoinVertical(lipgloss.Center, logo, "", title, subtitle)
-			content := header + "\n\n" + body
-			if progress != "" {
-				content += "\n" + progress
-			}
-			return content + "\n\n" + hint
-		}
-		if x.status == "qr" {
-			if x.qrRaw != "" {
-				hint = accentStyle.Copy().Bold(false).Render("WhatsApp > Linked Devices > Link a Device")
-				waiting := logoStyle.Render(spinnerFrames[x.spinnerFrame] + " waiting for scan")
-				qrMaxW := min(max(12, innerW-6), 56)
-				qrMaxH := min(max(8, innerH-6), 28)
-				qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
-				if qrBody == "" {
-					qrBody = x.qrRaw
-				}
-				body := lipgloss.JoinVertical(
-					lipgloss.Center,
-					waiting,
-					"",
-					lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBody),
-					"",
-					hint,
-				)
-				return renderStatusBox(body, innerW, innerH, outerW, outerH)
-			} else {
-				statusBody = "Generating QR..."
-				hint = mutedStyle.Render("Preparing login QR")
-			}
-		} else if strings.HasPrefix(strings.ToLower(x.status), "logged out") {
-			statusBody = accentStyle.Copy().Bold(false).Render(x.status)
-			hint = mutedStyle.Render("Restart and scan a QR code to sign in again")
-		} else if strings.HasPrefix(x.status, "Error:") {
-			errMsg := strings.TrimPrefix(x.status, "Error:")
-			errMsg = strings.TrimSpace(errMsg)
-			statusBody = lipgloss.NewStyle().Foreground(red).Bold(true).Render("Error: " + errMsg)
-			hint = mutedStyle.Render("Press ctrl+c to exit, then re-run whatzap")
-		} else {
-			statusBody = accentStyle.Copy().Bold(false).Render(spinnerFrames[x.spinnerFrame] + " Connecting your session...")
-			progress := x.renderBootStages()
-			pulse := x.loadingPulse()
-			body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
-			return renderStatusBox(body, innerW, innerH, outerW, outerH)
-		}
-		msg := statusMsgTemplate(statusBody, "")
-		return renderStatusBox(msg, innerW, innerH, outerW, outerH)
+		return x.renderStartupView(frameW)
 	}
 	outerW := frameW
 	var outerH int
@@ -157,53 +89,7 @@ func (x m) viewInner() string {
 	// Right column: main pane shrinks to accommodate multiline input.
 	mainH := max(1, outerH-4-replyBarH-attachmentBarH-extraInputH)
 
-	hasFlash := false
-	now := time.Now()
-	for _, until := range x.flashUntil {
-		if now.Before(until) {
-			hasFlash = true
-			break
-		}
-	}
-	var main string
-	if x.themePicker.open {
-		main = x.themePicker.RenderTheme(rightW, mainH)
-	} else if x.pointerPicker.open {
-		main = x.pointerPicker.Render(rightW, mainH)
-	} else if x.typingAnimationPicker.open {
-		main = x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH, x.shineFrame)
-	} else if x.mediaIconPicker.open {
-		main = x.mediaIconPicker.Render(rightW, mainH)
-	} else if x.mediaViewPicker.open {
-		main = x.mediaViewPicker.Render(rightW, mainH)
-	} else if x.userlistIconPicker.open {
-		main = x.userlistIconPicker.Render(rightW, mainH)
-	} else if x.helpPicker.open {
-		main = x.helpPicker.RenderHelp(rightW, mainH)
-	} else if x.settingsPicker.open {
-		main = x.settingsPicker.RenderSettings(rightW, mainH)
-	} else if x.confirmDialog.open {
-		main = x.confirmDialog.Render(rightW, mainH)
-	} else if x.fontTestOpen {
-		main = renderFontTest(rightW, mainH)
-	} else if x.fileBrowserOpen {
-		main = x.renderFileBrowser(rightW, mainH)
-	} else if x.emojiPickerOpen {
-		main = x.renderEmojiPickerPane(rightW, mainH)
-	} else if !hasFlash && x.mainCache != nil && x.mainCache.result != "" && x.mainCache.revision == x.revision && x.mainCache.w == rightW && x.mainCache.h == mainH {
-		main = x.mainCache.result
-	} else {
-		main = x.renderMain(rightW, mainH)
-		if !hasFlash {
-			if x.mainCache == nil {
-				x.mainCache = &renderCache{}
-			}
-			x.mainCache.revision = x.revision
-			x.mainCache.w = rightW
-			x.mainCache.h = mainH
-			x.mainCache.result = main
-		}
-	}
+	main := x.renderRightMain(rightW, mainH)
 
 	chatInput := x.renderChatInput(rightW, typedInput)
 	rightParts := []string{main}
@@ -218,34 +104,168 @@ func (x m) viewInner() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, rightCol)
 	inner := lipgloss.JoinVertical(lipgloss.Left, head, body)
-	var frame string
-	if currentConfig.Borderless {
-		frame = lipgloss.NewStyle().
-			Width(outerW).
-			Height(outerH).
-			Background(background).
-			Render(inner)
-	} else {
-		framedBody := lipgloss.NewStyle().
-			Width(outerW).
-			Height(outerH).
-			Border(lipgloss.RoundedBorder(), false, true, false, true).
-			BorderForeground(muted).
-			Render(inner)
-		framedBody = connectFrameJunctions(framedBody)
-		// Use a "┬" junction in the top border and a "┴" junction in the
-		// bottom border where the vertical divider meets them, so the divider
-		// reads as continuous from the very top to the very bottom of the frame.
-		topRow := lipgloss.NewStyle().Foreground(muted).Render(
-			"╭" + strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╮")
-		botRow := lipgloss.NewStyle().Foreground(muted).Render(
-			"╰" + strings.Repeat("─", leftW) + "┴" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╯")
-		frame = lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody, botRow)
-	}
+	frame := renderOuterAppFrame(inner, outerW, outerH, leftW)
 	if x.mode == "msgsearch" {
 		return x.renderSearchOverlay(frame, outerW, outerH)
 	}
 	return frame
+}
+
+func (x m) renderStartupView(frameW int) string {
+	var outerW, outerH int
+	if currentConfig.Borderless {
+		outerW = x.w
+		outerH = x.h
+	} else {
+		outerW = frameW
+		outerH = max(3, x.h-2)
+	}
+	var innerW, innerH int
+	if currentConfig.Borderless {
+		innerW = outerW
+		innerH = outerH
+	} else {
+		innerW = max(1, outerW-2)
+		innerH = max(1, outerH-2)
+	}
+	statusBody := x.status
+	logo := renderPiLogo()
+	title := logoStyle.Render("WhatZap")
+	subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
+	hint := mutedStyle.Render("Keep this window open  •  graphics: " + x.gfxName())
+	statusMsgTemplate := func(body, progress string) string {
+		header := lipgloss.JoinVertical(lipgloss.Center, logo, "", title, subtitle)
+		content := header + "\n\n" + body
+		if progress != "" {
+			content += "\n" + progress
+		}
+		return content + "\n\n" + hint
+	}
+	if x.status == "qr" {
+		if x.qrRaw != "" {
+			hint = accentStyle.Copy().Bold(false).Render("WhatsApp > Linked Devices > Link a Device")
+			waiting := logoStyle.Render(spinnerFrames[x.spinnerFrame] + " waiting for scan")
+			qrMaxW := min(max(12, innerW-6), 56)
+			qrMaxH := min(max(8, innerH-6), 28)
+			qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
+			if qrBody == "" {
+				qrBody = x.qrRaw
+			}
+			body := lipgloss.JoinVertical(
+				lipgloss.Center,
+				waiting,
+				"",
+				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBody),
+				"",
+				hint,
+			)
+			return renderStatusBox(body, innerW, innerH, outerW, outerH)
+		}
+		statusBody = "Generating QR..."
+		hint = mutedStyle.Render("Preparing login QR")
+	} else if strings.HasPrefix(strings.ToLower(x.status), "logged out") {
+		statusBody = accentStyle.Copy().Bold(false).Render(x.status)
+		hint = mutedStyle.Render("Restart and scan a QR code to sign in again")
+	} else if strings.HasPrefix(x.status, "Error:") {
+		errMsg := strings.TrimPrefix(x.status, "Error:")
+		errMsg = strings.TrimSpace(errMsg)
+		statusBody = lipgloss.NewStyle().Foreground(red).Bold(true).Render("Error: " + errMsg)
+		hint = mutedStyle.Render("Press ctrl+c to exit, then re-run whatzap")
+	} else {
+		statusBody = accentStyle.Copy().Bold(false).Render(spinnerFrames[x.spinnerFrame] + " Connecting your session...")
+		progress := x.renderBootStages()
+		pulse := x.loadingPulse()
+		body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
+		return renderStatusBox(body, innerW, innerH, outerW, outerH)
+	}
+	msg := statusMsgTemplate(statusBody, "")
+	return renderStatusBox(msg, innerW, innerH, outerW, outerH)
+}
+
+func (x m) renderRightMain(rightW, mainH int) string {
+	hasFlash := false
+	now := time.Now()
+	for _, until := range x.flashUntil {
+		if now.Before(until) {
+			hasFlash = true
+			break
+		}
+	}
+	if x.themePicker.open {
+		return x.themePicker.RenderTheme(rightW, mainH)
+	}
+	if x.pointerPicker.open {
+		return x.pointerPicker.Render(rightW, mainH)
+	}
+	if x.typingAnimationPicker.open {
+		return x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH, x.shineFrame)
+	}
+	if x.mediaIconPicker.open {
+		return x.mediaIconPicker.Render(rightW, mainH)
+	}
+	if x.mediaViewPicker.open {
+		return x.mediaViewPicker.Render(rightW, mainH)
+	}
+	if x.userlistIconPicker.open {
+		return x.userlistIconPicker.Render(rightW, mainH)
+	}
+	if x.helpPicker.open {
+		return x.helpPicker.RenderHelp(rightW, mainH)
+	}
+	if x.settingsPicker.open {
+		return x.settingsPicker.RenderSettings(rightW, mainH)
+	}
+	if x.confirmDialog.open {
+		return x.confirmDialog.Render(rightW, mainH)
+	}
+	if x.fontTestOpen {
+		return renderFontTest(rightW, mainH)
+	}
+	if x.fileBrowserOpen {
+		return x.renderFileBrowser(rightW, mainH)
+	}
+	if x.emojiPickerOpen {
+		return x.renderEmojiPickerPane(rightW, mainH)
+	}
+	if !hasFlash && x.mainCache != nil && x.mainCache.result != "" && x.mainCache.revision == x.revision && x.mainCache.w == rightW && x.mainCache.h == mainH {
+		return x.mainCache.result
+	}
+	main := x.renderMain(rightW, mainH)
+	if !hasFlash {
+		if x.mainCache == nil {
+			x.mainCache = &renderCache{}
+		}
+		x.mainCache.revision = x.revision
+		x.mainCache.w = rightW
+		x.mainCache.h = mainH
+		x.mainCache.result = main
+	}
+	return main
+}
+
+func renderOuterAppFrame(inner string, outerW, outerH, leftW int) string {
+	if currentConfig.Borderless {
+		return lipgloss.NewStyle().
+			Width(outerW).
+			Height(outerH).
+			Background(background).
+			Render(inner)
+	}
+	framedBody := lipgloss.NewStyle().
+		Width(outerW).
+		Height(outerH).
+		Border(lipgloss.RoundedBorder(), false, true, false, true).
+		BorderForeground(muted).
+		Render(inner)
+	framedBody = connectFrameJunctions(framedBody)
+	// Use a "┬" junction in the top border and a "┴" junction in the
+	// bottom border where the vertical divider meets them, so the divider
+	// reads as continuous from the very top to the very bottom of the frame.
+	topRow := lipgloss.NewStyle().Foreground(muted).Render(
+		"╭" + strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╮")
+	botRow := lipgloss.NewStyle().Foreground(muted).Render(
+		"╰" + strings.Repeat("─", leftW) + "┴" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╯")
+	return lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody, botRow)
 }
 
 func renderStatusBox(body string, innerW, innerH, outerW, outerH int) string {
@@ -1741,11 +1761,8 @@ func (x m) renderMain(w, h int) string {
 		if msg.Key.FromMe {
 			for _, ln := range wrapped {
 				extra := outgoingIconW
-				if isMediaMsg {
-					extra = 0
-				}
 				spacing := 1
-				if currentConfig.TimestampNewLine && !isMediaMsg {
+				if currentConfig.TimestampNewLine {
 					spacing = 2
 				}
 				outgoingBodyW = max(outgoingBodyW, lipgloss.Width(stripGraphicsSeqs(ln))+spacing+extra)
@@ -1786,10 +1803,8 @@ func (x m) renderMain(w, h int) string {
 		// Use the caption width WITHOUT the trailing space (which outgoing
 		// rendering appends to every line) so the content right edges line
 		// up after the trailing space is stripped.
-		var lastTextW int
 		var mediaName string
 		if msg.Key.FromMe && isMediaMsg && len(wrapped) > 1 {
-			lastTextW = runeDisplayWidth(wrapped[len(wrapped)-1])
 			if msg.Message != nil {
 				for _, key := range []string{"imageMessage", "videoMessage", "documentMessage", "audioMessage"} {
 					if v, ok := msg.Message[key].(map[string]any); ok {
@@ -1803,7 +1818,7 @@ func (x m) renderMain(w, h int) string {
 			if msg.Key.FromMe {
 				qPlainW := runeDisplayWidth(quotePlainRight)
 				targetW := outgoingBlockW
-				if currentConfig.TimestampNewLine && !isMediaMsg {
+				if currentConfig.TimestampNewLine {
 					targetW -= 3
 				}
 				qIndent := max(0, len(indent)+targetW-qPlainW)
@@ -1869,8 +1884,9 @@ func (x m) renderMain(w, h int) string {
 			} else if !msg.Key.FromMe && i == len(wrapped)-1 && !currentConfig.TimestampNewLine {
 				lineParts = append(lineParts, timeStyled)
 			}
+			var bodyContent string
 			if msg.Key.FromMe {
-				if currentConfig.TimestampNewLine && !isMediaMsg {
+				if currentConfig.TimestampNewLine {
 					contentW := lipgloss.Width(stripGraphicsSeqs(strings.Join(lineParts, "")))
 					fillW := max(0, outgoingBlockW-outgoingIconW-2-contentW)
 					lineParts = append([]string{strings.Repeat(" ", fillW)}, lineParts...)
@@ -1878,46 +1894,9 @@ func (x m) renderMain(w, h int) string {
 				} else {
 					lineParts = append(lineParts, " ")
 				}
-			}
-			bodyContent := strings.Join(lineParts, "")
-			if msg.Key.FromMe {
-				if isMediaMsg && i < len(wrapped)-1 {
-					// Non-last lines of multi-line media (icon + filename):
-					// right-align within the last text line's width so their
-					// right edges match the caption/name's right edge, with
-					// the timestamp extending further right. Manually pad
-					// with spaces (stripping ANSI for width measurement) to
-					// avoid lipgloss.Align quirks with pre-styled content.
-					// Full-graphics image lines are already block-width, so
-					// padding would only push the image right: skip it.
-					isFullImg := currentConfig.MediaViewStyle == "full" && isImageMsg && i < numPixelLines
-					if !isFullImg {
-						visualW := lipgloss.Width(stripGraphicsSeqs(bodyContent))
-						targetW := max(1, (w-2)-outgoingBlockW+lastTextW+1-outgoingIconW)
-						if currentConfig.TimestampNewLine {
-							targetW = max(1, w-2-outgoingIconW)
-						}
-						if visualW < targetW {
-							bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
-						}
-					}
-					if currentConfig.TimestampNewLine {
-						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)) + " "
-					}
-				} else if isMediaMsg {
-					// Last line of media (caption/name + timestamp):
-					// right-align within the full chat width.
-					visualW := lipgloss.Width(stripGraphicsSeqs(bodyContent))
-					targetW := max(1, w-2-outgoingIconW)
-					if visualW < targetW {
-						bodyContent = strings.Repeat(" ", targetW-visualW) + bodyContent
-					}
-					if currentConfig.TimestampNewLine {
-						bodyContent += lipgloss.NewStyle().Foreground(muted).Render(outgoingRightIcon(i, i == len(wrapped)-1)) + " "
-					}
-				} else {
-					bodyContent = indent + bodyContent
-				}
+				bodyContent = indent + strings.Join(lineParts, "")
+			} else {
+				bodyContent = strings.Join(lineParts, "")
 			}
 			lastBodyPlainW = runeDisplayWidth(stripGraphicsSeqs(ln))
 			if !msg.Key.FromMe && i == 0 && isGroup {

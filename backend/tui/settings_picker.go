@@ -47,17 +47,17 @@ var settingsDefs = []struct {
 var mediaIconList = []struct {
 	key, label string
 }{
-	{"text", "Text  [image] [video] [file] [audio]"},
-	{"nerd", "Nerd  " + nerdIconFor("image") + " " + nerdIconFor("video") + " " + nerdIconFor("file") + " " + nerdIconFor("audio")},
+	{"text", "Text   •  [image]  [video]  [file]  [audio]"},
+	{"nerd", "Nerd   •  " + nerdIconFor("image") + " image  " + nerdIconFor("video") + " video  " + nerdIconFor("file") + " file  " + nerdIconFor("audio") + " audio"},
 }
 
 var mediaViewList = []struct {
 	key, label string
 }{
-	{"text", "Text  [image]"},
-	{"glyph", "Glyph  " + nerdIconFor("image") + " image"},
-	{"pixel", "Pixel  inline art"},
-	{"full", "Full  terminal graphics"},
+	{"text", "Text   •  [image] tag"},
+	{"glyph", "Glyph  •  " + nerdIconFor("image") + " image tag"},
+	{"pixel", "Pixel  •  inline terminal art"},
+	{"full", "Full   •  terminal graphics (Kitty/iTerm)"},
 }
 
 func buildMediaIconPickerItems() []pickerItem {

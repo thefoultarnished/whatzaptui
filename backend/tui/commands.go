@@ -41,19 +41,29 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 		return x.setTopBar("No contact selected")
 	}
 	name := x.nameFor(targetID)
-	wasWhitelisted := false
-	if _, ok := x.whitelist[n]; ok {
+	wasAllowed := x.isAllowed(n)
+	allowed := 0
+	if x.defaultAllowed {
+		if x.denied == nil {
+			x.denied = map[string]bool{}
+		}
+		if wasAllowed {
+			x.denied[n] = true
+		} else {
+			delete(x.denied, n)
+		}
+	} else if wasAllowed {
 		delete(x.whitelist, n)
-		wasWhitelisted = true
 	} else {
 		x.whitelist[n] = name
 	}
+	wasWhitelisted := wasAllowed
 	x.markIdentityChanged()
 	if wasWhitelisted && x.active != "" && num(x.active) == n {
 		x.clearChatComposer()
 	}
 	verb := "Blacklisted"
-	allowed := 0
+	allowed = 0
 	if !wasWhitelisted {
 		verb = "Whitelisted"
 		allowed = 1
@@ -68,51 +78,54 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	)
 }
 
-// doWhitelistAll whitelists every loaded chat. Confirmed via the A-6
-// confirm dialog before this runs.
+// doWhitelistAll flips the global default to allow with a single call.
+// Confirmed via the A-6 confirm dialog before this runs. Server-side every
+// per-chat row aligns to allowed, so local denied overrides clear into the
+// whitelist map to mirror.
 func (x *m) doWhitelistAll() tea.Cmd {
-	added := 0
-	cmds := []tea.Cmd{}
-	for _, c := range x.chats {
-		if strings.HasSuffix(c.ID, "@g.us") {
-			continue // groups can't be whitelisted (A-9/A-10/A-11)
-		}
-		n := num(c.ID)
-		if _, exists := x.whitelist[n]; !exists {
-			added++
-		}
-		name := x.nameFor(c.ID)
-		x.whitelist[n] = name
-		cmds = append(cmds, setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, name, 1))
+	if x.denied == nil {
+		x.denied = map[string]bool{}
 	}
+	if x.whitelist == nil {
+		x.whitelist = map[string]string{}
+	}
+	for n := range x.denied {
+		if _, ok := x.whitelist[n]; !ok {
+			x.whitelist[n] = x.names[n]
+		}
+		delete(x.denied, n)
+	}
+	x.defaultAllowed = true
 	x.markIdentityChanged()
-	msg := fmt.Sprintf("Whitelisted %d chats (%d new)", len(x.whitelist), added)
+	msg := "Whitelist default: allow all"
 	if x.demoMode {
 		return x.setTopBar(msg)
 	}
-	cmds = append(cmds, x.setTopBar(msg))
-	return tea.Batch(cmds...)
+	return tea.Batch(setWhitelistDefault(x.reqCtx(), x.client, x.baseURL, 1), x.setTopBar(msg))
 }
 
-// doBlacklistAll removes every contact from the whitelist. Confirmed via
-// the A-6 confirm dialog before this runs.
+// doBlacklistAll flips the global default to deny with a single call.
+// Confirmed via the A-6 confirm dialog before this runs. Server-side every
+// per-chat row aligns to denied, so the local whitelist map moves into
+// denied overrides to mirror (names are preserved server-side).
 func (x *m) doBlacklistAll() tea.Cmd {
-	count := len(x.whitelist)
-	cmds := []tea.Cmd{}
+	if x.denied == nil {
+		x.denied = map[string]bool{}
+	}
 	for n := range x.whitelist {
-		cmds = append(cmds, setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, x.whitelist[n], 0))
+		x.denied[n] = true
 	}
 	x.whitelist = map[string]string{}
+	x.defaultAllowed = false
 	x.markIdentityChanged()
 	if x.active != "" {
 		x.clearChatComposer()
 	}
-	msg := fmt.Sprintf("Removed %d from whitelist", count)
+	msg := "Whitelist default: block all"
 	if x.demoMode {
 		return x.setTopBar(msg)
 	}
-	cmds = append(cmds, x.setTopBar(msg))
-	return tea.Batch(cmds...)
+	return tea.Batch(setWhitelistDefault(x.reqCtx(), x.client, x.baseURL, 0), x.setTopBar(msg))
 }
 
 func (x *m) handleSlash(txt string) (tea.Cmd, bool) {
@@ -191,8 +204,7 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 			"Are you sure you want to whitelist all contacts?", "whitelistall")
 		return nil, true
 	case txt == "/blacklistall":
-		count := len(x.whitelist)
-		if count == 0 {
+		if len(x.whitelist) == 0 && !x.defaultAllowed {
 			return x.setTopBar("Whitelist already empty"), true
 		}
 		x.confirmDialog.Open("Clear the whitelist?",
@@ -206,6 +218,7 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 		_, already := x.whitelist[n]
 		name := x.nameFor(x.active)
 		x.whitelist[n] = name
+		delete(x.denied, n)
 		x.markIdentityChanged()
 		msg := "Added to whitelist"
 		if already {
@@ -222,6 +235,10 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 		n := num(x.active)
 		_, was := x.whitelist[n]
 		delete(x.whitelist, n)
+		if x.denied == nil {
+			x.denied = map[string]bool{}
+		}
+		x.denied[n] = true
 		x.markIdentityChanged()
 		if x.active != "" && num(x.active) == n {
 			x.clearChatComposer()
@@ -240,6 +257,10 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 		}
 		n := num(x.active)
 		delete(x.whitelist, n)
+		if x.denied == nil {
+			x.denied = map[string]bool{}
+		}
+		x.denied[n] = true
 		x.markIdentityChanged()
 		if x.active != "" && num(x.active) == n {
 			x.clearChatComposer()
@@ -290,7 +311,7 @@ func (x *m) runMediaSendCommand(txt string, includeGlobal bool) (tea.Cmd, bool) 
 	if includeGlobal && x.active == "" {
 		return x.setTopBar("No active chat"), true
 	}
-	if _, ok := x.whitelist[num(x.active)]; !ok {
+	if !x.isAllowed(num(x.active)) {
 		return x.setTopBar("Not whitelisted - use /whitelist to enable"), true
 	}
 	if x.demoMode {

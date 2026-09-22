@@ -74,6 +74,73 @@ func TestTimestampNewLineAlignsLastCharWithReceiptTick(t *testing.T) {
 	}
 }
 
+func TestMediaMessageTimestampAlignment(t *testing.T) {
+	setTestTheme(t, TokyoNight)
+
+	saved := currentConfig.TimestampNewLine
+	t.Cleanup(func() { currentConfig.TimestampNewLine = saved })
+	currentConfig.TimestampNewLine = true
+	savedIcon := receivedMsgIcon
+	t.Cleanup(func() { receivedMsgIcon = savedIcon })
+	receivedMsgIcon = "•"
+
+	msg := wireMsg{
+		Message: map[string]any{
+			"imageMessage": map[string]any{
+				"fileName": "spendsense.png",
+			},
+		},
+	}
+	msg.Key.ID = "m2"
+	msg.Key.RemoteJID = "15551230001@s.whatsapp.net"
+	msg.Key.FromMe = true
+	msg.MessageTimestamp = 1710000000
+	msg.ReceiptStatus = "delivered"
+
+	model := m{
+		active: msg.Key.RemoteJID,
+		msgs:   map[string][]wireMsg{msg.Key.RemoteJID: {msg}},
+	}
+	rendered := model.renderMain(60, 6)
+	visible := ansiStripRe.ReplaceAllString(rendered, "")
+	lines := strings.Split(visible, "\n")
+
+	var fileLine, timeLine string
+	for _, ln := range lines {
+		if strings.Contains(ln, "spendsense.png") {
+			fileLine = ln
+		}
+		if strings.Contains(ln, "✓✓") {
+			timeLine = ln
+		}
+	}
+	if fileLine == "" || timeLine == "" {
+		t.Fatalf("could not find both filename and timestamp lines in:\n%s", visible)
+	}
+
+	// 1. Filename must end with the pointer icon "•" on the SAME line (no overflow wrap)
+	if !strings.Contains(fileLine, "•") {
+		t.Fatalf("filename line missing pointer icon •: %q", fileLine)
+	}
+
+	// 2. The last character of the filename ("g" in "spendsense.png") must align with the receipt tick "✓✓"
+	fileRunes := []rune(fileLine)
+	textEnd := -1
+	for i, r := range fileRunes {
+		if r == 'g' && i > 0 && fileRunes[i-1] == 'n' {
+			textEnd = i
+			break
+		}
+	}
+	if textEnd == -1 {
+		t.Fatalf("could not find end of filename in %q", fileLine)
+	}
+	tickEnd := lastNonSpaceCol(timeLine)
+	if textEnd != tickEnd {
+		t.Fatalf("filename ends at col %d, receipt tick ends at col %d; want equal\nfile: %q\ntime: %q", textEnd, tickEnd, fileLine, timeLine)
+	}
+}
+
 func TestOutgoingReactionSharesTimestampLineInTimestampNewLineMode(t *testing.T) {
 	setTestTheme(t, Monokai)
 

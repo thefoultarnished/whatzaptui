@@ -958,7 +958,7 @@ func wrappedIndex(cur, n, delta int) int {
 	return next
 }
 
-func (x m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (x *m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	action, done := p.Handle(k)
 	if !done {
 		*cfgField = p.SelectedKey()
@@ -970,12 +970,12 @@ func (x m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (t
 		x.settingsPicker.Open("")
 		x.invalidate()
 	} else {
-		p.Close(false)
+		*cfgField = p.Close(false)
 		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 		x.settingsPicker.Open("")
 		x.invalidate()
 	}
-	return x, nil
+	return *x, nil
 }
 
 
