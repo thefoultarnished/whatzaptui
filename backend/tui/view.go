@@ -38,7 +38,7 @@ func (x m) viewInner() string {
 	}
 	// Success Loading Screen: shown after login until status becomes "ready".
 	if x.status != "ready" {
-		return x.renderStartupView(frameW)
+		return x.renderStartupView(x.w)
 	}
 	outerW := frameW
 	var outerH int
@@ -112,14 +112,11 @@ func (x m) viewInner() string {
 }
 
 func (x m) renderStartupView(frameW int) string {
-	var outerW, outerH int
-	if currentConfig.Borderless {
-		outerW = x.w
-		outerH = x.h
-	} else {
+	outerW := x.w
+	if outerW == 0 {
 		outerW = frameW
-		outerH = max(3, x.h-2)
 	}
+	outerH := x.h
 	var innerW, innerH int
 	if currentConfig.Borderless {
 		innerW = outerW
@@ -270,8 +267,8 @@ func renderStatusBox(body string, innerW, innerH, outerW, outerH int) string {
 		return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
 	}
 	return lipgloss.NewStyle().
-		Width(outerW).
-		Height(outerH).
+		Width(innerW).
+		Height(innerH).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(brand).
 		Render(content)
@@ -466,7 +463,61 @@ func renderChatBubbleLogo(compact bool, frame ...int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+func renderPixelWordmark() string {
+	wGrid := []string{
+		"▄ ▄ ▄",
+		"█ █ █",
+		"█▄█▄█",
+		"     ",
+	}
+	hGrid := []string{
+		"█▄▄▄",
+		"█  █",
+		"█  █",
+		"    ",
+	}
+	a1Grid := []string{
+		"▄▄▄▄",
+		"▄▄▄█",
+		"█▄▄█",
+		"    ",
+	}
+	tGrid := []string{
+		"▄█▄",
+		" █ ",
+		" █▄",
+		"   ",
+	}
+	zGrid := []string{
+		"▄▄▄▄",
+		" ▄▄█",
+		"█▄▄▄",
+		"    ",
+	}
+	a2Grid := []string{
+		"▄▄▄▄",
+		"▄▄▄█",
+		"█▄▄█",
+		"    ",
+	}
+	pGrid := []string{
+		"▄▄▄▄",
+		"█▒▒█",
+		"█▄▄█",
+		"▀   ",
+	}
 
+	styleWhat := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
+	styleZap := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff"))
+
+	var rows []string
+	for r := range 4 {
+		what := styleWhat.Render(wGrid[r] + " " + hGrid[r] + " " + a1Grid[r] + " " + tGrid[r])
+		zap := styleZap.Render(zGrid[r] + " " + a2Grid[r] + " " + pGrid[r])
+		rows = append(rows, what+" "+zap)
+	}
+	return strings.Join(rows, "\n")
+}
 
 func (x m) loadingPulse() string {
 	steps := []string{
@@ -585,13 +636,89 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		percent = 100
 	}
 
-	// 1. Logo, Title, Subtitle
-	logo := renderChatBubbleLogo(innerH < 26, x.spinnerFrame)
-	titleWhat := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#818cf8")).Render("What")
-	titleZap := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00f5d4")).Render("Zap")
-	title := titleWhat + titleZap
-	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Render("Private WhatsApp in your terminal")
+	// 1. Top and Bottom Screen Bars & Height Budget
+	barW := innerW
+	topTilde := lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("~")
+	topName := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#25D366")).Render("WhatZap")
+	topVer := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("v0.1.0")
+	leftTopPlain := "~ WhatZap v0.1.0"
+	leftTopStyled := topTilde + " " + topName + " " + topVer
 
+	rightTopText := "A private WhatsApp client for your terminal"
+	rightTopStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render(rightTopText)
+
+	var topBarBlock string
+	sepCol := lipgloss.Color("#1e293b")
+	sepLine := lipgloss.NewStyle().Foreground(sepCol).Render(strings.Repeat("─", barW))
+
+	if barW >= len(leftTopPlain)+len(rightTopText)+4 {
+		spTop := barW - len(leftTopPlain) - len(rightTopText) - 2
+		topTextLine := " " + leftTopStyled + strings.Repeat(" ", spTop) + rightTopStyled + " "
+		if outerH >= 28 {
+			topBarBlock = topTextLine + "\n" + sepLine
+		} else {
+			topBarBlock = topTextLine
+		}
+	} else if barW >= len(leftTopPlain)+4 {
+		topTextLine := " " + leftTopStyled
+		if outerH >= 28 {
+			topBarBlock = topTextLine + "\n" + sepLine
+		} else {
+			topBarBlock = topTextLine
+		}
+	}
+
+	botName := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#25D366")).Render("WhatZap")
+	botPipe := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("│")
+	botTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("Terminal. Private. Yours.")
+	leftBotPlain := "WhatZap │ Terminal. Private. Yours."
+	leftBotStyled := botName + "  " + botPipe + "  " + botTag
+
+	rightBotText := "https://github.com/whatzap"
+	rightBotStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(rightBotText)
+
+	var botBarBlock string
+	if barW >= len(leftBotPlain)+len(rightBotText)+4 {
+		spBot := barW - len(leftBotPlain) - len(rightBotText) - 2
+		botTextLine := " " + leftBotStyled + strings.Repeat(" ", spBot) + rightBotStyled + " "
+		if outerH >= 28 {
+			botBarBlock = sepLine + "\n" + botTextLine
+		} else {
+			botBarBlock = botTextLine
+		}
+	} else if barW >= len(leftBotPlain)+4 {
+		botTextLine := " " + leftBotStyled
+		if outerH >= 28 {
+			botBarBlock = sepLine + "\n" + botTextLine
+		} else {
+			botBarBlock = botTextLine
+		}
+	}
+
+	centerH := innerH
+	if outerH >= 22 {
+		if topBarBlock != "" {
+			centerH -= strings.Count(topBarBlock, "\n") + 1
+		}
+		if botBarBlock != "" {
+			centerH -= strings.Count(botBarBlock, "\n") + 1
+		}
+	} else {
+		topBarBlock = ""
+		botBarBlock = ""
+	}
+	centerH = max(1, centerH)
+
+	// 2. Logo, Title, Subtitle
+	logo := renderChatBubbleLogo(innerH < 26, x.spinnerFrame)
+	var title string
+	if centerH >= 18 {
+		title = renderPixelWordmark()
+	} else {
+		titleWhat := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#818cf8")).Render("What")
+		titleZap := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00f5d4")).Render("Zap")
+		title = titleWhat + titleZap
+	}
 	// 2. Card Dimensions
 	cardW := min(66, max(44, innerW-4))
 	if innerW < 44 {
@@ -753,14 +880,14 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	// 9. Hint at Bottom
 	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("Press any key to continue")
 
-	// 10. Assemble Full View
+	// 11. Assemble Center Content
 	var allSections []string
-	if innerH >= 34 {
+	if centerH >= 28 {
 		allSections = []string{
 			logo,
 			"",
 			title,
-			subtitle,
+			"",
 			"",
 			cardBox,
 			"",
@@ -768,18 +895,11 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 			"",
 			hint,
 		}
-	} else if innerH >= 24 {
+	} else if centerH >= 18 {
 		allSections = []string{
-			logo,
-			title + "  •  " + subtitle,
-			cardBox,
-			cmdBox,
-			hint,
-		}
-	} else if innerH >= 19 {
-		allSections = []string{
-			logo,
 			title,
+			"",
+			"",
 			cardBox,
 			cmdContent,
 			hint,
@@ -787,13 +907,27 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	} else {
 		allSections = []string{
 			title,
+			"",
+			"",
 			cardBox,
 			hint,
 		}
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Center, allSections...)
-	return renderStatusBox(body, innerW, innerH, outerW, outerH)
+	centerContent := lipgloss.Place(innerW, centerH, lipgloss.Center, lipgloss.Center, body)
+
+	var fullRows []string
+	if topBarBlock != "" {
+		fullRows = append(fullRows, topBarBlock)
+	}
+	fullRows = append(fullRows, centerContent)
+	if botBarBlock != "" {
+		fullRows = append(fullRows, botBarBlock)
+	}
+
+	fullBody := strings.Join(fullRows, "\n")
+	return renderStatusBox(fullBody, innerW, innerH, outerW, outerH)
 }
 
 func (x m) renderHeaderContainer(contentW, leftW int) string {
@@ -1153,7 +1287,7 @@ func (x m) renderSide(w, h int) string {
 	f := x.filtered()
 	chatsW := (w - 1) / 2
 	peopleW := (w - 1) - chatsW
-	
+
 	chatsInactiveStyle := lipgloss.NewStyle().
 		Width(chatsW).
 		Align(lipgloss.Center).
@@ -1319,13 +1453,13 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		chatName := x.name(c)
 		nameText := numLabel + chatName
 		isMarqueeRow := highlighted || (isActive && x.mode == "chat" && !x.sidebarFocused)
-		
+
 		_, typing := x.typingChats[c.ID]
 		adjustW := 0
 		if typing {
 			adjustW = 3
 		}
-		
+
 		if isMarqueeRow && graphemeCount(nameText) > nameWidth-adjustW {
 			offset := x.sidebarMarqueeOffset
 			maxOffset := graphemeCount(nameText) - (nameWidth - adjustW)
@@ -1378,7 +1512,7 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		default:
 			content = padRight(nameText, nameWidth-adjustW)
 		}
-		
+
 		unreadStyle := lipgloss.NewStyle()
 		if highlighted || isActive {
 			unreadStyle = unreadStyle.Background(bg)
@@ -1442,7 +1576,7 @@ func applyBgToAnsiString(s string, bg lipgloss.Color) string {
 	} else {
 		bgSeq = ""
 	}
-	
+
 	if bgSeq == "" {
 		return s
 	}
@@ -1450,7 +1584,7 @@ func applyBgToAnsiString(s string, bg lipgloss.Color) string {
 	var sb strings.Builder
 	// Start with the background sequence active
 	sb.WriteString(bgSeq)
-	
+
 	matches := ansiEscapeRegex.FindAllStringIndex(s, -1)
 	lastIdx := 0
 	for _, match := range matches {
@@ -1478,14 +1612,14 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 	}
 	var sbPrefix strings.Builder
 	var sbSuffix strings.Builder
-	
+
 	matches := ansiEscapeRegex.FindAllStringIndex(s, -1)
 	currentW := 0
 	lastIdx := 0
-	
+
 	// Keep track of the current active ANSI styles to prepend to the suffix so formatting is preserved
 	var activeStyles []string
-	
+
 	for _, match := range matches {
 		// Process text segment before this ANSI sequence
 		textSeg := s[lastIdx:match[0]]
@@ -1498,14 +1632,14 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 				sbSuffix.WriteRune(r)
 			}
 		}
-		
+
 		esc := s[match[0]:match[1]]
 		if esc == "\x1b[0m" || esc == "\x1b[m" {
 			activeStyles = nil
 		} else {
 			activeStyles = append(activeStyles, esc)
 		}
-		
+
 		if currentW <= targetW {
 			sbPrefix.WriteString(esc)
 		} else {
@@ -1513,7 +1647,7 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 		}
 		lastIdx = match[1]
 	}
-	
+
 	textSeg := s[lastIdx:]
 	for _, r := range textSeg {
 		rw := runeDisplayWidth(string(r))
@@ -1524,7 +1658,7 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 			sbSuffix.WriteRune(r)
 		}
 	}
-	
+
 	prefix := sbPrefix.String()
 	suffix := sbSuffix.String()
 	if suffix != "" && len(activeStyles) > 0 {
@@ -1920,7 +2054,7 @@ func (x m) renderMain(w, h int) string {
 				// During upload, replace the timestamp slot with a live
 				// progress bar. Same gutter width as the timestamp+receipt
 				// it stands in for, so the right edge stays anchored.
-				progressW := runeDisplayWidth(timeStr + receiptText) + 2
+				progressW := runeDisplayWidth(timeStr+receiptText) + 2
 				if progressW < 4 {
 					progressW = 16
 				}
@@ -2302,7 +2436,7 @@ func (x m) renderMain(w, h int) string {
 				plain := plainLines[idx]
 				trimmed := strings.TrimLeft(plain, " ")
 				leading := len(plain) - len(trimmed)
-				
+
 				pointerW := 0
 				if !msg.Key.FromMe {
 					bodyLineIdx := idx
@@ -2334,7 +2468,7 @@ func (x m) renderMain(w, h int) string {
 
 				contentStart := leading + pointerW
 				contentEnd := leading + runeDisplayWidth(trimmed)
-				
+
 				starts[idx] = contentStart
 				ends[idx] = contentEnd
 				if starts[idx] < minStart {
@@ -2355,12 +2489,12 @@ func (x m) renderMain(w, h int) string {
 				if end < maxEnd {
 					rightPadding = strings.Repeat(" ", maxEnd-end)
 				}
-				
+
 				// Reconstruct the line preserving the prefix (up to start) unhighlighted,
 				// and highlighting the content from start to maxEnd.
 				// Let's extract the prefix and content using ANSI-safe splitting at `start`.
 				prefixPart, contentPart := splitAnsiStringAtWidth(ln, start)
-				
+
 				// Apply background style to contentPart + rightPadding.
 				block[idx] = prefixPart + applyBgToAnsiString(contentPart+rightPadding, messageSelectedBg)
 			}

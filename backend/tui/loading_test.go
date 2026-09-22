@@ -111,8 +111,15 @@ func TestSignedInSplashVisualElements(t *testing.T) {
 	if !strings.Contains(view, "Press any key to continue") {
 		t.Errorf("loading screen missing continue hint")
 	}
+	// Top bar
+	if !strings.Contains(view, "A private WhatsApp client for your terminal") {
+		t.Errorf("loading screen missing top bar tagline")
+	}
+	// Bottom bar
+	if !strings.Contains(view, "Terminal. Private. Yours.") || !strings.Contains(view, "https://github.com/whatzap") {
+		t.Errorf("loading screen missing bottom bar footer or github link")
+	}
 }
-
 func TestSignedInSplashHeaderBorderAlignment(t *testing.T) {
 	model := m{
 		w:      80,
@@ -142,6 +149,56 @@ func TestSignedInSplashHeaderBorderAlignment(t *testing.T) {
 	divW := len([]rune(dividerLine))
 	if topW != botW || topW != divW {
 		t.Fatalf("header border width mismatch: top=%d, bottom=%d, divider=%d", topW, botW, divW)
+	}
+}
+
+func TestNoExtraBlankRowBelowBottomBar(t *testing.T) {
+	model := m{
+		w:      80,
+		h:      24,
+		status: "Connecting...",
+	}
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	githubIdx := -1
+	outerBotIdx := -1
+	for i, l := range lines {
+		plain := ansiStripRe.ReplaceAllString(l, "")
+		if strings.Contains(plain, "github.com/whatzap") {
+			githubIdx = i
+		}
+		if strings.Contains(plain, "╰") && strings.HasPrefix(plain, "╰") {
+			outerBotIdx = i
+		}
+	}
+	if githubIdx == -1 {
+		t.Fatalf("could not find github link row in view:\n%s", view)
+	}
+	if outerBotIdx != -1 {
+		if outerBotIdx != githubIdx+1 {
+			t.Fatalf("expected outer bottom border immediately below github link row (idx %d vs %d):\n%s", outerBotIdx, githubIdx+1, view)
+		}
+	}
+}
+
+func TestSignedInSplashEdgeToEdgeDimensions(t *testing.T) {
+	model := m{
+		w:      80,
+		h:      24,
+		status: "Connecting...",
+	}
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("expected view to have exactly 24 lines, got %d", len(lines))
+	}
+	firstPlain := ansiStripRe.ReplaceAllString(lines[0], "")
+	lastPlain := ansiStripRe.ReplaceAllString(lines[23], "")
+	if len([]rune(firstPlain)) != 80 {
+		t.Errorf("expected first line to be 80 runes wide, got %d", len([]rune(firstPlain)))
+	}
+	if len([]rune(lastPlain)) != 80 {
+		t.Errorf("expected last line to be 80 runes wide, got %d", len([]rune(lastPlain)))
 	}
 }
 
