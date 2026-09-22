@@ -407,19 +407,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.resortChats(selectedID)
 		x.ensureSideVisible(x.sideViewRows())
 		cmds := []tea.Cmd{}
-		// First paint: select the most recent chat so the pane isn't empty,
-		// but do NOT send a read receipt — the user hasn't explicitly opened it yet.
-		if x.active == "" && x.sidebarTab == "chats" && len(x.chats) > 0 {
-			x.sel = 0
-			x.active = x.chats[0].ID
-			x.mode = "chat"
-			cmds = append(cmds, getMsgs(x.reqCtx(), x.client, x.baseURL, x.active, 120))
-			if strings.HasSuffix(x.active, "@g.us") {
-				if _, cached := x.groupPreviews[x.active]; !cached {
-					cmds = append(cmds, fetchGroupPreview(x.reqCtx(), x.client, x.baseURL, x.active))
-				}
-			}
-		}
+		// No auto-open: a fresh session stays on the chat list until the
+		// user explicitly opens a chat.
 		if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 			cmds = append(cmds, titleCmd)
 		}
@@ -667,6 +656,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.drafts = map[string]string{}
 		x.replyTo = nil
 		x.selectedMsgID = ""
+		x.stopAudio(true)
 		x.status = v.msg
 		x.err = ""
 		x.invalidate()
@@ -724,6 +714,13 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if x.downloadingMedia != nil {
 				delete(x.downloadingMedia, v.msgID)
 			}
+			if v.msgID == x.audioPending {
+				x.audioPending = ""
+				x.audioMsgID = ""
+				x.audioChatID = ""
+				x.invalidate()
+				return x, x.setTopBar("Audio download failed: " + v.err.Error())
+			}
 			if v.isPreview || strings.Contains(v.err.Error(), "not connected") {
 				return x, nil
 			}
@@ -734,10 +731,55 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if v.isPreview {
 			x.rememberMedia(v.msgID, v.path)
+			if v.msgID == x.audioPending && v.msgID == x.audioMsgID {
+				x.audioPending = ""
+				return x, x.startAudioPlayback(v.chatID, v.msgID, v.path, x.audioDuration)
+			}
 			x.invalidate()
 			return x, nil
 		}
 		return x, openFile(v.path)
+	case audioTickMsg:
+		if !x.audioPlaying || x.audioCancel == nil {
+			return x, nil
+		}
+		x.audioElapsed = x.audioBase + time.Since(x.audioStartedAt)
+		if x.audioDuration > 0 && x.audioElapsed >= x.audioDuration {
+			// Nominal length reached, but whole-second durations run
+			// slightly short of the real audio: pin the bar at full and
+			// wait for the player process to exit instead of clearing
+			// early. No further ticks needed — the display is static.
+			x.audioElapsed = x.audioDuration
+			x.invalidate()
+			return x, nil
+		}
+		x.invalidate()
+		return x, audioTickCmd()
+	case audioDoneMsg:
+		if v.gen != x.audioGen {
+			return x, nil
+		}
+		if v.cancelled {
+			return x, nil
+		}
+		x.audioPlaying = false
+		x.audioCancel = nil
+		if v.err != nil {
+			x.audioMsgID = ""
+			x.audioChatID = ""
+			x.audioPath = ""
+			x.audioElapsed = 0
+			x.audioDuration = 0
+			x.invalidate()
+			return x, x.setTopBar("Audio failed: " + v.err.Error())
+		}
+		x.audioMsgID = ""
+		x.audioChatID = ""
+		x.audioPath = ""
+		x.audioElapsed = 0
+		x.audioDuration = 0
+		x.invalidate()
+		return x, nil
 	case fileOpenMsg:
 		if v.err != nil {
 			return x, x.setTopBar("Open failed: " + v.err.Error())

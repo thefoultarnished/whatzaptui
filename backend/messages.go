@@ -1489,7 +1489,7 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 		msg["documentMessage"] = map[string]any{"caption": doc.GetCaption(), "fileName": doc.GetFileName(), "mimetype": doc.GetMimetype()}
 	}
 	if aud := effective.GetAudioMessage(); aud != nil {
-		msg["audioMessage"] = map[string]any{"ptt": aud.GetPTT(), "mimetype": aud.GetMimetype()}
+		msg["audioMessage"] = map[string]any{"ptt": aud.GetPTT(), "mimetype": aud.GetMimetype(), "seconds": aud.GetSeconds()}
 	}
 	if stk := effective.GetStickerMessage(); stk != nil {
 		msg["stickerMessage"] = map[string]any{"mimetype": stk.GetMimetype()}

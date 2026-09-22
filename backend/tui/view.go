@@ -1444,6 +1444,7 @@ func (x m) renderMain(w, h int) string {
 		if msgBody == "" {
 			msgBody = "[media]"
 		}
+		msgBody += x.audioProgressLine(msg)
 
 		timeStr := formatExactTime(msg.MessageTimestamp)
 		if edited, _ := msg.Message["edited"].(bool); edited {
@@ -2241,6 +2242,7 @@ func (x m) msgIDAtLine(lineIdx, w, h int) string {
 		if mb == "" {
 			mb = "[media]"
 		}
+		mb += x.audioProgressLine(msg)
 		availableW := chatMessageWrapWidth(w, mb)
 		senderName := "Me"
 		if !msg.Key.FromMe {

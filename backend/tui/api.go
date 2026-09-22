@@ -662,6 +662,7 @@ func sendFile(ctx context.Context, c *http.Client, base, chatID, kind, path, cap
 }
 func (x m) cleanup() {
 	x.cancelRequests()
+	x.stopAudio(true)
 	if x.demoMode {
 		return
 	}

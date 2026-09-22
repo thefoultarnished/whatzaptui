@@ -57,6 +57,15 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return x, x.doWhitelistAll()
 		case "blacklistall":
 			return x, x.doBlacklistAll()
+		case "audioplayer":
+			path := x.audioFallbackPath
+			x.audioFallbackPath = ""
+			x.confirmDialog.Close()
+			x.invalidate()
+			if path == "" {
+				return x, nil
+			}
+			return x, openFile(path)
 		}
 		return x, nil
 	}
@@ -918,6 +927,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return x, deferComposerSend(x.pendingSendSeq)
 		default:
 			if x.sidebarFocused {
+				// Space outside the composer toggles audio playback for
+				// the selected/latest audio message; every other key is
+				// swallowed so typing can't start from the sidebar.
+				if k.String() == " " {
+					return x, x.toggleAudioPlayback()
+				}
 				cancelPendingSend()
 				return x, nil
 			}

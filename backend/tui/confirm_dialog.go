@@ -14,7 +14,7 @@ type confirmDialog struct {
 	open    bool
 	title   string
 	message string
-	action  string // identifies what to do on confirm: "logout" | "whitelistall" | "blacklistall"
+	action  string // identifies what to do on confirm: "logout" | "whitelistall" | "blacklistall" | "audioplayer"
 	idx     int    // 0 = Yes, 1 = No
 }
 

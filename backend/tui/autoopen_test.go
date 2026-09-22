@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// TestChatsMsgAutoOpensRecentChat: a fresh session (active == "") opens the
-// most recent chat so first paint includes messages.
-func TestChatsMsgAutoOpensRecentChat(t *testing.T) {
+// TestChatsMsgDoesNotAutoOpen: a fresh session (active == "") stays on
+// the chat list — no chat opens until the user picks one.
+func TestChatsMsgDoesNotAutoOpen(t *testing.T) {
 	var msgsHit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -44,24 +44,20 @@ func TestChatsMsgAutoOpensRecentChat(t *testing.T) {
 	}
 	mdl, cmd := x.updateInner(chatsMsg{chats: newChats})
 	got := mdl.(m)
-	if got.active != "111@s.whatsapp.net" {
-		t.Fatalf("active = %q, want most recent chat", got.active)
+	if got.active != "" {
+		t.Fatalf("active = %q, want empty (no auto-open)", got.active)
 	}
-	if got.mode != "chat" {
-		t.Fatalf("mode = %q, want chat", got.mode)
-	}
-	if cmd == nil {
-		t.Fatalf("expected message-fetch cmd")
-	}
-	if batch, ok := cmd().(tea.BatchMsg); ok {
-		for _, c := range batch {
-			if c != nil {
-				_ = c()
+	if cmd != nil {
+		if batch, ok := cmd().(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if c != nil {
+					_ = c()
+				}
 			}
 		}
 	}
-	if !msgsHit {
-		t.Fatalf("expected /messages fetch for auto-opened chat")
+	if msgsHit {
+		t.Fatalf("no /messages fetch expected without an opened chat")
 	}
 }
 
@@ -128,8 +124,8 @@ func TestChatsMsgDoesNotMarkReadBeforeReady(t *testing.T) {
 	}
 	mdl, cmd := x.updateInner(chatsMsg{chats: newChats})
 	got := mdl.(m)
-	if got.active != "111@s.whatsapp.net" {
-		t.Fatalf("active = %q, want 111", got.active)
+	if got.active != "" {
+		t.Fatalf("active = %q, want empty (no auto-open)", got.active)
 	}
 	if cmd != nil {
 		if batch, ok := cmd().(tea.BatchMsg); ok {
@@ -140,8 +136,8 @@ func TestChatsMsgDoesNotMarkReadBeforeReady(t *testing.T) {
 			}
 		}
 	}
-	if !msgsHit {
-		t.Fatalf("expected /messages fetch for auto-opened chat")
+	if msgsHit {
+		t.Fatalf("no /messages fetch expected without an opened chat")
 	}
 	if markReadHit {
 		t.Fatalf("did not expect /messages/read while status is Connecting...")

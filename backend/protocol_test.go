@@ -13,6 +13,23 @@ func protoMsgWithType(t *testing.T, typ waE2E.ProtocolMessage_Type) *waE2E.Messa
 	return &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{Type: typ.Enum()}}
 }
 
+func TestWireMessagePayloadAudioSeconds(t *testing.T) {
+	app := newTestApp(t)
+	raw := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+		Seconds:  proto.Uint32(38),
+		PTT:      proto.Bool(true),
+		Mimetype: proto.String("audio/ogg; codecs=opus"),
+	}}
+	payload, _ := app.wireMessagePayload(raw, raw, "15551230001@s.whatsapp.net", false)
+	aud, ok := payload["audioMessage"].(map[string]any)
+	if !ok {
+		t.Fatal("payload lacks audioMessage")
+	}
+	if aud["seconds"] != uint32(38) {
+		t.Fatalf("seconds = %v (%T), want uint32 38", aud["seconds"], aud["seconds"])
+	}
+}
+
 func TestIsInvisibleProtocolMessage(t *testing.T) {
 	cases := []struct {
 		name string

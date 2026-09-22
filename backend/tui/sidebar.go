@@ -312,6 +312,7 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 		x.saveDraft()
 		x.active = newID
 		x.restoreDraft()
+		x.stopAudio(true)
 	}
 	x.mode, x.scroll = "chat", 0
 	if x.chatInputLocked() {

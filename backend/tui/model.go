@@ -276,6 +276,18 @@ type m struct {
 	downloadedMedia                          map[string]string
 	mediaOrder                               []string // FIFO insertion order for downloadedMedia eviction
 	downloadingMedia                         map[string]bool
+	audioMsgID                               string            // playing/paused audio message ID (bubble highlight)
+	audioChatID                              string            // chat the audio belongs to
+	audioPath                                string            // local downloaded audio file
+	audioPlaying                             bool              // player process running
+	audioElapsed                             time.Duration     // position (frozen while paused)
+	audioBase                                time.Duration     // elapsed at last (re)start
+	audioStartedAt                           time.Time         // when the current run started
+	audioDuration                            time.Duration     // total length, 0 = unknown
+	audioPending                             string            // msgID awaiting download before play
+	audioGen                                 int               // supersedes stale player/tick messages
+	audioCancel                              context.CancelFunc // kills the player process
+	audioFallbackPath                        string            // audio file for default-player fallback from popup
 	drafts                                   map[string]string // chatID -> unsent composer text
 }
 
