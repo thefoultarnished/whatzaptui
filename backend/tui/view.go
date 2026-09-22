@@ -502,7 +502,7 @@ func renderPixelWordmark() string {
 	}
 	pGrid := []string{
 		"▄▄▄▄",
-		"█▒▒█",
+		"█  █",
 		"█▄▄█",
 		"▀   ",
 	}
@@ -882,12 +882,11 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 
 	// 11. Assemble Center Content
 	var allSections []string
-	if centerH >= 28 {
+	if centerH >= 26 {
 		allSections = []string{
 			logo,
 			"",
 			title,
-			"",
 			"",
 			cardBox,
 			"",
@@ -895,11 +894,10 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 			"",
 			hint,
 		}
-	} else if centerH >= 18 {
+	} else if centerH >= 20 {
 		allSections = []string{
+			logo,
 			title,
-			"",
-			"",
 			cardBox,
 			cmdContent,
 			hint,
@@ -907,8 +905,6 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	} else {
 		allSections = []string{
 			title,
-			"",
-			"",
 			cardBox,
 			hint,
 		}
