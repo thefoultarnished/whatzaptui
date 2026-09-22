@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWithTxCommits(t *testing.T) {
@@ -143,4 +144,122 @@ func TestPersistWorkerStops(t *testing.T) {
 	app.startPersistWorker()
 	app.stopPersistWorker()
 	app.stopPersistWorker() // idempotent, must not panic
+}
+
+func TestEnqueueLIDMigrationProcessesInQueue(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+	_, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('lid_queue_1', 'Queued LID', 1)`)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	app.enqueueLIDMigration("lid_queue_1", "pn_queue_1")
+
+	// Wait for the single-worker background queue to process.
+	var name string
+	var allowed int
+	found := false
+	for range 50 {
+		err := app.db.QueryRow(`SELECT name, allowed FROM chat_permissions WHERE phone = 'pn_queue_1'`).Scan(&name, &allowed)
+		if err == nil && name == "Queued LID" && allowed == 1 {
+			found = true
+			break
+		}
+		// Yield briefly
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf("queued LID migration did not complete as expected")
+	}
+}
+
+func TestHandleStartMethodValidation(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	req := authorizedRequest(httptest.NewRequest(http.MethodGet, "/start", nil), app)
+	rec := httptest.NewRecorder()
+	app.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /start status = %d, want 405", rec.Code)
+	}
+}
+
+func TestHandleResolveLIDPN(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	// 1. POST returns 405
+	postReq := authorizedRequest(httptest.NewRequest(http.MethodPost, "/resolve/lidpn", nil), app)
+	postRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /resolve/lidpn status = %d, want 405", postRec.Code)
+	}
+
+	// 2. GET without client/store returns 500 lid mapping store unavailable
+	noClientReq := authorizedRequest(httptest.NewRequest(http.MethodGet, "/resolve/lidpn?id=15551230001@s.whatsapp.net", nil), app)
+	noClientRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(noClientRec, noClientReq)
+	if noClientRec.Code != http.StatusInternalServerError || !strings.Contains(noClientRec.Body.String(), "lid mapping store unavailable") {
+		t.Fatalf("GET /resolve/lidpn status = %d, want 500 lid mapping store unavailable, body=%s", noClientRec.Code, noClientRec.Body.String())
+	}
+}
+
+func TestHandleSyncContactsAndGroups(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	// 1. /sync/contacts GET is 405
+	cGet := authorizedRequest(httptest.NewRequest(http.MethodGet, "/sync/contacts", nil), app)
+	cGetRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(cGetRec, cGet)
+	if cGetRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /sync/contacts status = %d, want 405", cGetRec.Code)
+	}
+
+	// 2. /sync/contacts POST when disconnected returns 409
+	cPost := authorizedRequest(httptest.NewRequest(http.MethodPost, "/sync/contacts", nil), app)
+	cPostRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(cPostRec, cPost)
+	if cPostRec.Code != http.StatusConflict {
+		t.Fatalf("POST /sync/contacts disconnected status = %d, want 409", cPostRec.Code)
+	}
+
+	// 3. /sync/groups GET is 405
+	gGet := authorizedRequest(httptest.NewRequest(http.MethodGet, "/sync/groups", nil), app)
+	gGetRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(gGetRec, gGet)
+	if gGetRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /sync/groups status = %d, want 405", gGetRec.Code)
+	}
+
+	// 4. /sync/groups POST when disconnected returns 409
+	gPost := authorizedRequest(httptest.NewRequest(http.MethodPost, "/sync/groups", nil), app)
+	gPostRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(gPostRec, gPost)
+	if gPostRec.Code != http.StatusConflict {
+		t.Fatalf("POST /sync/groups disconnected status = %d, want 409", gPostRec.Code)
+	}
+}
+
+func TestHandleProfilePictureAndMediaDownloadValidation(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	// Profile picture when disconnected returns 409
+	pReq := authorizedRequest(httptest.NewRequest(http.MethodGet, "/profile-picture?jid=15551230001@s.whatsapp.net", nil), app)
+	pRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(pRec, pReq)
+	if pRec.Code != http.StatusConflict {
+		t.Fatalf("GET /profile-picture disconnected status = %d, want 409", pRec.Code)
+	}
+
+	// Media download when disconnected returns 409
+	mReq := authorizedRequest(httptest.NewRequest(http.MethodGet, "/media/download?chatId=c1&msgId=m1", nil), app)
+	mRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(mRec, mReq)
+	if mRec.Code != http.StatusConflict {
+		t.Fatalf("GET /media/download disconnected status = %d, want 409", mRec.Code)
+	}
 }

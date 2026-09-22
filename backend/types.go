@@ -120,6 +120,8 @@ type App struct {
 	stopPersistOnce    sync.Once
 	lidCacheMu         sync.RWMutex
 	lidCache           map[string]string
+	lidMigrateOnce     sync.Once
+	lidMigrateJobs     chan lidMigrateJob
 
 	// logoutMu serializes the /logout handler against itself so two
 	// concurrent calls can't race through the data-folder teardown.
@@ -139,6 +141,11 @@ type App struct {
 	// WebSocket after the qr event still gets it. Guarded by mu.
 	connState string
 	lastQR    string
+}
+
+type lidMigrateJob struct {
+	lidUser string
+	pnUser  string
 }
 
 type dbExecutor interface {

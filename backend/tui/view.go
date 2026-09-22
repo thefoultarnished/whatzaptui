@@ -85,16 +85,7 @@ func (x m) viewInner() string {
 					"",
 					hint,
 				)
-				content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
-				if currentConfig.Borderless {
-					return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
-				}
-				return lipgloss.NewStyle().
-					Width(outerW).
-					Height(outerH).
-					Border(lipgloss.RoundedBorder()).
-					BorderForeground(brand).
-					Render(content)
+				return renderStatusBox(body, innerW, innerH, outerW, outerH)
 			} else {
 				statusBody = "Generating QR..."
 				hint = mutedStyle.Render("Preparing login QR")
@@ -112,28 +103,10 @@ func (x m) viewInner() string {
 			progress := x.renderBootStages()
 			pulse := x.loadingPulse()
 			body := statusMsgTemplate(statusBody, progress+"\n"+pulse)
-			content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
-			if currentConfig.Borderless {
-				return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
-			}
-			return lipgloss.NewStyle().
-				Width(outerW).
-				Height(outerH).
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(brand).
-				Render(content)
+			return renderStatusBox(body, innerW, innerH, outerW, outerH)
 		}
 		msg := statusMsgTemplate(statusBody, "")
-		content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, msg)
-		if currentConfig.Borderless {
-			return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
-		}
-		return lipgloss.NewStyle().
-			Width(outerW).
-			Height(outerH).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(brand).
-			Render(content)
+		return renderStatusBox(msg, innerW, innerH, outerW, outerH)
 	}
 	outerW := frameW
 	var outerH int
@@ -273,6 +246,19 @@ func (x m) viewInner() string {
 		return x.renderSearchOverlay(frame, outerW, outerH)
 	}
 	return frame
+}
+
+func renderStatusBox(body string, innerW, innerH, outerW, outerH int) string {
+	content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
+	if currentConfig.Borderless {
+		return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
+	}
+	return lipgloss.NewStyle().
+		Width(outerW).
+		Height(outerH).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(brand).
+		Render(content)
 }
 
 func connectFrameJunctions(framedBody string) string {
@@ -1412,10 +1398,7 @@ func (x m) renderMain(w, h int) string {
 				rSender := "Me"
 				rIsMe := msg.Key.FromMe
 				sid := x.senderIDForMsg(msg)
-				fullName := x.nameFor(sid)
-				if fullName == num(sid) && msg.PushName != "" {
-					fullName = msg.PushName
-				}
+				fullName := x.senderNameForMsg(msg)
 				senderNum := num(sid)
 				isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
 				if !msg.Key.FromMe {

@@ -124,30 +124,48 @@ func (x *m) handleGlobalCommand(txt string) (tea.Cmd, bool) {
 }
 
 func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
-	switch {
-	case includeGlobal && txt == "/exit":
+	if includeGlobal {
+		if cmd, handled := x.runGlobalCommand(txt); handled {
+			return cmd, true
+		}
+	}
+	if cmd, handled := x.runPermissionCommand(txt, includeGlobal); handled {
+		return cmd, true
+	}
+	if cmd, handled := x.runMediaSendCommand(txt, includeGlobal); handled {
+		return cmd, true
+	}
+	if cmd, handled := x.runUICommand(txt); handled {
+		return cmd, true
+	}
+	if strings.HasPrefix(txt, "/") {
+		return x.setTopBar("unknown command: " + txt), true
+	}
+	return nil, false
+}
+
+func (x *m) runGlobalCommand(txt string) (tea.Cmd, bool) {
+	switch txt {
+	case "/exit":
 		x.cancelRequests()
 		return tea.Quit, true
-	case includeGlobal && txt == "/restart":
+	case "/restart":
 		x.restartRequested = true
 		x.cancelRequests()
 		return tea.Quit, true
-	case txt == "/logout":
-		x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
-		return nil, true
-	case includeGlobal && txt == "/synccontacts":
+	case "/synccontacts":
 		if x.demoMode {
 			return x.setTopBar("Demo mode: contacts already fake"), true
 		}
 		x.syncingContacts = true
 		return tea.Batch(x.setTopBar("Syncing contacts..."), syncContacts(x.reqCtx(), x.client, x.baseURL)), true
-	case includeGlobal && txt == "/syncgroups":
+	case "/syncgroups":
 		if x.demoMode {
 			return x.setTopBar("Demo mode: groups already fake"), true
 		}
 		x.syncingGroups = true
 		return tea.Batch(x.setTopBar("Syncing groups..."), syncGroups(x.reqCtx(), x.client, x.baseURL)), true
-	case includeGlobal && txt == "/allcontacts":
+	case "/allcontacts":
 		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
 		saveConfig()
 		x.invalidateSidebarContacts()
@@ -155,6 +173,12 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 			return x.setTopBar("People shows all contacts (stored + strangers)"), true
 		}
 		return x.setTopBar("People shows stored contacts only"), true
+	}
+	return nil, false
+}
+
+func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
+	switch {
 	case txt == "/whitelistall":
 		if len(x.chats) == 0 {
 			if includeGlobal {
@@ -248,58 +272,72 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		return tea.Batch(setName(x.reqCtx(), x.client, x.baseURL, n, name), x.setTopBar("Renamed")), true
 	case txt == "/rename":
 		return x.setTopBar("usage: /rename <name>"), true
-	case strings.HasPrefix(txt, "/send "), txt == "/send", strings.HasPrefix(txt, "/sendimage"), strings.HasPrefix(txt, "/sendvideo"), strings.HasPrefix(txt, "/sendfile"):
-		cmd, usage, matched := parseMediaSendCommand(txt)
-		if !matched {
+	}
+	return nil, false
+}
+
+func (x *m) runMediaSendCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
+	if !strings.HasPrefix(txt, "/send ") && txt != "/send" && !strings.HasPrefix(txt, "/sendimage") && !strings.HasPrefix(txt, "/sendvideo") && !strings.HasPrefix(txt, "/sendfile") {
+		return nil, false
+	}
+	cmd, usage, matched := parseMediaSendCommand(txt)
+	if !matched {
+		return nil, false
+	}
+	if usage != "" {
+		return x.setTopBar(usage), true
+	}
+	if includeGlobal && x.active == "" {
+		return x.setTopBar("No active chat"), true
+	}
+	if _, ok := x.whitelist[num(x.active)]; !ok {
+		return x.setTopBar("Not whitelisted - use /whitelist to enable"), true
+	}
+	if x.demoMode {
+		return x.setTopBar("Demo mode: media send disabled"), true
+	}
+	kind := cmd.kind
+	if kind == "" {
+		var err error
+		kind, err = detectMediaSendKind(cmd.path)
+		if err != nil {
+			return x.setTopBar(err.Error()), true
+		}
+	}
+	fileName := filepath.Base(cmd.path)
+	pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+	x.msgs[x.active] = append(x.msgs[x.active],
+		optimisticOutgoingMediaMessage(x.active, kind, fileName, cmd.caption, pendingID))
+	x.invalidate()
+	now := time.Now()
+	selectedID := x.selectedChatID()
+	for i := range x.chats {
+		if x.chats[i].ID == x.active {
+			x.chats[i].ConversationTimestamp = now.Unix()
 			break
 		}
-		if usage != "" {
-			return x.setTopBar(usage), true
-		}
-		if includeGlobal && x.active == "" {
-			return x.setTopBar("No active chat"), true
-		}
-		if _, ok := x.whitelist[num(x.active)]; !ok {
-			return x.setTopBar("Not whitelisted - use /whitelist to enable"), true
-		}
-		if x.demoMode {
-			return x.setTopBar("Demo mode: media send disabled"), true
-		}
-		kind := cmd.kind
-		if kind == "" {
-			var err error
-			kind, err = detectMediaSendKind(cmd.path)
-			if err != nil {
-				return x.setTopBar(err.Error()), true
-			}
-		}
-		fileName := filepath.Base(cmd.path)
-		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
-		x.msgs[x.active] = append(x.msgs[x.active],
-			optimisticOutgoingMediaMessage(x.active, kind, fileName, cmd.caption, pendingID))
-		x.invalidate()
-		now := time.Now()
-		selectedID := x.selectedChatID()
-		for i := range x.chats {
-			if x.chats[i].ID == x.active {
-				x.chats[i].ConversationTimestamp = now.Unix()
-				break
-			}
-		}
-		x.resortChats(selectedID)
-		x.scroll = 0
-		x.msgActivityUntil = time.Now().Add(3 * time.Second)
-		x.msgActivityType = "sent"
-		x.replyTo = nil
-		progressCh := make(chan fileProgressMsg, 16)
-		if x.uploadChans == nil {
-			x.uploadChans = map[string]chan fileProgressMsg{}
-		}
-		x.uploadChans[pendingID] = progressCh
-		return tea.Batch(
-			sendFile(x.reqCtx(), x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, pendingID, progressCh),
-			listenFileProgress(progressCh),
-		), true
+	}
+	x.resortChats(selectedID)
+	x.scroll = 0
+	x.msgActivityUntil = time.Now().Add(3 * time.Second)
+	x.msgActivityType = "sent"
+	x.replyTo = nil
+	progressCh := make(chan fileProgressMsg, 16)
+	if x.uploadChans == nil {
+		x.uploadChans = map[string]chan fileProgressMsg{}
+	}
+	x.uploadChans[pendingID] = progressCh
+	return tea.Batch(
+		sendFile(x.reqCtx(), x.client, x.baseURL, x.active, kind, cmd.path, cmd.caption, pendingID, progressCh),
+		listenFileProgress(progressCh),
+	), true
+}
+
+func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
+	switch {
+	case txt == "/logout":
+		x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
+		return nil, true
 	case txt == "/emoji":
 		x.openEmojiPicker()
 		return nil, true
@@ -387,8 +425,6 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		currentConfig.SoundProfile = x.soundProfile
 		saveConfig()
 		return tea.Batch(x.setTopBar("Sound: "+soundName(x.soundProfile)), playSoundProfileCmd(x.soundProfile)), true
-	case strings.HasPrefix(txt, "/"):
-		return x.setTopBar("unknown command: " + txt), true
 	}
 	return nil, false
 }

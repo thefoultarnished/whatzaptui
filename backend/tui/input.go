@@ -315,80 +315,16 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x, nil
 	}
 	if x.typingAnimationPicker.open {
-		action, done := x.typingAnimationPicker.Handle(k)
-		if !done {
-			currentConfig.TypingAnimationStyle = x.typingAnimationPicker.SelectedKey()
-			x.invalidate()
-		} else if action == "confirm" {
-			currentConfig.TypingAnimationStyle = x.typingAnimationPicker.Close(true)
-			saveConfig()
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		} else {
-			x.typingAnimationPicker.Close(false)
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		}
-		return x, nil
+		return x.handleSettingsSubPicker(&x.typingAnimationPicker, &currentConfig.TypingAnimationStyle, k)
 	}
 	if x.mediaIconPicker.open {
-		action, done := x.mediaIconPicker.Handle(k)
-		if !done {
-			currentConfig.MediaIconStyle = x.mediaIconPicker.SelectedKey()
-			x.invalidate()
-		} else if action == "confirm" {
-			currentConfig.MediaIconStyle = x.mediaIconPicker.Close(true)
-			saveConfig()
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		} else {
-			x.mediaIconPicker.Close(false)
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		}
-		return x, nil
+		return x.handleSettingsSubPicker(&x.mediaIconPicker, &currentConfig.MediaIconStyle, k)
 	}
 	if x.mediaViewPicker.open {
-		action, done := x.mediaViewPicker.Handle(k)
-		if !done {
-			currentConfig.MediaViewStyle = x.mediaViewPicker.SelectedKey()
-			x.invalidate()
-		} else if action == "confirm" {
-			currentConfig.MediaViewStyle = x.mediaViewPicker.Close(true)
-			saveConfig()
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		} else {
-			x.mediaViewPicker.Close(false)
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		}
-		return x, nil
+		return x.handleSettingsSubPicker(&x.mediaViewPicker, &currentConfig.MediaViewStyle, k)
 	}
 	if x.userlistIconPicker.open {
-		action, done := x.userlistIconPicker.Handle(k)
-		if !done {
-			currentConfig.UserlistIconStyle = x.userlistIconPicker.SelectedKey()
-			x.invalidate()
-		} else if action == "confirm" {
-			currentConfig.UserlistIconStyle = x.userlistIconPicker.Close(true)
-			saveConfig()
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		} else {
-			x.userlistIconPicker.Close(false)
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-			x.settingsPicker.Open("")
-			x.invalidate()
-		}
-		return x, nil
+		return x.handleSettingsSubPicker(&x.userlistIconPicker, &currentConfig.UserlistIconStyle, k)
 	}
 	if x.emojiPickerOpen {
 		return x.handleEmojiPicker(k)
@@ -1021,6 +957,27 @@ func wrappedIndex(cur, n, delta int) int {
 	}
 	return next
 }
+
+func (x m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	action, done := p.Handle(k)
+	if !done {
+		*cfgField = p.SelectedKey()
+		x.invalidate()
+	} else if action == "confirm" {
+		*cfgField = p.Close(true)
+		saveConfig()
+		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker.Open("")
+		x.invalidate()
+	} else {
+		p.Close(false)
+		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker.Open("")
+		x.invalidate()
+	}
+	return x, nil
+}
+
 
 func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := x.fileBrowserVisibleRows(max(1, x.h-8))

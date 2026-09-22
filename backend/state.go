@@ -949,13 +949,31 @@ func (a *App) getPNForLID(lid types.JID) (types.JID, error) {
 	if err == nil && pn.User != "" {
 		a.lidCache[key] = pn.String()
 		a.lidCache[pn.String()] = pn.String()
-		go a.migrateLIDPermissions(lid.User, pn.User)
+		a.enqueueLIDMigration(lid.User, pn.User)
 	} else {
 		a.lidCache[key] = ""
 	}
 	a.lidCacheMu.Unlock()
 
 	return pn, err
+}
+
+func (a *App) enqueueLIDMigration(lidUser, pnUser string) {
+	if a == nil || a.db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
+		return
+	}
+	a.lidMigrateOnce.Do(func() {
+		a.lidMigrateJobs = make(chan lidMigrateJob, 256)
+		go func() {
+			for job := range a.lidMigrateJobs {
+				a.migrateLIDPermissions(job.lidUser, job.pnUser)
+			}
+		}()
+	})
+	select {
+	case a.lidMigrateJobs <- lidMigrateJob{lidUser: lidUser, pnUser: pnUser}:
+	default:
+	}
 }
 
 func (a *App) migrateLIDPermissions(lidUser, pnUser string) {
