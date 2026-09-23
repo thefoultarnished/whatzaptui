@@ -282,11 +282,15 @@ func TestRenderZapBoltAnimation(t *testing.T) {
 	f0 := renderZapBolt(false, 0)
 	f1 := renderZapBolt(false, 1)
 	if f0 == f1 {
-		t.Fatalf("expected frames 0 and 1 to differ for animated gradient cycle")
+		t.Fatalf("expected frames 0 and 1 to differ for animated crackle")
 	}
-	f11 := renderZapBolt(false, 11)
-	if f0 != f11 {
-		t.Fatalf("expected 11-step animation cycle to repeat at frame 11")
+	f2 := renderZapBolt(false, 2)
+	if f1 != f2 {
+		t.Fatalf("expected frames 1 and 2 to hold within ~300ms crackle interval")
+	}
+	f4 := renderZapBolt(false, 4)
+	if f1 == f4 {
+		t.Fatalf("expected frame 4 to advance to next crackle state")
 	}
 	for f := range 11 {
 		lines := strings.Split(renderZapBolt(false, f), "\n")

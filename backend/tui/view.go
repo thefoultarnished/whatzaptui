@@ -431,8 +431,7 @@ func renderZapBolt(compact bool, frame ...int) string {
 	if len(frame) > 0 {
 		f = frame[0]
 	}
-	f = (f%len(palette) + len(palette)) % len(palette)
-
+	f = max(0, f)
 	dotMap := [4][2]rune{
 		{0x01, 0x08},
 		{0x02, 0x10},
@@ -447,6 +446,7 @@ func renderZapBolt(compact bool, frame ...int) string {
 	for br := range numBrailleRows {
 		rBase := br * 4
 		var sb strings.Builder
+		prevIdx := -1
 
 		for bc := range numBrailleCols {
 			cBase := bc * 2
@@ -474,7 +474,22 @@ func renderZapBolt(compact bool, frame ...int) string {
 			} else {
 				div := activeCount * (len(pixels) - 1)
 				baseIdx := min(len(palette)-1, (activeSum*(len(palette)-1)+div/2)/div)
-				idx := (baseIdx - f%len(palette) + len(palette)) % len(palette)
+				idx := baseIdx
+				if f > 0 {
+					tick := uint32((f-1)/3 + 1)
+					h := uint32(br+1)*31337 ^ uint32(bc+1)*1103515245 ^ (tick * 1337)
+					h = (h ^ (h >> 13)) * 1274126177
+					h = h ^ (h >> 16)
+
+					bands := []int{0, 1, 2, 4, 5, 6, 8, 9, 10}
+					bIdx := int(h % uint32(len(bands)))
+					idx = bands[bIdx]
+					if prevIdx >= 0 && idx == prevIdx {
+						bIdx = (bIdx + 1) % len(bands)
+						idx = bands[bIdx]
+					}
+					prevIdx = idx
+				}
 				st := lipgloss.NewStyle().Foreground(palette[idx])
 				sb.WriteString(st.Render(string(0x2800 + mask)))
 			}
@@ -525,6 +540,51 @@ func renderPixelWordmark() string {
 		"█  █",
 		"█▄▄█",
 		"▀   ",
+	}
+
+	// which row indices get the gray shadow peeking through gaps
+	shadowRows := map[int]bool{
+		1: true,
+		2: true,
+	}
+
+	addShadow := func(grid []string) []string {
+		result := make([]string, len(grid))
+		for row, line := range grid {
+			if !shadowRows[row] {
+				result[row] = line
+				continue
+			}
+			merged := make([]rune, 0, len(line))
+			for _, ch := range line {
+				if ch == ' ' {
+					merged = append(merged, '░')
+				} else {
+					merged = append(merged, ch)
+				}
+			}
+			result[row] = string(merged)
+		}
+		return result
+	}
+
+	letters := [][]string{
+		addShadow(wGrid),
+		addShadow(hGrid),
+		addShadow(a1Grid),
+		addShadow(tGrid),
+		addShadow(zGrid),
+		addShadow(a2Grid),
+		addShadow(pGrid),
+	}
+
+	var out strings.Builder
+	for row := 0; row < 4; row++ {
+		for _, letter := range letters {
+			out.WriteString(letter[row])
+			out.WriteString(" ")
+		}
+		out.WriteString("\n")
 	}
 
 	whatColors := []lipgloss.Color{"#a5b4fc", "#818cf8", "#818cf8", "#6366f1"}
@@ -615,6 +675,7 @@ func fitText(s string, w int) string {
 	}
 	return string(r[:w-1]) + "…"
 }
+
 // loadingStages derives the startup checklist from already-available state:
 // backend liveness from status, session from status, chats/contacts from
 // the prefetched lists (populated before `ready`). Pure for testability.
@@ -838,7 +899,6 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	railActive := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
 	railDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#334155"))
 
-
 	lblDone := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f8fafc"))
 	lblActive := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#fef08a"))
 	lblDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b"))
@@ -917,17 +977,21 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	)
 	cardBox := strings.Join(cardRows, "\n")
 
-	// 8. Command Action Bar
-	btnEnter := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399")).Render("[ENTER]") +
-		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Open client")
-	btnQ := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("[Q]") +
-		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Quit")
-	btnR := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("[R]") +
-		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Reconnect")
+	// 8. Command Action Bar - Physical Keycap Styling
+	keycapEnter := lipgloss.NewStyle().Background(lipgloss.Color("#065f46")).Foreground(lipgloss.Color("#34d399")).Bold(true).Render(" [ENTER] ")
+	lblEnter := lipgloss.NewStyle().Foreground(lipgloss.Color("#f1f5f9")).Render(" Open client")
+	btnEnter := keycapEnter + lblEnter
+
+	keycapQ := lipgloss.NewStyle().Background(lipgloss.Color("#1e293b")).Foreground(lipgloss.Color("#38bdf8")).Bold(true).Render(" [Q] ")
+	lblQ := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Render(" Quit")
+	btnQ := keycapQ + lblQ
+
+	keycapR := lipgloss.NewStyle().Background(lipgloss.Color("#1e293b")).Foreground(lipgloss.Color("#38bdf8")).Bold(true).Render(" [R] ")
+	lblR := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Render(" Reconnect")
+	btnR := keycapR + lblR
 	sep := borderSt.Render("│")
 
 	cmdContent := btnEnter + "   " + sep + "   " + btnQ + "   " + sep + "   " + btnR
-
 	cmdBox := cmdContent
 
 	// 9. Hint at Bottom
@@ -942,7 +1006,6 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 			title,
 			"",
 			cardBox,
-			"",
 			cmdBox,
 			"",
 			hint,
