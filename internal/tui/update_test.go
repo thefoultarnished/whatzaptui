@@ -771,8 +771,44 @@ func TestRenderUserListHighlightedNameUsesMarqueeOffset(t *testing.T) {
 	if strings.Contains(lines[0], "1. Very Long Highlighted") {
 		t.Fatalf("highlighted row ignored marquee offset: %q", lines[0])
 	}
-	if got := lipgloss.Width(lines[0]); got != 29 {
-		t.Fatalf("highlighted row width = %d, want 29", got)
+	if got := lipgloss.Width(lines[0]); got != 30 {
+		t.Fatalf("highlighted row width = %d, want 30", got)
+	}
+}
+
+func TestUserListRowBackgroundExtendsToRightBoundary(t *testing.T) {
+	enableTrueColor(t)
+	setTestTheme(t, TokyoNight)
+
+	model := m{
+		mode:           "nav",
+		sidebarFocused: true,
+		sel:            0,
+		whitelist:      map[string]string{"15551230001": "Alice"},
+		contacts: map[string]contact{
+			"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Alice"},
+		},
+		contactsByNumber: map[string]contact{
+			"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Alice"},
+		},
+	}
+	items := []chat{{ID: "15551230001@s.whatsapp.net"}}
+
+	const targetWidth = 26
+	lines := model.renderUserList(items, 0, 1, targetWidth)
+	if len(lines) == 0 {
+		t.Fatal("renderUserList returned no lines")
+	}
+	if got := lipgloss.Width(lines[0]); got != targetWidth {
+		t.Fatalf("highlighted row width = %d, want %d", got, targetWidth)
+	}
+	brandEsc := hexToBgANSI(currentTheme.Brand)
+	if brandEsc == "" {
+		t.Fatal("expected non-empty brand bg escape")
+	}
+	// Verify that the background ANSI escape is applied across the row
+	if !strings.HasPrefix(lines[0], brandEsc) && !strings.Contains(lines[0], brandEsc) {
+		t.Fatalf("highlighted row missing brand bg %q", brandEsc)
 	}
 }
 

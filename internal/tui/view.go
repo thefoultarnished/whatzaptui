@@ -1545,8 +1545,8 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			rowBase = rowBase.Background(bg).Foreground(fg)
 		}
 
-		rowWidth := max(1, w-1)
-		nameWidth := max(1, rowWidth-1)
+		rowWidth := max(1, w)
+		nameWidth := max(1, rowWidth-2)
 
 		n := i + 1
 		var numLabel string
@@ -1569,7 +1569,7 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		_, typing := x.typingChats[c.ID]
 		adjustW := 0
 		if typing {
-			adjustW = 3
+			adjustW = 2
 		}
 
 		if isMarqueeRow && graphemeCount(nameText) > nameWidth-adjustW {
