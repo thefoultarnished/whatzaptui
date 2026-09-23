@@ -62,8 +62,11 @@ The TUI ships with multiple built-in themes, a keyboard-first chat workflow, and
 The project has two cooperating processes/components:
 
 1. **Backend**
-   Domain files in `backend/`: `types.go`, `state.go`, `server.go`,
-   `events.go`, `messages.go`, `contacts.go`, `chats.go`, `media.go`
+   Server and state files in `internal/backend/`: `types.go`, `state.go`,
+   `server.go`, `events.go`, `messages.go`, `contacts.go`, `chats.go`,
+   `media.go`
+
+   WhatsApp-specific media helpers live in `internal/whatsapp/`.
 
    Responsibilities:
    - Starts and maintains the WhatsApp Web client through `whatsmeow`
@@ -76,7 +79,7 @@ The project has two cooperating processes/components:
    - Translates WhatsApp events into lightweight wire events for the TUI
 
 2. **TUI frontend**
-   Entry point: `backend/tui/main.go`
+   Entry point: `cmd/whatzap/main.go`
 
    Responsibilities:
    - Connects to the local backend over HTTP and WebSocket

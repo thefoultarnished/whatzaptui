@@ -1,13 +1,12 @@
 # User-specific files
-notes/
-BINARIES.md
 .claude/
 .commandcode/
 screenshots/
-AGENTS.md
-TODO.md
-CONTEXT.md
-issuesgemini.md
+docs/
+
+# Keep only the root project README tracked.
+*.md
+!/README.md
 
 # Build artifacts & binaries
 *.exe
@@ -15,21 +14,16 @@ issuesgemini.md
 *.out
 *.so
 *.dylib
-backend/bin/
-backend/bgtest/
 dist/
 
 # Go cache
-backend/.whatsmeow_cache/
 .whatsmeow_cache/
-backend/.gocache/
 go.sum.bak
 *.mod.bak
 .whatzap_tui_config.json
 
 # Logs
 *.log
-backend/out.json
 
 # Secrets / local config
 .env
