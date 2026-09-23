@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.mau.fi/whatsmeow"
+	"whatzap/internal/whatsapp"
 	"go.mau.fi/whatsmeow/appstate"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -169,7 +169,7 @@ func (a *App) initPersistentResources() error {
 	// startup. backfillFTS only touches rows older than its start cutoff
 	// and search dedupes, so racing live inserts can't create dupes.
 	go a.backfillFTS()
-	a.client = whatsmeow.NewClient(device, waLog.Stdout("client", whatsmeowLogLevel, true))
+	a.client = whatsapp.NewClient(device, whatsmeowLogLevel)
 	a.bindEvents()
 	return nil
 }

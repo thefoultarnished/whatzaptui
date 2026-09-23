@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"whatzap/internal/whatsapp"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
@@ -178,20 +179,13 @@ func (a *App) bindEvents() {
 }
 
 func (a *App) toWireCallEvent(status string, meta types.BasicCallMeta, media string) WireCallEvent {
-	callerID := a.canonicalizeChatID(meta.CallCreator.String())
-	if callerID == "" {
-		callerID = a.canonicalizeChatID(meta.CallCreatorAlt.String())
-	}
-	if callerID == "" {
-		callerID = a.canonicalizeChatID(meta.From.String())
-	}
-	groupID := a.canonicalizeChatID(meta.GroupJID.String())
+	m := whatsapp.BuildCallMeta(status, meta, media, "", a.canonicalizeChatID)
 	return WireCallEvent{
-		Status:   status,
-		CallerID: callerID,
-		GroupID:  groupID,
-		CallID:   meta.CallID,
-		Media:    strings.TrimSpace(media),
+		Status:   m.Status,
+		CallerID: m.CallerID,
+		GroupID:  m.GroupID,
+		CallID:   m.CallID,
+		Media:    m.Media,
 	}
 }
 

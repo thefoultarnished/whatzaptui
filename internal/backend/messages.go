@@ -12,66 +12,21 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"whatzap/internal/whatsapp"
 	"go.mau.fi/whatsmeow"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// extractSearchableText pulls user-visible text from a WireMessage payload
-// for full-text indexing. Returns empty string for messages with no text content
-// (stickers, reactions, audio without caption, etc).
-func extractSearchableText(msg map[string]any) string {
-	if msg == nil {
-		return ""
-	}
-	var b strings.Builder
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			return
-		}
-		if b.Len() > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteString(s)
-	}
-	if s, ok := msg["conversation"].(string); ok {
-		add(s)
-	}
-	if ext, ok := msg["extendedTextMessage"].(map[string]any); ok {
-		if s, ok := ext["text"].(string); ok {
-			add(s)
-		}
-		if s, ok := ext["quotedText"].(string); ok {
-			add(s)
-		}
-	}
-	for _, kind := range []string{"imageMessage", "videoMessage", "documentMessage"} {
-		media, ok := msg[kind].(map[string]any)
-		if !ok {
-			continue
-		}
-		if s, ok := media["caption"].(string); ok {
-			add(s)
-		}
-		if kind == "documentMessage" {
-			if s, ok := media["fileName"].(string); ok {
-				add(s)
-			}
-		}
-	}
-	return b.String()
-}
+var extractSearchableText = whatsapp.ExtractSearchableText
 
 func (a *App) upsertMessageFTS(chatID, msgID string, fromMe int, body string) {
 	a.mu.RLock()
@@ -243,18 +198,7 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 	go a.upsertPermission(phoneFromJID(chatID), permName, prevNotify)
 }
 
-func receiptStatusFromType(t types.ReceiptType) string {
-	switch t {
-	case types.ReceiptTypeDelivered, types.ReceiptTypeSender:
-		return "delivered"
-	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
-		return "read"
-	case types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
-		return "played"
-	default:
-		return ""
-	}
-}
+var receiptStatusFromType = whatsapp.ReceiptStatusFromType
 
 func receiptStatusRank(status string) int {
 	switch status {
@@ -622,26 +566,11 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var msg *waE2E.Message
-	if req.ReplyToMsgID != "" {
-		quotedMsg := &waE2E.Message{Conversation: proto.String(req.ReplyToText)}
-		participant := req.ReplyToParticipant
-		if participant == "" {
-			participant = req.ChatID
-		}
-		msg = &waE2E.Message{
-			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text: proto.String(req.Text),
-				ContextInfo: &waE2E.ContextInfo{
-					StanzaID:      proto.String(req.ReplyToMsgID),
-					Participant:   proto.String(participant),
-					QuotedMessage: quotedMsg,
-				},
-			},
-		}
-	} else {
-		msg = &waE2E.Message{Conversation: proto.String(req.Text)}
+	participant := req.ReplyToParticipant
+	if participant == "" {
+		participant = req.ChatID
 	}
+	msg := whatsapp.BuildTextMessage(req.Text, req.ReplyToMsgID, participant, req.ReplyToText)
 
 	resp, err := a.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
@@ -1532,143 +1461,22 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 			"effectiveFields": messageFieldNames(effective),
 		}
 	}
-	isMedia := effective.GetImageMessage() != nil || effective.GetVideoMessage() != nil ||
-		effective.GetDocumentMessage() != nil || effective.GetAudioMessage() != nil ||
-		effective.GetStickerMessage() != nil
-	if isMedia {
-		if b, err := proto.Marshal(effective); err == nil {
-			mediaProto = base64.StdEncoding.EncodeToString(b)
+	if whatsapp.IsMediaMessage(effective) {
+		if b, err := whatsapp.MarshalMediaProto(effective); err == nil {
+			mediaProto = b
 		}
 	}
 	return msg, mediaProto
 }
 
-func extractPollCreationMessage(msg *waE2E.Message) *waE2E.PollCreationMessage {
-	if msg == nil {
-		return nil
-	}
-	if pc := msg.GetPollCreationMessage(); pc != nil {
-		return pc
-	}
-	if pc := msg.GetPollCreationMessageV2(); pc != nil {
-		return pc
-	}
-	if pc := msg.GetPollCreationMessageV3(); pc != nil {
-		return pc
-	}
-	if pc := msg.GetPollCreationMessageV5(); pc != nil {
-		return pc
-	}
-	if pc := msg.GetPollCreationMessageV6(); pc != nil {
-		return pc
-	}
-	if v4 := msg.GetPollCreationMessageV4(); v4 != nil {
-		if inner := v4.GetMessage(); inner != nil {
-			return extractPollCreationMessage(inner)
-		}
-	}
-	return nil
-}
-
-// visibleProtocolType reports whether a protocol message carries
-// user-visible meaning. Only deletes, edits, and disappearing-message
-// notices do — the other 30+ types (history sync notifications, app-state
-// key shares, fanout requests, ...) are sync plumbing that must never be
-// stored or rendered as chat content.
-func visibleProtocolType(t waE2E.ProtocolMessage_Type) bool {
-	switch t {
-	case waE2E.ProtocolMessage_REVOKE,
-		waE2E.ProtocolMessage_MESSAGE_EDIT,
-		waE2E.ProtocolMessage_EPHEMERAL_SETTING:
-		return true
-	default:
-		return false
-	}
-}
-
-// isInvisibleProtocolMessage reports whether msg is a bare protocol control
-// message with no user-visible meaning.
-func isInvisibleProtocolMessage(msg *waE2E.Message) bool {
-	if msg == nil {
-		return false
-	}
-	pm := msg.GetProtocolMessage()
-	if pm == nil {
-		return false
-	}
-	return !visibleProtocolType(pm.GetType())
-}
-
-func protocolMessagePayload(raw, effective *waE2E.Message) map[string]any {
-	var protocol *waE2E.ProtocolMessage
-	switch {
-	case effective != nil && effective.GetProtocolMessage() != nil:
-		protocol = effective.GetProtocolMessage()
-	case raw != nil && raw.GetProtocolMessage() != nil:
-		protocol = raw.GetProtocolMessage()
-	default:
-		return nil
-	}
-	out := map[string]any{
-		"type": protocol.GetType().String(),
-	}
-	if key := protocol.GetKey(); key != nil {
-		if id := key.GetID(); id != "" {
-			out["targetMsgID"] = id
-		}
-	}
-	if timer := protocol.GetEphemeralExpiration(); timer > 0 {
-		out["ephemeralExpiration"] = timer
-	}
-	if edited := protocol.GetEditedMessage(); edited != nil {
-		if text := quotedText(edited); text != "" {
-			out["editedText"] = text
-		}
-	}
-	return out
-}
-
-func effectiveMessage(msg *waE2E.Message) *waE2E.Message {
-	for msg != nil {
-		switch {
-		case msg.GetDeviceSentMessage() != nil:
-			msg = msg.GetDeviceSentMessage().GetMessage()
-		case msg.GetCommentMessage() != nil:
-			msg = msg.GetCommentMessage().GetMessage()
-		case msg.GetEphemeralMessage() != nil:
-			msg = msg.GetEphemeralMessage().GetMessage()
-		case msg.GetViewOnceMessage() != nil:
-			msg = msg.GetViewOnceMessage().GetMessage()
-		case msg.GetViewOnceMessageV2() != nil:
-			msg = msg.GetViewOnceMessageV2().GetMessage()
-		case msg.GetViewOnceMessageV2Extension() != nil:
-			msg = msg.GetViewOnceMessageV2Extension().GetMessage()
-		case msg.GetDocumentWithCaptionMessage() != nil:
-			msg = msg.GetDocumentWithCaptionMessage().GetMessage()
-		case msg.GetEditedMessage() != nil:
-			msg = msg.GetEditedMessage().GetMessage()
-		default:
-			return msg
-		}
-	}
-	return nil
-}
-
-func messageFieldNames(msg *waE2E.Message) []string {
-	if msg == nil {
-		return nil
-	}
-	fields := make([]string, 0, 4)
-	msg.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-		name := string(fd.Name())
-		if name != "messageContextInfo" {
-			fields = append(fields, name)
-		}
-		return true
-	})
-	sort.Strings(fields)
-	return fields
-}
+var (
+	extractPollCreationMessage = whatsapp.ExtractPollCreationMessage
+	visibleProtocolType        = whatsapp.VisibleProtocolType
+	isInvisibleProtocolMessage = whatsapp.IsInvisibleProtocolMessage
+	protocolMessagePayload     = whatsapp.ProtocolMessagePayload
+	effectiveMessage           = whatsapp.EffectiveMessage
+	messageFieldNames          = whatsapp.MessageFieldNames
+)
 
 var dedupeSeq uint64
 
@@ -1680,37 +1488,4 @@ func dedupeKey(m WireMessage) string {
 	return "noid:" + strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(seq, 10)
 }
 
-func quotedText(m *waE2E.Message) string {
-	m = effectiveMessage(m)
-	if m == nil {
-		return ""
-	}
-	if t := m.GetConversation(); t != "" {
-		return t
-	}
-	if ext := m.GetExtendedTextMessage(); ext != nil {
-		return ext.GetText()
-	}
-	if m.GetImageMessage() != nil {
-		return "[image]"
-	}
-	if m.GetVideoMessage() != nil {
-		return "[video]"
-	}
-	if doc := m.GetDocumentMessage(); doc != nil {
-		if doc.GetFileName() != "" {
-			return "[file: " + doc.GetFileName() + "]"
-		}
-		return "[document]"
-	}
-	if aud := m.GetAudioMessage(); aud != nil {
-		if aud.GetPTT() {
-			return "[voice]"
-		}
-		return "[audio]"
-	}
-	if m.GetStickerMessage() != nil {
-		return "[sticker]"
-	}
-	return "[message]"
-}
+var quotedText = whatsapp.QuotedText

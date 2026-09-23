@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"whatzap/internal/whatsapp"
 	"github.com/gorilla/websocket"
-	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 )
 
@@ -101,7 +101,7 @@ func (c *wsClient) ping() error {
 type App struct {
 	mu sync.RWMutex
 
-	client         *whatsmeow.Client
+	client         *whatsapp.Client
 	db             *sql.DB
 	storeContainer *sqlstore.Container
 	started        bool
