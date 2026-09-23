@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"whatzap/internal/store"
 	"whatzap/internal/whatsapp"
 	"go.mau.fi/whatsmeow/appstate"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
@@ -57,113 +58,24 @@ func (a *App) initPersistentResources() error {
 
 	dbPath := filepath.Join(cacheDir, "store.db")
 
-	rawDB, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	s, err := store.Open(dbPath)
 	if err != nil {
 		return err
 	}
-	// Single-writer: SQLite/WAL allows one writer; cap pool to 1 so
-	// concurrent writers serialize in-process instead of racing.
-	rawDB.SetMaxOpenConns(1)
-	rawDB.SetMaxIdleConns(1)
-	rawDB.SetConnMaxLifetime(0)
-	if _, err := rawDB.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-	if _, err := rawDB.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-
-	// S-11: restrict the database file to owner-only. The PRAGMAs
-	// above guarantee the file exists (sql.Open creates it lazily
-	// on the first query). Ignore error — this is meaningful only
-	// on Unix; on Windows os.Chmod is a no-op and the error is
-	// always nil.
-	_ = os.Chmod(dbPath, 0o600)
 
 	container, err := sqlstore.New(context.Background(), "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", waLog.Stdout("db", whatsmeowLogLevel, true))
 	if err != nil {
-		_ = rawDB.Close()
+		_ = s.Close()
 		return err
 	}
 	device, err := container.GetFirstDevice(context.Background())
 	if err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-	if _, err := rawDB.Exec(`CREATE TABLE IF NOT EXISTS chat_permissions (
-		phone   TEXT PRIMARY KEY,
-		name    TEXT NOT NULL DEFAULT '',
-		allowed INTEGER NOT NULL DEFAULT 0
-	)`); err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-	// Global whitelist default (single row, id = 1). When allowed = 1,
-	// chats without a per-chat row are allowed and allowed = 0 rows act
-	// as opt-out overrides; when 0 (default), chats without a row are
-	// denied. Lets /whitelistall and /blacklistall flip one flag (plus a
-	// single UPDATE) instead of one HTTP call per chat.
-	if _, err := rawDB.Exec(`CREATE TABLE IF NOT EXISTS whitelist_default (
-		id      INTEGER PRIMARY KEY CHECK (id = 1),
-		allowed INTEGER NOT NULL DEFAULT 0
-	)`); err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-	if _, err := rawDB.Exec(`
-		CREATE TABLE IF NOT EXISTS messages (
-			id           TEXT NOT NULL,
-			chat_id      TEXT NOT NULL,
-			from_me      INTEGER NOT NULL DEFAULT 0,
-			participant  TEXT NOT NULL DEFAULT '',
-			ts           INTEGER NOT NULL DEFAULT 0,
-			push_name    TEXT NOT NULL DEFAULT '',
-			receipt      TEXT NOT NULL DEFAULT '',
-			message_json TEXT NOT NULL DEFAULT '{}',
-			media_proto  TEXT NOT NULL DEFAULT '',
-			PRIMARY KEY (chat_id, id, from_me)
-		);
-		CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages (chat_id, ts);
-	`); err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-	if _, err := rawDB.Exec(`
-		CREATE TABLE IF NOT EXISTS chats (
-			id           TEXT PRIMARY KEY,
-			name         TEXT NOT NULL DEFAULT '',
-			subject      TEXT NOT NULL DEFAULT '',
-			conv_ts      INTEGER NOT NULL DEFAULT 0,
-			unread_count INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE IF NOT EXISTS contacts (
-			id     TEXT PRIMARY KEY,
-			name   TEXT NOT NULL DEFAULT '',
-			notify TEXT NOT NULL DEFAULT '',
-			stored INTEGER NOT NULL DEFAULT 0
-		);
-	`); err != nil {
-		_ = rawDB.Close()
-		return err
-	}
-	// Migration for DBs created before the stored column existed.
-	_, _ = rawDB.Exec(`ALTER TABLE contacts ADD COLUMN stored INTEGER NOT NULL DEFAULT 0`)
-	if _, err := rawDB.Exec(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-			chat_id UNINDEXED,
-			msg_id  UNINDEXED,
-			from_me UNINDEXED,
-			body,
-			tokenize = 'porter unicode61'
-		);
-	`); err != nil {
-		_ = rawDB.Close()
+		_ = s.Close()
 		return err
 	}
 
-	a.db = rawDB
+	a.store = s
+	a.db = s.DB()
 	a.storeContainer = container
 	// Async so a large first-run FTS build doesn't delay /health and TUI
 	// startup. backfillFTS only touches rows older than its start cutoff
@@ -175,7 +87,13 @@ func (a *App) initPersistentResources() error {
 }
 
 func (a *App) resetPersistentStorage() error {
-	if a.db != nil {
+	if a.store != nil {
+		if err := a.store.Close(); err != nil {
+			return err
+		}
+		a.store = nil
+		a.db = nil
+	} else if a.db != nil {
 		if err := a.db.Close(); err != nil {
 			return err
 		}
@@ -238,6 +156,18 @@ func (a *App) reconcileLIDChats() {
 }
 
 func (a *App) upsertChatToDB(chat Chat) error {
+	if a.store != nil {
+		return a.store.UpsertChat(store.ChatRecord{
+			ID:                    chat.ID,
+			Name:                  chat.Name,
+			Subject:               chat.Subject,
+			ConversationTimestamp: chat.ConversationTimestamp,
+			UnreadCount:           chat.UnreadCount,
+		})
+	}
+	if a.db == nil {
+		return nil
+	}
 	_, err := a.db.Exec(`
 		INSERT OR REPLACE INTO chats (id, name, subject, conv_ts, unread_count)
 		VALUES (?, ?, ?, ?, ?)
@@ -246,6 +176,17 @@ func (a *App) upsertChatToDB(chat Chat) error {
 }
 
 func (a *App) upsertContactToDB(contact Contact) error {
+	if a.store != nil {
+		return a.store.UpsertContact(store.ContactRecord{
+			ID:     contact.ID,
+			Name:   contact.Name,
+			Notify: contact.Notify,
+			Stored: contact.Stored,
+		})
+	}
+	if a.db == nil {
+		return nil
+	}
 	_, err := a.db.Exec(`
 		INSERT OR REPLACE INTO contacts (id, name, notify, stored)
 		VALUES (?, ?, ?, ?)
@@ -254,6 +195,26 @@ func (a *App) upsertContactToDB(contact Contact) error {
 }
 
 func (a *App) loadChatsFromDB() (map[string]Chat, error) {
+	if a.store != nil {
+		records, err := a.store.LoadChats()
+		if err != nil {
+			return nil, err
+		}
+		chats := make(map[string]Chat, len(records))
+		for k, r := range records {
+			chats[k] = Chat{
+				ID:                    r.ID,
+				Name:                  r.Name,
+				Subject:               r.Subject,
+				ConversationTimestamp: r.ConversationTimestamp,
+				UnreadCount:           r.UnreadCount,
+			}
+		}
+		return chats, nil
+	}
+	if a.db == nil {
+		return map[string]Chat{}, nil
+	}
 	rows, err := a.db.Query(`SELECT id, name, subject, conv_ts, unread_count FROM chats`)
 	if err != nil {
 		return nil, err
@@ -271,6 +232,25 @@ func (a *App) loadChatsFromDB() (map[string]Chat, error) {
 }
 
 func (a *App) loadContactsFromDB() (map[string]Contact, error) {
+	if a.store != nil {
+		records, err := a.store.LoadContacts()
+		if err != nil {
+			return nil, err
+		}
+		contacts := make(map[string]Contact, len(records))
+		for k, r := range records {
+			contacts[k] = Contact{
+				ID:     r.ID,
+				Name:   r.Name,
+				Notify: r.Notify,
+				Stored: r.Stored,
+			}
+		}
+		return contacts, nil
+	}
+	if a.db == nil {
+		return map[string]Contact{}, nil
+	}
 	rows, err := a.db.Query(`SELECT id, name, notify, stored FROM contacts`)
 	if err != nil {
 		return nil, err
@@ -382,6 +362,16 @@ func (a *App) refreshGroupMetadata() int {
 // first run after the FTS feature was added. No-op if FTS already has rows or
 // if there are no messages.
 func (a *App) backfillFTS() {
+	if a.store != nil {
+		_ = a.store.BackfillFTS(func(msgJSON string) string {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(msgJSON), &m); err == nil {
+				return extractSearchableText(m)
+			}
+			return ""
+		})
+		return
+	}
 	if a.db == nil {
 		return
 	}
@@ -477,20 +467,23 @@ func (a *App) backfillFTS() {
 // vacuumDB runs VACUUM asynchronously to compact the database and reclaim space
 // freed by deletions and FTS churn. Runs in a goroutine so startup is not blocked.
 func (a *App) vacuumDB() {
-	if a.db == nil {
+	if a.store == nil && a.db == nil {
 		return
 	}
 	go func() {
 		time.Sleep(30 * time.Second)
 		a.mu.RLock()
+		s := a.store
 		db := a.db
 		shutting := a.shuttingDown
 		a.mu.RUnlock()
-		if db == nil || shutting {
+		if (s == nil && db == nil) || shutting {
 			return
 		}
-		if _, err := db.Exec(`PRAGMA incremental_vacuum(100)`); err != nil {
-			log.Printf("vacuum: %v", err)
+		if s != nil {
+			_ = s.Vacuum()
+		} else if db != nil {
+			_, _ = db.Exec(`PRAGMA incremental_vacuum(100)`)
 		}
 	}()
 }
@@ -498,6 +491,9 @@ func (a *App) vacuumDB() {
 // purgeContactsWithName clears chat_permissions.name rows that match the given
 // name. Returns the number of rows affected.
 func (a *App) purgeContactsWithName(name string) (int64, error) {
+	if a.store != nil {
+		return a.store.PurgePermissionName(name)
+	}
 	if a.db == nil {
 		return 0, nil
 	}

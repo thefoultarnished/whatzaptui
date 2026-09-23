@@ -29,6 +29,10 @@ import (
 var extractSearchableText = whatsapp.ExtractSearchableText
 
 func (a *App) upsertMessageFTS(chatID, msgID string, fromMe int, body string) {
+	if a.store != nil {
+		_ = a.store.UpsertMessageFTS(chatID, msgID, fromMe == 1, body)
+		return
+	}
 	a.mu.RLock()
 	db := a.db
 	a.mu.RUnlock()
@@ -216,6 +220,10 @@ func receiptStatusRank(status string) int {
 }
 
 func (a *App) updateReceiptStatus(chatID string, ids []string, status string) bool {
+	if a.store != nil {
+		updated, _ := a.store.UpdateReceiptStatus(chatID, ids, status)
+		return updated
+	}
 	if receiptStatusRank(status) == 0 {
 		return false
 	}
@@ -990,6 +998,9 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 // the same id but different from_me. Returns nil if a.db is nil
 // (no DB to delete from) so callers can use it unconditionally.
 func (a *App) deleteMessageFromDB(chatID, messageID string, fromMe bool) error {
+	if a.store != nil {
+		return a.store.DeleteMessage(chatID, messageID, fromMe)
+	}
 	a.mu.RLock()
 	db := a.db
 	a.mu.RUnlock()

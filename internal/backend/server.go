@@ -572,7 +572,13 @@ func (a *App) resetRuntimeState() []error {
 		}
 		a.storeContainer = nil
 	}
-	if a.db != nil {
+	if a.store != nil {
+		if err := a.store.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("store close failed: %w", err))
+		}
+		a.store = nil
+		a.db = nil
+	} else if a.db != nil {
 		if err := a.db.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("db close failed: %w", err))
 		}

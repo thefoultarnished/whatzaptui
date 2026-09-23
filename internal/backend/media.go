@@ -49,10 +49,15 @@ func (a *App) handleMediaDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var mediaProto string
-	if err := a.db.QueryRow(
-		`SELECT media_proto FROM messages WHERE chat_id = ? AND id = ? AND media_proto != ''`,
-		chatID, msgID,
-	).Scan(&mediaProto); err != nil || mediaProto == "" {
+	if a.store != nil {
+		mediaProto, _ = a.store.GetMediaProto(chatID, msgID)
+	} else if a.db != nil {
+		_ = a.db.QueryRow(
+			`SELECT media_proto FROM messages WHERE chat_id = ? AND id = ? AND media_proto != ''`,
+			chatID, msgID,
+		).Scan(&mediaProto)
+	}
+	if mediaProto == "" {
 		writeErr(w, http.StatusNotFound, "media not found")
 		return
 	}

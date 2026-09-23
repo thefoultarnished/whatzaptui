@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os/exec"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,9 +16,34 @@ import (
 // revision counter: every Update bumps m.revision, so any state mutation
 // invalidates the cache by construction. No manual field tracking.
 type renderCache struct {
+	mu       sync.RWMutex
 	revision uint64
 	w, h     int
 	result   string
+}
+
+func (c *renderCache) get(revision uint64, w, h int) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.result != "" && c.revision == revision && c.w == w && c.h == h {
+		return c.result, true
+	}
+	return "", false
+}
+
+func (c *renderCache) set(revision uint64, w, h int, result string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.revision = revision
+	c.w = w
+	c.h = h
+	c.result = result
 }
 
 type sidebarCache struct {
@@ -157,141 +183,152 @@ type env struct {
 }
 
 type m struct {
-	baseURL, wsURL, backendDir, apiToken     string
-	client                                   *http.Client
-	apiCtx                                   context.Context
-	apiCancel                                context.CancelFunc
-	demoMode                                 bool
-	w, h                                     int
-	status, err                              string
-	qrRaw                                    string
-	sessionReady                             bool
-	topBarMsg                                string
-	topBarShown                              int
-	topBarVer                                int
-	cursorOn                                 bool
-	pulseOn                                  bool
-	spinnerFrame                             int
-	bootAt                                   time.Time // when the app started; stages hold ~1s each
-	msgActivityUntil                         time.Time
-	msgActivityType                          string // "sent" or "received"
-	flashUntil                               map[string]time.Time
-	sidebarTab                               string
-	chats                                    []chat
-	contacts                                 map[string]contact
-	contactsByNumber                         map[string]contact
-	msgs                                     map[string][]wireMsg
-	loadingOlder                             map[string]bool                 // chatID → fetch in flight
-	noMoreOlder                              map[string]bool                 // chatID → backend exhausted
-	uploadProgress                           map[string]int                  // pendingID → 0..100 percent of in-flight file upload
-	uploadChans                              map[string]chan fileProgressMsg // pendingID → channel that emits fileProgressMsg (for re-arming the listener)
-	msgSearchInput                           string
-	msgSearchResults                         []searchHit
-	msgSearchSel                             int
-	msgSearchLoading                         bool
-	msgSearchErr                             string
+	// File Browser State
+	fileBrowserOpen       bool
+	fileBrowserDir        string
+	fileBrowserEntries    []fileBrowserEntry
+	fileBrowserFiltered   []fileBrowserEntry
+	fileBrowserIndex      int
+	fileBrowserScroll     int
+	fileBrowserFilter     string
+	fileBrowserSortRecent bool
+	fileBrowserPathMode   bool
+	fileBrowserPathBuf    string
+
+	// Audio Player State
+	audioMsgID        string             // playing/paused audio message ID (bubble highlight)
+	audioChatID       string             // chat the audio belongs to
+	audioPath         string             // local downloaded audio file
+	audioPlaying      bool               // player process running
+	audioElapsed      time.Duration      // position (frozen while paused)
+	audioBase         time.Duration      // elapsed at last (re)start
+	audioStartedAt    time.Time          // when the current run started
+	audioDuration     time.Duration      // total length, 0 = unknown
+	audioPending      string             // msgID awaiting download before play
+	audioGen          int                // supersedes stale player/tick messages
+	audioCancel       context.CancelFunc // kills the player process
+	audioFallbackPath string             // audio file for default-player fallback from popup
+	// API & Connection
+	baseURL, wsURL, backendDir, apiToken string
+	client                               *http.Client
+	apiCtx                               context.Context
+	apiCancel                            context.CancelFunc
+	ws                                   *websocket.Conn
+	wsCh                                 <-chan env
+	wsReconnectDelay                     time.Duration // current backoff; 0 = not disconnected
+	wsDisconnected                       bool
+	backend                              *exec.Cmd
+	startedBackend                       bool
+
+	// Window & Layout
+	w, h         int
+	status, err  string
+	qrRaw        string
+	sessionReady bool
+	demoMode     bool
+	windowTitle  string
+	mouseEnabled bool
+
+	// Navigation & Input
 	active, mode, search, searchInput, input string
-	syncingContacts, syncingGroups           bool
-	shineFrame                               int
+	sidebarTab                               string
 	sel, scroll, sideScroll                  int
 	sidebarFocused                           bool
-	ws                                       *websocket.Conn
-	wsCh                                     <-chan env
-	wsReconnectDelay                         time.Duration // current backoff; 0 = not disconnected
-	wsDisconnected                           bool
-	backend                                  *exec.Cmd
-	startedBackend                           bool
-	whitelist                                map[string]string // phone -> name, allowed=1 only (send gating)
-	denied                                   map[string]bool   // phone -> true, allowed=0 overrides while defaultAllowed
-	defaultAllowed                           bool              // global default from backend (see /whitelist/default)
-	names                                    map[string]string // phone -> custom display name (all contacts)
-	groupPreviews                            map[string]groupPreview
-	replyTo                                  *wireMsg // message being replied to, nil if none
-	selectedMsgID                            string   // message ID highlighted via mouse click or reply pick
-	replyPickMode                            bool     // Alt+R reply pick mode active
-	replyPickIndex                           int      // index into visible messages during reply pick
-	editingMsgID                             string   // message ID being edited, empty if none
-	editPickMode                             bool     // Alt+A edit pick mode active (own messages only)
-	editPickIndex                            int      // index into editPickCandidates() during edit pick
-	lastClickY                               int
-	lastClickTime                            time.Time
-	mouseEnabled                             bool
-	inputAllSelected                         bool // true when Ctrl+A was pressed - whole input is "selected"
 	leftInput                                string
 	leftInputFocused                         bool
-	emojiPickerOpen                          bool
-	themePicker                              picker
-	pointerPicker                            picker
-	helpPicker                               picker
-	settingsPicker                           picker
-	typingAnimationPicker                    picker
-	mediaIconPicker                          picker
-	mediaViewPicker                          picker
-	userlistIconPicker                       picker
-	confirmDialog                            confirmDialog
-	fontTestOpen                             bool
-	fileBrowserOpen                          bool
-	fileBrowserDir                           string
-	fileBrowserEntries                       []fileBrowserEntry
-	fileBrowserFiltered                      []fileBrowserEntry
-	fileBrowserIndex                         int
-	fileBrowserScroll                        int
-	fileBrowserFilter                        string
-	fileBrowserSortRecent                    bool
-	fileBrowserPathMode                      bool
-	fileBrowserPathBuf                       string
-	pendingAttachmentPath                    string
-	pendingAttachmentKind                    string
-	pendingAttachmentName                    string
-	emojiQuery                               string
-	emojiSel                                 int
-	emojiScroll                              int
-	emojiResultsCache                        []emojiItem
-	emojiResultsDirty                        bool
-	reactPickMode                            bool                 // emoji picker opened for reaction (not input insert)
-	reactPickMsgID                           string               // message ID to react to
-	reactPickChatID                          string               // chat ID for the reaction
-	reactPickSender                          string               // sender JID for the reaction target
-	typingChats                              map[string]time.Time // chatID -> when typing started (auto-expires)
-	lastComposingChat                        string               // chatID we last sent "composing" to
-	restartRequested                         bool
-	soundEnabled                             bool
-	soundProfile                             int
-	lastNotifyAt                             map[string]time.Time
-	lastNotifyGlobal                         time.Time
-	lastTypeTime                             time.Time
-	lastPasteLikeAt                          time.Time
-	pendingSendSeq                           int
-	pendingSendArmed                         bool
-	identityVersion                          int
-	sidebarMarqueeOffset                     int
-	sidebarMarqueePause                      int
-	sidebarMarqueeDir                        int
-	sidebarMarqueeKey                        string
-	sidebarMarqueeTick                       int
-	windowTitle                              string
-	sidebarCache                             *sidebarCache
-	mainCache                                *renderCache
-	revision                                 uint64 // bumped on every Update; validates mainCache
-	gfx                                      *gfxState
+	inputAllSelected                         bool // true when Ctrl+A was pressed
 	inputBuf                                 string
 	inputFlushScheduled                      bool
-	downloadedMedia                          map[string]string
-	mediaOrder                               []string // FIFO insertion order for downloadedMedia eviction
-	downloadingMedia                         map[string]bool
-	audioMsgID                               string             // playing/paused audio message ID (bubble highlight)
-	audioChatID                              string             // chat the audio belongs to
-	audioPath                                string             // local downloaded audio file
-	audioPlaying                             bool               // player process running
-	audioElapsed                             time.Duration      // position (frozen while paused)
-	audioBase                                time.Duration      // elapsed at last (re)start
-	audioStartedAt                           time.Time          // when the current run started
-	audioDuration                            time.Duration      // total length, 0 = unknown
-	audioPending                             string             // msgID awaiting download before play
-	audioGen                                 int                // supersedes stale player/tick messages
-	audioCancel                              context.CancelFunc // kills the player process
-	audioFallbackPath                        string             // audio file for default-player fallback from popup
-	drafts                                   map[string]string  // chatID -> unsent composer text
+	drafts                                   map[string]string // chatID -> unsent composer text
+
+	// WhatsApp Entities
+	chats                          []chat
+	contacts                       map[string]contact
+	contactsByNumber               map[string]contact
+	msgs                           map[string][]wireMsg
+	groupPreviews                  map[string]groupPreview
+	whitelist                      map[string]string // phone -> name, allowed=1 only
+	denied                         map[string]bool   // phone -> true, allowed=0 overrides
+	defaultAllowed                 bool              // global default from backend
+	names                          map[string]string // phone -> custom display name
+	syncingContacts, syncingGroups bool
+
+	// In-Flight Tasks & Downloads
+	loadingOlder     map[string]bool                 // chatID → fetch in flight
+	noMoreOlder      map[string]bool                 // chatID → backend exhausted
+	uploadProgress   map[string]int                  // pendingID → 0..100 percent
+	uploadChans      map[string]chan fileProgressMsg // pendingID → progress channel
+	downloadedMedia  map[string]string
+	mediaOrder       []string // FIFO insertion order for downloadedMedia eviction
+	downloadingMedia map[string]bool
+
+	// Pickers & Modals
+	themePicker           picker
+	pointerPicker         picker
+	helpPicker            picker
+	settingsPicker        picker
+	typingAnimationPicker picker
+	mediaIconPicker       picker
+	mediaViewPicker       picker
+	userlistIconPicker    picker
+	confirmDialog         confirmDialog
+	fontTestOpen          bool
+	emojiPickerOpen       bool
+	emojiQuery            string
+	emojiSel, emojiScroll int
+	emojiResultsCache     []emojiItem
+	emojiResultsDirty     bool
+	reactPickMode         bool   // emoji picker opened for reaction
+	reactPickMsgID        string // message ID to react to
+	reactPickChatID       string // chat ID for reaction
+	reactPickSender       string // sender JID for reaction target
+
+	// Message Operations (Reply/Edit/Attachment)
+	replyTo                                             *wireMsg // message being replied to
+	selectedMsgID                                       string   // message ID highlighted
+	replyPickMode                                       bool     // Alt+R reply pick mode
+	replyPickIndex                                      int      // index into visible messages
+	editingMsgID                                        string   // message ID being edited
+	editPickMode                                        bool     // Alt+A edit pick mode
+	editPickIndex                                       int      // index into edit candidates
+	pendingAttachmentPath                               string
+	pendingAttachmentKind                               string
+	pendingAttachmentName                               string
+
+	// Activity, Ticks & Animation State
+	topBarMsg                                                            string
+	topBarShown, topBarVer                                               int
+	cursorOn, pulseOn                                                    bool
+	spinnerFrame, shineFrame                                             int
+	bootAt, msgActivityUntil                                             time.Time
+	msgActivityType                                                      string // "sent" or "received"
+	flashUntil, typingChats, lastNotifyAt                                map[string]time.Time
+	lastNotifyGlobal, lastTypeTime, lastPasteLikeAt                      time.Time
+	lastClickY                                                           int
+	lastClickTime                                                        time.Time
+	pendingSendSeq                                                       int
+	pendingSendArmed                                                     bool
+	lastComposingChat                                                    string
+	restartRequested                                                     bool
+	soundEnabled                                                         bool
+	soundProfile                                                         int
+	identityVersion                                                      int
+	sidebarMarqueeOffset, sidebarMarqueePause, sidebarMarqueeDir         int
+	sidebarMarqueeKey                                                    string
+	sidebarMarqueeTick                                                   int
+
+	// Caches & Graphics
+	sidebarCache *sidebarCache
+	mainCache    *renderCache
+	revision     uint64 // bumped on every Update
+	gfx          *gfxState
+
+	// Message Search
+	msgSearchInput   string
+	msgSearchResults []searchHit
+	msgSearchSel     int
+	msgSearchLoading bool
+	msgSearchErr     string
 }
 
 type initMsg struct {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"whatzap/internal/whatsapp"
+	"whatzap/internal/store"
 	"github.com/gorilla/websocket"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 )
@@ -103,6 +104,7 @@ type App struct {
 
 	client         *whatsapp.Client
 	db             *sql.DB
+	store          *store.Store
 	storeContainer *sqlstore.Container
 	started        bool
 	connected      bool

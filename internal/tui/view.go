@@ -213,18 +213,14 @@ func (x m) renderRightMain(rightW, mainH int) string {
 	if x.emojiPickerOpen {
 		return x.renderEmojiPickerPane(rightW, mainH)
 	}
-	if !hasFlash && x.mainCache != nil && x.mainCache.result != "" && x.mainCache.revision == x.revision && x.mainCache.w == rightW && x.mainCache.h == mainH {
-		return x.mainCache.result
+	if !hasFlash && x.mainCache != nil {
+		if cached, ok := x.mainCache.get(x.revision, rightW, mainH); ok {
+			return cached
+		}
 	}
 	main := x.renderMain(rightW, mainH)
-	if !hasFlash {
-		if x.mainCache == nil {
-			x.mainCache = &renderCache{}
-		}
-		x.mainCache.revision = x.revision
-		x.mainCache.w = rightW
-		x.mainCache.h = mainH
-		x.mainCache.result = main
+	if !hasFlash && x.mainCache != nil {
+		x.mainCache.set(x.revision, rightW, mainH, main)
 	}
 	return main
 }
@@ -1953,36 +1949,7 @@ func (x m) renderMain(w, h int) string {
 		return x.renderWelcomePane(w, h)
 	}
 	items := x.msgs[x.active]
-	type reactionRender struct {
-		emoji     string
-		name      string
-		isMe      bool
-		isContact bool
-	}
-	reactionsFor := map[string][]reactionRender{}
-	for _, msg := range items {
-		if rxn, ok := msg.Message["reactionMessage"].(map[string]any); ok {
-			targetID, _ := rxn["targetMsgID"].(string)
-			emoji, _ := rxn["emoji"].(string)
-			if targetID != "" && emoji != "" {
-				rSender := "Me"
-				rIsMe := msg.Key.FromMe
-				sid := x.senderIDForMsg(msg)
-				fullName := x.senderNameForMsg(msg)
-				senderNum := num(sid)
-				isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
-				if !msg.Key.FromMe {
-					rSender = truncate(fullName, 10)
-				}
-				reactionsFor[targetID] = append(reactionsFor[targetID], reactionRender{
-					emoji:     emoji,
-					name:      rSender,
-					isMe:      rIsMe,
-					isContact: isKnown,
-				})
-			}
-		}
-	}
+	reactionsFor := x.collectReactions(items)
 	needed := h + x.scroll
 	msgBlocks := [][]string{}
 	msgTimestamps := []int64{}
@@ -2630,10 +2597,47 @@ func (x m) renderMain(w, h int) string {
 		msgBlockMsgs[i], msgBlockMsgs[j] = msgBlockMsgs[j], msgBlockMsgs[i]
 		msgBlockTimeLine[i], msgBlockTimeLine[j] = msgBlockTimeLine[j], msgBlockTimeLine[i]
 	}
+	return x.assembleChatLines(w, h, msgBlocks, msgTimestamps, msgBlockTimeLine)
+}
+
+type reactionRender struct {
+	emoji     string
+	name      string
+	isMe      bool
+	isContact bool
+}
+
+func (x m) collectReactions(items []wireMsg) map[string][]reactionRender {
+	reactionsFor := map[string][]reactionRender{}
+	for _, msg := range items {
+		if rxn, ok := msg.Message["reactionMessage"].(map[string]any); ok {
+			targetID, _ := rxn["targetMsgID"].(string)
+			emoji, _ := rxn["emoji"].(string)
+			if targetID != "" && emoji != "" {
+				rSender := "Me"
+				rIsMe := msg.Key.FromMe
+				sid := x.senderIDForMsg(msg)
+				fullName := x.senderNameForMsg(msg)
+				senderNum := num(sid)
+				isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
+				if !msg.Key.FromMe {
+					rSender = truncate(fullName, 10)
+				}
+				reactionsFor[targetID] = append(reactionsFor[targetID], reactionRender{
+					emoji:     emoji,
+					name:      rSender,
+					isMe:      rIsMe,
+					isContact: isKnown,
+				})
+			}
+		}
+	}
+	return reactionsFor
+}
+
+func (x m) assembleChatLines(w, h int, msgBlocks [][]string, msgTimestamps []int64, msgBlockTimeLine []int) string {
 	all := []string{}
 	allDates := []string{}
-	allBlockIdx := []int{}
-	allTimeLine := []bool{}
 	lastDay := ""
 	for idx, b := range msgBlocks {
 		dayLabel := dateSeparatorLabel(msgTimestamps[idx])
@@ -2641,20 +2645,12 @@ func (x m) renderMain(w, h int) string {
 			lastDay = dayLabel
 			all = append(all, dateSeparatorLine(dayLabel, w))
 			allDates = append(allDates, "")
-			allBlockIdx = append(allBlockIdx, 0)
-			allTimeLine = append(allTimeLine, false)
 		}
-		timeLineInBlock := msgBlockTimeLine[idx]
-		for j, ln := range b {
+		for _, ln := range b {
 			all = append(all, ln)
 			allDates = append(allDates, dayLabel)
-			allBlockIdx = append(allBlockIdx, idx+1)
-			allTimeLine = append(allTimeLine, j == timeLineInBlock)
 		}
 	}
-	// When the other party is typing, reserve the bottom row of the chat
-	// area for the typing indicator and let messages shift up by one row.
-	// Otherwise the typing row would overwrite the last message line.
 	messageH := h
 	if _, typing := x.typingChats[x.active]; typing {
 		messageH = h - 1

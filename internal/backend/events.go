@@ -203,14 +203,61 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		a.mu.Unlock()
 	}()
 
-	changedChats := false
+	changedChats := a.syncPushnamesAndConversations(data)
 
-	// Phase 1: pre-compute all updates without holding a.mu.
-	// canonicalizeChatID uses a.lidCacheMu (its own lock), not a.mu, so this is safe.
-	type pushnameUpdate struct {
-		id   string
-		name string
+	var tx *sql.Tx
+	var err error
+	if a.db != nil {
+		tx, err = a.db.Begin()
+		if err != nil {
+			log.Printf("applyHistorySync: begin tx: %v", err)
+		}
 	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var exec dbExecutor = a.db
+	if tx != nil {
+		exec = tx
+	}
+
+	if a.syncConversationMessages(data, exec) {
+		changedChats = true
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			log.Printf("applyHistorySync: commit tx: %v", err)
+		} else {
+			tx = nil
+		}
+	}
+
+	a.reconcileLIDChats()
+
+	if changedChats {
+		a.persistState()
+		a.broadcast(EventEnvelope{Type: "chats:loaded"})
+		a.broadcast(EventEnvelope{Type: "contacts:updated"})
+	}
+}
+
+type pushnameUpdate struct {
+	id   string
+	name string
+}
+
+type convMetadata struct {
+	chatID string
+	name   string
+	ts     int64
+	uc     int
+}
+
+func (a *App) syncPushnamesAndConversations(data *waHistorySync.HistorySync) bool {
 	var pushnameUpdates []pushnameUpdate
 	for _, p := range data.GetPushnames() {
 		id := a.canonicalizeChatID(strings.TrimSpace(p.GetID()))
@@ -222,13 +269,8 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		}
 	}
 
-	type convMetadata struct {
-		chatID string
-		name   string
-		ts     int64
-		uc     int
-	}
 	var convMeta []convMetadata
+	changedChats := false
 	for _, conv := range data.GetConversations() {
 		chatID := a.historyConversationChatID(conv)
 		if chatID == "" || chatID == "status@broadcast" {
@@ -246,7 +288,6 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		changedChats = true
 	}
 
-	// Phase 2: apply pre-computed updates under one short lock.
 	a.mu.Lock()
 	for _, u := range pushnameUpdates {
 		contact := a.state.Contacts[u.id]
@@ -284,26 +325,11 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		a.state.Chats[c.chatID] = chat
 	}
 	a.mu.Unlock()
+	return changedChats
+}
 
-	var tx *sql.Tx
-	var err error
-	if a.db != nil {
-		tx, err = a.db.Begin()
-		if err != nil {
-			log.Printf("applyHistorySync: begin tx: %v", err)
-		}
-	}
-	defer func() {
-		if tx != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	var exec dbExecutor = a.db
-	if tx != nil {
-		exec = tx
-	}
-
+func (a *App) syncConversationMessages(data *waHistorySync.HistorySync, exec dbExecutor) bool {
+	changed := false
 	for _, conv := range data.GetConversations() {
 		chatID := a.historyConversationChatID(conv)
 		if chatID == "" || chatID == "status@broadcast" {
@@ -328,33 +354,12 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 			if msg.Key.RemoteJID == "status@broadcast" {
 				continue
 			}
-			// History sync doesn't carry a live receipt state for previously-sent
-			// messages. Any FromMe row that survived into history is, by
-			// definition, at minimum delivered (you can't have a history row for
-			// a message WhatsApp never accepted). Default to "delivered" so the
-			// TUI renders ✓✓. Live send paths set "sent" explicitly and receipt
-			// events upgrade from there.
 			if msg.Key.FromMe && msg.ReceiptStatus == "" {
 				msg.ReceiptStatus = "delivered"
 			}
 			a.upsertMessageTx(exec, msg.Key.RemoteJID, msg)
-			changedChats = true
+			changed = true
 		}
 	}
-
-	if tx != nil {
-		if err := tx.Commit(); err != nil {
-			log.Printf("applyHistorySync: commit tx: %v", err)
-		} else {
-			tx = nil
-		}
-	}
-
-	a.reconcileLIDChats()
-
-	if changedChats {
-		a.persistState()
-		a.broadcast(EventEnvelope{Type: "chats:loaded"})
-		a.broadcast(EventEnvelope{Type: "contacts:updated"})
-	}
+	return changed
 }
