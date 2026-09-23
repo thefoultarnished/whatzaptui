@@ -390,32 +390,19 @@ func renderPiLogo() string {
 }
 func renderZapBolt(compact bool, frame ...int) string {
 	palette := []lipgloss.Color{
-		"#f472b6", // pink
-		"#ec4899", // magenta
-		"#d946ef", // fuchsia
-		"#a855f7", // violet
-		"#818cf8", // indigo
-		"#38bdf8", // sky
-		"#00f5d4", // cyan
-		"#10b981", // emerald
-		"#34d399", // green
-		"#facc15", // yellow
-		"#fb923c", // orange
+		"#fef08a", // spark yellow
+		"#fde047", // bright yellow
+		"#facc15", // gold yellow
+		"#eab308", // golden amber
+		"#f59e0b", // warm amber
+		"#fb923c", // electric orange
+		"#f97316", // deep orange
+		"#ea580c", // fiery orange-red
+		"#ef4444", // bright red
+		"#dc2626", // crimson red
+		"#b91c1c", // deep ruby red
 	}
-	shadePalette := []lipgloss.Color{
-		"#c04886", // pink dim
-		"#b82e70", // magenta dim
-		"#9d24b0", // fuchsia dim
-		"#7a34bc", // violet dim
-		"#5862c4", // indigo dim
-		"#1e8ec0", // sky dim
-		"#00b8a0", // cyan dim
-		"#0b855c", // emerald dim
-		"#219c6e", // green dim
-		"#be9b08", // yellow dim
-		"#c2681e", // orange dim
-	}
-	fullPixels := []string{
+	pixels := []string{
 		"        #####",
 		"   ##  ######",
 		"   #   ##### ",
@@ -446,42 +433,50 @@ func renderZapBolt(compact bool, frame ...int) string {
 	}
 	f = (f%len(palette) + len(palette)) % len(palette)
 
-	numHalfRows := len(fullPixels) / 2
+	dotMap := [4][2]rune{
+		{0x01, 0x08},
+		{0x02, 0x10},
+		{0x04, 0x20},
+		{0x40, 0x80},
+	}
+
+	numBrailleRows := (len(pixels) + 3) / 4
+	const numBrailleCols = 7
 	var lines []string
 
-	for hr := range numHalfRows {
-		rTop := 2 * hr
-		rBot := 2*hr + 1
-
-		topIdx := (hr - f + len(palette)) % len(palette)
-		botIdx := (topIdx + 1) % len(palette)
-		rowTop := fullPixels[rTop]
-		rowBot := fullPixels[rBot]
-
+	for br := range numBrailleRows {
+		rBase := br * 4
 		var sb strings.Builder
-		for c := range 13 {
-			topOn := c < len(rowTop) && rowTop[c] == '#'
-			botOn := c < len(rowBot) && rowBot[c] == '#'
 
-			pTop := palette
-			pBot := palette
-			if (c+hr+f)%2 != 0 {
-				pTop = shadePalette
-				pBot = shadePalette
+		for bc := range numBrailleCols {
+			cBase := bc * 2
+			var mask rune
+			var activeSum, activeCount int
+
+			for rOff := range 4 {
+				r := rBase + rOff
+				if r >= len(pixels) {
+					continue
+				}
+				row := pixels[r]
+				for cOff := range 2 {
+					c := cBase + cOff
+					if c < len(row) && row[c] == '#' {
+						mask |= dotMap[rOff][cOff]
+						activeSum += r
+						activeCount++
+					}
+				}
 			}
 
-			switch {
-			case topOn && botOn:
-				st := lipgloss.NewStyle().Foreground(pTop[topIdx]).Background(pBot[botIdx])
-				sb.WriteString(st.Render("▀"))
-			case topOn && !botOn:
-				st := lipgloss.NewStyle().Foreground(pTop[topIdx])
-				sb.WriteString(st.Render("▀"))
-			case !topOn && botOn:
-				st := lipgloss.NewStyle().Foreground(pBot[botIdx])
-				sb.WriteString(st.Render("▄"))
-			default:
+			if mask == 0 {
 				sb.WriteRune(' ')
+			} else {
+				div := activeCount * (len(pixels) - 1)
+				baseIdx := min(len(palette)-1, (activeSum*(len(palette)-1)+div/2)/div)
+				idx := (baseIdx - f%len(palette) + len(palette)) % len(palette)
+				st := lipgloss.NewStyle().Foreground(palette[idx])
+				sb.WriteString(st.Render(string(0x2800 + mask)))
 			}
 		}
 		lines = append(lines, sb.String())
@@ -805,8 +800,8 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	}
 	// 2. Stage section dimensions. Keep this compact now that stages
 	// are vertical, then center the whole section under the title.
-	cardW := min(72, max(52, innerW-8))
-	if innerW < 52 {
+	cardW := min(58, max(50, innerW-8))
+	if innerW < 50 {
 		cardW = max(24, innerW-2)
 	}
 	innerBoxW := cardW
@@ -819,65 +814,97 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		return content + strings.Repeat(" ", pad)
 	}
 
-	// 3. Compact stage section header/footer
+	// 3. Telemetry card header and footer
 	dotPink := lipgloss.NewStyle().Foreground(lipgloss.Color("#f472b6")).Render("●")
 	dotPurple := lipgloss.NewStyle().Foreground(lipgloss.Color("#c084fc")).Render("●")
 	dotCyan := lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("●")
 	dots := dotPink + " " + dotPurple + " " + dotCyan
 	headerTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("CONNECTING TO WHATSAPP")
 	verTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("v0.1.0")
-	fixedW := 43
+	fixedW := 45
 	availDashes := max(2, cardW-fixedW)
 	leftDashes := availDashes / 2
 	rightDashes := availDashes - leftDashes
-	topBorder := borderSt.Render("──") + " " + dots + " " +
+	topBorder := borderSt.Render("╭──") + " " + dots + " " +
 		borderSt.Render(strings.Repeat("─", leftDashes)+" ") +
 		headerTitle + " " +
 		borderSt.Render(strings.Repeat("─", rightDashes)+" ") +
 		verTag + " " +
-		borderSt.Render("──")
-	botBorder := borderSt.Render(strings.Repeat("─", lipgloss.Width(topBorder)))
+		borderSt.Render("──╮")
+	botBorder := borderSt.Render("╰" + strings.Repeat("─", cardW-2) + "╯")
 
-	// 4. Vertical branched startup stages
-	pipeGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#25d366"))
-	pipeYellow := lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
-	pipeDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569"))
+	// 4. Vertical branched telemetry rows
+	railDone := lipgloss.NewStyle().Foreground(lipgloss.Color("#10b981"))
+	railActive := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
+	railDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#334155"))
+
+
+	lblDone := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f8fafc"))
+	lblActive := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#fef08a"))
+	lblDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b"))
+
+	badgeDone := lipgloss.NewStyle().Background(lipgloss.Color("#064e3b")).Foreground(lipgloss.Color("#34d399")).Bold(true)
+	badgeActive := lipgloss.NewStyle().Background(lipgloss.Color("#78350f")).Foreground(lipgloss.Color("#fbbf24")).Bold(true)
+	badgeDim := lipgloss.NewStyle().Background(lipgloss.Color("#1e293b")).Foreground(lipgloss.Color("#64748b"))
+
+	leaderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#1e293b"))
+
 	gated := x.loadingStages()
-	chatDoneTxt := fmt.Sprintf("%d chat%s loaded", len(x.chats), pluralSuffix(len(x.chats)))
-	contactDoneTxt := fmt.Sprintf("%d contact%s synced", len(x.contacts), pluralSuffix(len(x.contacts)))
-	activeTxt := []string{"Starting backend...", "Initiating handshake...", "Loading chats...", "Syncing contacts..."}
-	doneTxt := []string{"backend running", "handshake done", chatDoneTxt, contactDoneTxt}
-	stageInnerW := min(40, max(24, innerBoxW-10))
-	stageIndent := strings.Repeat(" ", max(0, (innerBoxW-stageInnerW)/2))
+	labels := []string{"backend", "handshake", "chats", "contacts"}
+	chatDoneTxt := fmt.Sprintf("%d loaded", len(x.chats))
+	contactDoneTxt := fmt.Sprintf("%d synced", len(x.contacts))
+	activeStatuses := []string{"starting...", "initiating...", "loading...", "loading..."}
+	doneStatuses := []string{"running", "done", chatDoneTxt, contactDoneTxt}
+
+	stageInnerW := cardW - 2
 	var stageRows []string
 	for i, s := range gated {
-		branch := "├─ "
+		branch := "├──●  "
 		if i == len(gated)-1 {
-			branch = "└─ "
+			if s.state == "done" || s.state == "active" {
+				branch = "└──●  "
+			} else {
+				branch = "└──○  "
+			}
+		} else if s.state == "waiting" {
+			branch = "├──○  "
 		}
-		branchStr := pipeDim.Render(branch)
-		var icon, txt string
-		var txtStyle lipgloss.Style
+
+		lblText := fmt.Sprintf("%-9s", labels[i])
+
+		var branchStr, labelStr, badgeStr string
 		switch s.state {
 		case "done":
-			icon = pipeGreen.Render("✓ ")
-			txt = doneTxt[i]
-			txtStyle = pipeGreen
+			branchStr = railDone.Render(branch)
+			labelStr = lblDone.Render(lblText)
+			badgeStr = badgeDone.Render(" ✓ " + doneStatuses[i] + " ")
 		case "active":
-			icon = pipeYellow.Render(spinnerFrames[x.spinnerFrame] + " ")
-			txt = activeTxt[i]
-			txtStyle = pipeYellow
+			branchStr = railActive.Render(branch)
+			labelStr = lblActive.Render(lblText)
+			status := activeStatuses[i]
+			brailleSpin := nodeFrames[x.spinnerFrame%len(nodeFrames)]
+			badgeStr = badgeActive.Render(" " + brailleSpin + " " + status + " ")
 		default:
-			icon = pipeDim.Render("· ")
-			txt = "waiting"
-			txtStyle = pipeDim
+			branchStr = railDim.Render(branch)
+			labelStr = lblDim.Render(lblText)
+			badgeStr = badgeDim.Render(" · waiting ")
 		}
-		line := stageIndent + branchStr + icon + txtStyle.Render(fitText(txt, max(8, stageInnerW-5)))
-		stageRows = append(stageRows, cardRow(line))
+
+		contentLeft := "  " + branchStr + labelStr + " "
+		contentRight := " " + badgeStr + "  "
+		usedW := lipgloss.Width(contentLeft) + lipgloss.Width(contentRight)
+
+		leaderW := max(2, stageInnerW-usedW)
+		leaderStr := leaderStyle.Render(strings.Repeat("·", leaderW))
+
+		middle := contentLeft + leaderStr + contentRight
+		pad := max(0, stageInnerW-lipgloss.Width(middle))
+
+		fullRow := borderSt.Render("│") + middle + strings.Repeat(" ", pad) + borderSt.Render("│")
+		stageRows = append(stageRows, cardRow(fullRow))
 	}
 
-	// 5. Assemble Main Window Card
-	blankRow := cardRow("")
+	blankRow := cardRow(borderSt.Render("│") + strings.Repeat(" ", cardW-2) + borderSt.Render("│"))
 	var cardRows []string
 	cardRows = append(cardRows,
 		topBorder,

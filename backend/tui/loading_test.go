@@ -75,8 +75,8 @@ func TestLoadingScreenContainsBoltLogo(t *testing.T) {
 	if strings.Contains(view, "WhatZap") {
 		t.Errorf("loading screen should not show extra WhatZap text under the logo")
 	}
-	if !strings.Contains(view, "▀") && !strings.Contains(view, "▄") {
-		t.Errorf("loading screen missing bolt block '▀'/'▄'")
+	if !strings.ContainsFunc(view, func(r rune) bool { return r >= 0x2801 && r <= 0x28ff }) {
+		t.Errorf("loading screen missing braille bolt characters")
 	}
 }
 
@@ -93,7 +93,7 @@ func TestSignedInSplashVisualElements(t *testing.T) {
 		t.Errorf("loading screen missing stage header title or version tag")
 	}
 	// Vertical branch stages keep only the live/done detail text, not stage-name labels.
-	for _, item := range []string{"Initiating handshake...", "Loading chats...", "Syncing contacts..."} {
+	for _, item := range []string{"initiating...", "loading..."} {
 		if !strings.Contains(view, item) {
 			t.Errorf("loading screen missing pipeline stage %q", item)
 		}
@@ -183,7 +183,7 @@ func TestSignedInSplashActiveStageSpinnerAnimation(t *testing.T) {
 		spinnerFrame: 0,
 	}
 	view0 := model0.View()
-	expected0 := spinnerFrames[0] + " Initiating handshake..."
+	expected0 := nodeFrames[0] + " initiating..."
 	if !strings.Contains(view0, expected0) {
 		t.Errorf("expected view to contain active stage spinner %q", expected0)
 	}
@@ -195,7 +195,7 @@ func TestSignedInSplashActiveStageSpinnerAnimation(t *testing.T) {
 		spinnerFrame: 1,
 	}
 	view1 := model1.View()
-	expected1 := spinnerFrames[1] + " Initiating handshake..."
+	expected1 := nodeFrames[1] + " initiating..."
 	if !strings.Contains(view1, expected1) {
 		t.Errorf("expected view to contain active stage spinner %q", expected1)
 	}
@@ -220,8 +220,8 @@ func TestSignedInSplashKeyReconnect(t *testing.T) {
 		t.Fatalf("expected reconnect command on 'r' during splash")
 	}
 }
-// The signed-in splash logo is a static zap bolt (magenta -> orange,
-// full 11 rows / compact 11 rows). It does NOT animate across frames;
+// The signed-in splash logo is a static zap bolt (yellow -> orange -> red,
+// full 6 rows / compact 6 rows). It does NOT animate across frames;
 // every call with the same compact flag must produce the same output.
 func TestRenderZapBolt(t *testing.T) {
 	prev := lipgloss.ColorProfile()
@@ -234,8 +234,8 @@ func TestRenderZapBolt(t *testing.T) {
 		wantRows  int
 		wantWidth int
 	}{
-		{"full", false, 11, 13},
-		{"compact", true, 11, 13},
+		{"full", false, 6, 7},
+		{"compact", true, 6, 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := renderZapBolt(tc.compact)
@@ -248,8 +248,8 @@ func TestRenderZapBolt(t *testing.T) {
 					t.Errorf("row %d width = %d, want %d (line: %q)", i, n, tc.wantWidth, line)
 				}
 			}
-			if !strings.Contains(got, "▀") && !strings.Contains(got, "▄") {
-				t.Errorf("bolt missing block characters")
+			if !strings.ContainsFunc(got, func(r rune) bool { return r >= 0x2801 && r <= 0x28ff }) {
+				t.Errorf("bolt missing braille characters")
 			}
 			// Static: repeated calls must match byte-for-byte.
 			if got != renderZapBolt(tc.compact) {
@@ -257,8 +257,8 @@ func TestRenderZapBolt(t *testing.T) {
 			}
 			// Gradient: every palette hex must appear.
 			for _, hex := range []string{
-				"#f472b6", "#ec4899", "#d946ef", "#a855f7", "#818cf8",
-				"#38bdf8", "#00f5d4", "#10b981", "#34d399", "#facc15", "#fb923c",
+				"#fef08a", "#fde047", "#facc15", "#eab308", "#f59e0b",
+				"#fb923c", "#f97316", "#ea580c", "#ef4444", "#dc2626", "#b91c1c",
 			} {
 				prefix := strings.TrimSuffix(lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("#"), "#\x1b[0m")
 				code := strings.TrimSuffix(prefix, "m")
@@ -290,12 +290,12 @@ func TestRenderZapBoltAnimation(t *testing.T) {
 	}
 	for f := range 11 {
 		lines := strings.Split(renderZapBolt(false, f), "\n")
-		if len(lines) != 11 {
-			t.Fatalf("frame %d rows = %d, want 11", f, len(lines))
+		if len(lines) != 6 {
+			t.Fatalf("frame %d rows = %d, want 6", f, len(lines))
 		}
 		for i, line := range lines {
-			if n := lipgloss.Width(line); n != 13 {
-				t.Errorf("frame %d row %d width = %d, want 13", f, i, n)
+			if n := lipgloss.Width(line); n != 7 {
+				t.Errorf("frame %d row %d width = %d, want 7", f, i, n)
 			}
 		}
 	}
@@ -335,7 +335,7 @@ func TestLoadingStagesHoldOneSecondEach(t *testing.T) {
 
 func TestSplashStageTexts(t *testing.T) {
 	fresh := m{w: 120, h: 30, status: "Connecting...", bootAt: time.Now()}
-	if out := fresh.View(); !strings.Contains(out, "Starting backend...") {
+	if out := fresh.View(); !strings.Contains(out, "starting...") {
 		t.Errorf("fresh splash missing backend working text")
 	}
 	done := m{
@@ -348,7 +348,7 @@ func TestSplashStageTexts(t *testing.T) {
 		bootAt:       time.Now().Add(-10 * time.Second),
 	}
 	out := done.View()
-	for _, want := range []string{"backend running", "handshake done", "2 chats loaded", "1 contact synced"} {
+	for _, want := range []string{"backend", "handshake", "chats", "contacts", "running", "done", "2 loaded", "1 synced"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("finished splash missing %q", want)
 		}
@@ -359,10 +359,10 @@ func TestSplashStageSectionIsCompactAndCentered(t *testing.T) {
 	model := m{w: 120, h: 30, status: "Connecting..."}
 	out := ansiStripRe.ReplaceAllString(model.View(), "")
 	for _, l := range strings.Split(out, "\n") {
-		if strings.Contains(l, "├─") && strings.Contains(l, "backend running") {
+		if strings.Contains(l, "├─") && strings.Contains(l, "backend") {
 			trimmed := strings.TrimSpace(l)
-			if got := len([]rune(trimmed)); got > 42 {
-				t.Fatalf("stage row width = %d, want compact <= 42: %q", got, trimmed)
+			if got := len([]rune(trimmed)); got > 60 {
+				t.Fatalf("stage row width = %d, want compact <= 60: %q", got, trimmed)
 			}
 			leftPad := len([]rune(l)) - len([]rune(strings.TrimLeft(l, " ")))
 			rightPad := len([]rune(l)) - len([]rune(strings.TrimRight(l, " ")))
@@ -388,10 +388,10 @@ func TestSplashVerticalBranchStages(t *testing.T) {
 	if len(branchLines) != 4 {
 		t.Fatalf("expected 4 vertical branch stage rows, got %d:\n%s", len(branchLines), out)
 	}
-	if !strings.Contains(branchLines[0], "backend running") {
+	if !strings.Contains(branchLines[0], "backend") {
 		t.Fatalf("first branch should show backend status, got %q", branchLines[0])
 	}
-	if !strings.Contains(branchLines[1], "Initiating handshake...") {
+	if !strings.Contains(branchLines[1], "handshake") || !strings.Contains(branchLines[1], "initiating...") {
 		t.Fatalf("second branch should show active handshake status, got %q", branchLines[1])
 	}
 	if !strings.Contains(branchLines[3], "└─") {
