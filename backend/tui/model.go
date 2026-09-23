@@ -171,6 +171,7 @@ type m struct {
 	cursorOn                                 bool
 	pulseOn                                  bool
 	spinnerFrame                             int
+	bootAt                                   time.Time // when the app started; stages hold ~1s each
 	msgActivityUntil                         time.Time
 	msgActivityType                          string // "sent" or "received"
 	flashUntil                               map[string]time.Time

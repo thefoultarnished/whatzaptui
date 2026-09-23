@@ -44,6 +44,7 @@ func main() {
 			gfx:                   newGfxState(),
 			demoMode:              demoMode,
 			status:                "Starting backend...",
+			bootAt:                time.Now(),
 			mode:                  "nav",
 			sidebarTab:            "chats",
 			contacts:              map[string]contact{},

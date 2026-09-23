@@ -73,6 +73,7 @@ var (
 	background                                                         lipgloss.Color
 
 	spinnerFrames  = []string{"✶", "✸", "✹", "✺", "✹", "✷"}
+	nodeFrames     = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	typingIcons    = []string{"✿", "✦", "◇", "☆", "⌘"}
 	systemCommands []string
 	chatCommands   = []string{

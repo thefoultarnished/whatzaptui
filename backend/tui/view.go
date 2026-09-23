@@ -117,14 +117,7 @@ func (x m) renderStartupView(frameW int) string {
 		outerW = frameW
 	}
 	outerH := x.h
-	var innerW, innerH int
-	if currentConfig.Borderless {
-		innerW = outerW
-		innerH = outerH
-	} else {
-		innerW = max(1, outerW-2)
-		innerH = max(1, outerH-2)
-	}
+	innerW, innerH := outerW, outerH
 	statusBody := x.status
 	logo := renderPiLogo()
 	title := logoStyle.Render("WhatZap")
@@ -262,16 +255,8 @@ func renderOuterAppFrame(inner string, outerW, outerH, leftW int) string {
 }
 
 func renderStatusBox(body string, innerW, innerH, outerW, outerH int) string {
-	content := lipgloss.Place(innerW, innerH, lipgloss.Center, lipgloss.Center, body)
-	if currentConfig.Borderless {
-		return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
-	}
-	return lipgloss.NewStyle().
-		Width(innerW).
-		Height(innerH).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(brand).
-		Render(content)
+	content := lipgloss.Place(outerW, outerH, lipgloss.Center, lipgloss.Center, body)
+	return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
 }
 
 func connectFrameJunctions(framedBody string) string {
@@ -403,61 +388,101 @@ func renderPiLogo() string {
 
 	return r0 + "\n" + r1 + "\n" + r2 + "\n" + r3 + "\n" + r4
 }
-func renderChatBubbleLogo(compact bool, frame ...int) string {
-	baseColors := []lipgloss.Color{
-		lipgloss.Color("#e040fb"), // pink
-		lipgloss.Color("#d946ef"), // magenta
-		lipgloss.Color("#c026d3"), // purple
-		lipgloss.Color("#a855f7"), // violet
-		lipgloss.Color("#818cf8"), // indigo
-		lipgloss.Color("#6366f1"), // blue
-		lipgloss.Color("#38bdf8"), // sky
-		lipgloss.Color("#06b6d4"), // cyan
-		lipgloss.Color("#00f5d4"), // electric cyan
+func renderZapBolt(compact bool, frame ...int) string {
+	palette := []lipgloss.Color{
+		"#f472b6", // pink
+		"#ec4899", // magenta
+		"#d946ef", // fuchsia
+		"#a855f7", // violet
+		"#818cf8", // indigo
+		"#38bdf8", // sky
+		"#00f5d4", // cyan
+		"#10b981", // emerald
+		"#34d399", // green
+		"#facc15", // yellow
+		"#fb923c", // orange
 	}
-	palette := make([]lipgloss.Color, 0, len(baseColors)*2-2)
-	palette = append(palette, baseColors...)
-	for i := len(baseColors) - 2; i > 0; i-- {
-		palette = append(palette, baseColors[i])
+	shadePalette := []lipgloss.Color{
+		"#c04886", // pink dim
+		"#b82e70", // magenta dim
+		"#9d24b0", // fuchsia dim
+		"#7a34bc", // violet dim
+		"#5862c4", // indigo dim
+		"#1e8ec0", // sky dim
+		"#00b8a0", // cyan dim
+		"#0b855c", // emerald dim
+		"#219c6e", // green dim
+		"#be9b08", // yellow dim
+		"#c2681e", // orange dim
 	}
-	shift := 0
-	if len(frame) > 0 {
-		shift = frame[0] % len(palette)
+	fullPixels := []string{
+		"        #####",
+		"   ##  ######",
+		"   #   ##### ",
+		"     ######  ",
+		"     #####   ",
+		"    #####    ",
+		"  #######  # ",
+		"   #####  #  ",
+		"  #####  #   ",
+		" ############",
+		" ########### ",
+		"###########  ",
+		"      ####   ",
+		"     ####    ",
+		"  #  ####    ",
+		"   #####     ",
+		"    ###      ",
+		"   ###       ",
+		"   ##        ",
+		"   ##        ",
+		"  #          ",
+		"  #          ",
 	}
 
-	var wBubble []string
-	if compact {
-		wBubble = []string{
-			"   ▄████████████▄   ",
-			"  ██▒  █ █  █  ▒██  ",
-			"  █    ██ █ █    █  ",
-			"  ██▒  █   ██  ▒██  ",
-			"   ▀████████████▀ ▀█",
-		}
-	} else {
-		wBubble = []string{
-			"   ▄████████████▄   ",
-			"  ██▒          ▒██  ",
-			"  █   █  ██  █   █  ",
-			"  █   █ █  █ █   █  ",
-			"  ██▒  █    █  ▒██  ",
-			"   ▀████████████▀   ",
-			"             ▀█▄    ",
-		}
+	f := 0
+	if len(frame) > 0 {
+		f = frame[0]
 	}
+	f = (f%len(palette) + len(palette)) % len(palette)
+
+	numHalfRows := len(fullPixels) / 2
 	var lines []string
-	for _, row := range wBubble {
-		runes := []rune(row)
-		w := len(runes)
+
+	for hr := range numHalfRows {
+		rTop := 2 * hr
+		rBot := 2*hr + 1
+
+		topIdx := (hr - f + len(palette)) % len(palette)
+		botIdx := (topIdx + 1) % len(palette)
+		rowTop := fullPixels[rTop]
+		rowBot := fullPixels[rBot]
+
 		var sb strings.Builder
-		for colIdx, ch := range runes {
-			if ch == ' ' {
-				sb.WriteRune(' ')
-				continue
+		for c := range 13 {
+			topOn := c < len(rowTop) && rowTop[c] == '#'
+			botOn := c < len(rowBot) && rowBot[c] == '#'
+
+			pTop := palette
+			pBot := palette
+			if (c+hr+f)%2 != 0 {
+				pTop = shadePalette
+				pBot = shadePalette
 			}
-			baseIdx := (colIdx * len(palette)) / w
-			colorIdx := (baseIdx + shift) % len(palette)
-			sb.WriteString(lipgloss.NewStyle().Foreground(palette[colorIdx]).Render(string(ch)))
+
+			switch {
+			case topOn && botOn:
+				st := lipgloss.NewStyle().Foreground(pTop[topIdx]).Background(pBot[botIdx])
+				sb.WriteString(st.Render("▀"))
+			case topOn && !botOn:
+				st := lipgloss.NewStyle().Foreground(pTop[topIdx])
+				sb.WriteString(st.Render("▀"))
+			case !topOn && botOn:
+				st := lipgloss.NewStyle().Foreground(pBot[botIdx])
+				sb.WriteString(st.Render("▄"))
+			default:
+				sb.WriteRune(' ')
+			}
 		}
 		lines = append(lines, sb.String())
 	}
@@ -507,14 +532,21 @@ func renderPixelWordmark() string {
 		"▀   ",
 	}
 
-	styleWhat := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
-	styleZap := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff"))
+	whatColors := []lipgloss.Color{"#a5b4fc", "#818cf8", "#818cf8", "#6366f1"}
+	zapColors := []lipgloss.Color{"#38bdf8", "#00f5d4", "#25d366"}
 
 	var rows []string
 	for r := range 4 {
-		what := styleWhat.Render(wGrid[r] + " " + hGrid[r] + " " + a1Grid[r] + " " + tGrid[r])
-		zap := styleZap.Render(zGrid[r] + " " + a2Grid[r] + " " + pGrid[r])
-		rows = append(rows, what+" "+zap)
+		segs := []string{
+			lipgloss.NewStyle().Foreground(whatColors[0]).Render(wGrid[r]),
+			lipgloss.NewStyle().Foreground(whatColors[1]).Render(hGrid[r]),
+			lipgloss.NewStyle().Foreground(whatColors[2]).Render(a1Grid[r]),
+			lipgloss.NewStyle().Foreground(whatColors[3]).Render(tGrid[r]),
+			lipgloss.NewStyle().Foreground(zapColors[0]).Render(zGrid[r]),
+			lipgloss.NewStyle().Foreground(zapColors[1]).Render(a2Grid[r]),
+			lipgloss.NewStyle().Foreground(zapColors[2]).Render(pGrid[r]),
+		}
+		rows = append(rows, strings.Join(segs, " "))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -532,11 +564,62 @@ func (x m) loadingPulse() string {
 // bootStage is one row of the startup checklist. state is one of
 // "done", "active", "pending".
 type bootStage struct {
-	label  string
-	state  string
-	detail string
+	label string
+	state string
 }
 
+// bootStageHold is how long each startup step stays on screen before the
+// next one can light up. The spinner itself keeps ticking fast.
+const bootStageHold = time.Second
+
+// stageTimeAllow returns how many startup stages time has unlocked so far
+// (0..4). Zero bootAt (tests) means no gating.
+func (x m) stageTimeAllow() int {
+	if x.bootAt.IsZero() {
+		return 1 << 30
+	}
+	n := int(time.Since(x.bootAt) / bootStageHold)
+	if n < 0 {
+		n = 0
+	}
+	if n > 4 {
+		n = 4
+	}
+	return n
+}
+
+var bootLevel = map[string]int{"pending": 0, "active": 1, "done": 2}
+
+func bootState(level int) string {
+	switch level {
+	case 2:
+		return "done"
+	case 1:
+		return "active"
+	default:
+		return "pending"
+	}
+}
+
+// pluralSuffix returns "" for 1, "s" otherwise.
+func pluralSuffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// fitText cuts s to w runes with an ellipsis if it is longer.
+func fitText(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	if w <= 1 {
+		return string(r[:max(1, w)])
+	}
+	return string(r[:w-1]) + "…"
+}
 // loadingStages derives the startup checklist from already-available state:
 // backend liveness from status, session from status, chats/contacts from
 // the prefetched lists (populated before `ready`). Pure for testability.
@@ -555,14 +638,12 @@ func (x m) loadingStages() []bootStage {
 	chats := bootStage{label: "Chats", state: "pending"}
 	if chatsDone {
 		chats.state = "done"
-		chats.detail = plural(len(x.chats), "chat")
 	} else if backendDone {
 		chats.state = "active"
 	}
 	contacts := bootStage{label: "Contacts", state: "pending"}
 	if contactsDone {
 		contacts.state = "done"
-		contacts.detail = plural(len(x.contacts), "contact")
 	} else if backendDone {
 		contacts.state = "active"
 	}
@@ -570,14 +651,23 @@ func (x m) loadingStages() []bootStage {
 	if backendDone {
 		backend.state = "done"
 	}
-	return []bootStage{backend, {label: "Session", state: sessionState}, chats, contacts}
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
+	stages := []bootStage{backend, {label: "Handshake", state: sessionState}, chats, contacts}
+	// Hold each stage ~1s so fast loads stay readable. Stage i can show
+	// at most level (allow - i + 1): pending, then active, then done.
+	allow := x.stageTimeAllow()
+	for i := range stages {
+		maxLvl := allow - i + 1
+		if maxLvl < 0 {
+			maxLvl = 0
+		}
+		if maxLvl > 2 {
+			maxLvl = 2
+		}
+		if bootLevel[stages[i].state] > maxLvl {
+			stages[i].state = bootState(maxLvl)
+		}
 	}
-	return strconv.Itoa(n) + " " + word + "s"
+	return stages
 }
 
 // renderBootStages renders the startup checklist as a connected pipeline.
@@ -592,26 +682,16 @@ func (x m) renderBootStages() string {
 		}
 		branchStr := mutedStyle.Render(branch)
 
-		var icon, labelStr, detailStr string
+		var icon string
 		switch s.state {
 		case "done":
-			icon = accentStyle.Render("✓ ")
-			labelStr = lipgloss.NewStyle().Foreground(text).Render(s.label)
-			if s.detail != "" {
-				detailStr = mutedStyle.Render("  " + s.detail)
-			} else {
-				detailStr = mutedStyle.Render("  ready")
-			}
+			icon = accentStyle.Render("✓")
 		case "active":
-			icon = logoStyle.Render(spinnerFrames[x.spinnerFrame] + " ")
-			labelStr = logoStyle.Render(s.label)
-			detailStr = logoStyle.Render("  syncing...")
+			icon = logoStyle.Render(spinnerFrames[x.spinnerFrame])
 		default:
-			icon = mutedStyle.Render("· ")
-			labelStr = mutedStyle.Render(s.label)
-			detailStr = mutedStyle.Render("  waiting")
+			icon = mutedStyle.Render("·")
 		}
-		rows = append(rows, branchStr+icon+labelStr+detailStr)
+		rows = append(rows, branchStr+icon)
 	}
 	return strings.Join(rows, "\n")
 }
@@ -695,6 +775,10 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		}
 	}
 
+	// Keep the splash edge-to-edge clean: no top or bottom page bars.
+	topBarBlock = ""
+	botBarBlock = ""
+
 	centerH := innerH
 	if outerH >= 22 {
 		if topBarBlock != "" {
@@ -710,7 +794,7 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	centerH = max(1, centerH)
 
 	// 2. Logo, Title, Subtitle
-	logo := renderChatBubbleLogo(innerH < 26, x.spinnerFrame)
+	logo := renderZapBolt(innerH < 26, x.shineFrame)
 	var title string
 	if centerH >= 18 {
 		title = renderPixelWordmark()
@@ -719,146 +803,94 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		titleZap := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00f5d4")).Render("Zap")
 		title = titleWhat + titleZap
 	}
-	// 2. Card Dimensions
-	cardW := min(66, max(44, innerW-4))
-	if innerW < 44 {
+	// 2. Stage section dimensions. Keep this compact now that stages
+	// are vertical, then center the whole section under the title.
+	cardW := min(72, max(52, innerW-8))
+	if innerW < 52 {
 		cardW = max(24, innerW-2)
 	}
-	innerBoxW := cardW - 2
+	innerBoxW := cardW
 	borderCol := lipgloss.Color("#1e3a5f")
 	borderSt := lipgloss.NewStyle().Foreground(borderCol)
 
 	cardRow := func(content string) string {
 		visW := lipgloss.Width(content)
 		pad := max(0, innerBoxW-visW)
-		return borderSt.Render("│") + content + strings.Repeat(" ", pad) + borderSt.Render("│")
+		return content + strings.Repeat(" ", pad)
 	}
 
-	// 3. Top Border with dots, title, and version tag
+	// 3. Compact stage section header/footer
 	dotPink := lipgloss.NewStyle().Foreground(lipgloss.Color("#f472b6")).Render("●")
 	dotPurple := lipgloss.NewStyle().Foreground(lipgloss.Color("#c084fc")).Render("●")
 	dotCyan := lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("●")
 	dots := dotPink + " " + dotPurple + " " + dotCyan
-
 	headerTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("CONNECTING TO WHATSAPP")
 	verTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("v0.1.0")
-
 	fixedW := 43
 	availDashes := max(2, cardW-fixedW)
 	leftDashes := availDashes / 2
 	rightDashes := availDashes - leftDashes
-
-	topBorder := borderSt.Render("╭─") + " " + dots + " " +
+	topBorder := borderSt.Render("──") + " " + dots + " " +
 		borderSt.Render(strings.Repeat("─", leftDashes)+" ") +
 		headerTitle + " " +
 		borderSt.Render(strings.Repeat("─", rightDashes)+" ") +
 		verTag + " " +
-		borderSt.Render("─╮")
+		borderSt.Render("──")
+	botBorder := borderSt.Render(strings.Repeat("─", lipgloss.Width(topBorder)))
 
-	divider := borderSt.Render("├" + strings.Repeat("─", innerBoxW) + "┤")
-	botBorder := borderSt.Render("╰" + strings.Repeat("─", innerBoxW) + "╯")
-
-	// 5. Checklist Rows
-	checkMint := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399"))
-	labelWhite := lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0"))
-	valMuted := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8"))
-	valActive := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399"))
-
-	backendDone := x.status != "" && x.status != "Starting backend..." && x.status != "Starting demo..."
-	sessionDone := x.status == "ready" || x.sessionReady
-	chatsDone := len(x.chats) > 0
-	contactsDone := len(x.contacts) > 0
-
-	type checkItem struct {
-		label  string
-		val    string
-		done   bool
-		active bool
-	}
-	items := []checkItem{
-		{label: "Backend", val: "ready", done: backendDone, active: stages[0].state == "active"},
-		{label: "Session", val: "ready", done: sessionDone, active: stages[1].state == "active"},
-		{label: "Chats", val: plural(len(x.chats), "chat"), done: chatsDone, active: stages[2].state == "active"},
-		{label: "Contacts", val: plural(len(x.contacts), "contact"), done: contactsDone, active: stages[3].state == "active"},
-		{label: "Encryption", val: "active", done: true, active: false},
-	}
-
-	indent := strings.Repeat(" ", max(2, (innerBoxW-34)/2))
-	var checkLines []string
-	for _, it := range items {
-		var icon string
-		valStr := valMuted.Render(it.val)
-		if it.label == "Encryption" {
-			valStr = valActive.Render("active")
+	// 4. Vertical branched startup stages
+	pipeGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#25d366"))
+	pipeYellow := lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24"))
+	pipeDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569"))
+	gated := x.loadingStages()
+	chatDoneTxt := fmt.Sprintf("%d chat%s loaded", len(x.chats), pluralSuffix(len(x.chats)))
+	contactDoneTxt := fmt.Sprintf("%d contact%s synced", len(x.contacts), pluralSuffix(len(x.contacts)))
+	activeTxt := []string{"Starting backend...", "Initiating handshake...", "Loading chats...", "Syncing contacts..."}
+	doneTxt := []string{"backend running", "handshake done", chatDoneTxt, contactDoneTxt}
+	stageInnerW := min(40, max(24, innerBoxW-10))
+	stageIndent := strings.Repeat(" ", max(0, (innerBoxW-stageInnerW)/2))
+	var stageRows []string
+	for i, s := range gated {
+		branch := "├─ "
+		if i == len(gated)-1 {
+			branch = "└─ "
 		}
-		if it.done {
-			icon = checkMint.Render("✓")
-		} else if it.active {
-			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render(spinnerFrames[x.spinnerFrame])
-			valStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("syncing...")
-		} else {
-			icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("·")
-			valStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("waiting")
+		branchStr := pipeDim.Render(branch)
+		var icon, txt string
+		var txtStyle lipgloss.Style
+		switch s.state {
+		case "done":
+			icon = pipeGreen.Render("✓ ")
+			txt = doneTxt[i]
+			txtStyle = pipeGreen
+		case "active":
+			icon = pipeYellow.Render(spinnerFrames[x.spinnerFrame] + " ")
+			txt = activeTxt[i]
+			txtStyle = pipeYellow
+		default:
+			icon = pipeDim.Render("· ")
+			txt = "waiting"
+			txtStyle = pipeDim
 		}
-		rowText := indent + icon + "   " + labelWhite.Render(fmt.Sprintf("%-12s", it.label)) + "   " + valStr
-		checkLines = append(checkLines, cardRow(rowText))
+		line := stageIndent + branchStr + icon + txtStyle.Render(fitText(txt, max(8, stageInnerW-5)))
+		stageRows = append(stageRows, cardRow(line))
 	}
 
-	// 6. Metadata Badges Row
-	b1 := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("[ ") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render(":8787") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(" ]")
-
-	deviceVal := "none"
-	if x.active != "" {
-		deviceVal = "active"
-	}
-	b2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("[ ") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("device: ") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#fbbf24")).Render(deviceVal) +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(" ]")
-
-	b3 := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("[ ") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#22d3ee")).Render("🔒 whatsmeow") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(" ]")
-
-	badgeRowPad := max(1, (innerBoxW-lipgloss.Width(b1)-lipgloss.Width(b2)-lipgloss.Width(b3))/4)
-	badgeSp := strings.Repeat(" ", badgeRowPad)
-	metaRow := cardRow(badgeSp + b1 + badgeSp + b2 + badgeSp + b3)
-
-	// 6. Assemble Main Window Card
+	// 5. Assemble Main Window Card
 	blankRow := cardRow("")
 	var cardRows []string
-	if innerH >= 24 {
-		cardRows = append(cardRows,
-			topBorder,
-			blankRow,
-		)
-		cardRows = append(cardRows, checkLines...)
-		cardRows = append(cardRows,
-			blankRow,
-			divider,
-			blankRow,
-			metaRow,
-			blankRow,
-			botBorder,
-		)
-	} else {
-		cardRows = append(cardRows,
-			topBorder,
-		)
-		cardRows = append(cardRows, checkLines...)
-		cardRows = append(cardRows,
-			divider,
-			metaRow,
-			botBorder,
-		)
-	}
+	cardRows = append(cardRows,
+		topBorder,
+		blankRow,
+	)
+	cardRows = append(cardRows, stageRows...)
+	cardRows = append(cardRows,
+		blankRow,
+		botBorder,
+	)
 	cardBox := strings.Join(cardRows, "\n")
 
 	// 8. Command Action Bar
-	cmdW := cardW
-	cmdInner := cmdW - 2
 	btnEnter := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#34d399")).Render("[ENTER]") +
 		" " + lipgloss.NewStyle().Foreground(lipgloss.Color("#e2e8f0")).Render("Open client")
 	btnQ := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("[Q]") +
@@ -868,14 +900,8 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	sep := borderSt.Render("│")
 
 	cmdContent := btnEnter + "   " + sep + "   " + btnQ + "   " + sep + "   " + btnR
-	cmdVis := lipgloss.Width(cmdContent)
-	cmdPad := max(0, cmdInner-cmdVis)
-	cmdLeftPad := strings.Repeat(" ", cmdPad/2)
-	cmdRightPad := strings.Repeat(" ", cmdPad-cmdPad/2)
 
-	cmdBox := borderSt.Render("╭"+strings.Repeat("─", cmdInner)+"╮") + "\n" +
-		borderSt.Render("│") + cmdLeftPad + cmdContent + cmdRightPad + borderSt.Render("│") + "\n" +
-		borderSt.Render("╰"+strings.Repeat("─", cmdInner)+"╯")
+	cmdBox := cmdContent
 
 	// 9. Hint at Bottom
 	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("Press any key to continue")
@@ -1792,7 +1818,7 @@ func (x m) renderWelcomePane(w, h int) string {
 	}
 
 	section := func(title string, items []string) string {
-		h := secStyle.Render("  " + title)
+		h := secStyle.Render(title)
 		return h + "\n" + strings.Join(items, "\n")
 	}
 

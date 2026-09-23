@@ -418,12 +418,12 @@ func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
 		x.mouseEnabled = true
 		currentConfig.MouseEnabled = true
 		saveConfig()
-		return x.setTopBar("Mouse: Enabled"), true
+		return tea.Batch(x.setTopBar("Mouse: Enabled"), mouseModeCmd(true)), true
 	case txt == "/mouseoff":
 		x.mouseEnabled = false
 		currentConfig.MouseEnabled = false
 		saveConfig()
-		return x.setTopBar("Mouse: Disabled"), true
+		return tea.Batch(x.setTopBar("Mouse: Disabled"), mouseModeCmd(false)), true
 	case txt == "/sound1", txt == "/sound2", txt == "/sound3", txt == "/sound4", txt == "/sound5":
 		profile := int(txt[len(txt)-1] - '0')
 		profile = normalizeSoundProfile(profile)

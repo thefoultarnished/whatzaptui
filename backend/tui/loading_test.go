@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,16 +33,16 @@ func TestLoadingStages(t *testing.T) {
 		contacts: map[string]contact{"c@s.whatsapp.net": {ID: "c@s.whatsapp.net"}},
 	}
 	stages = loaded.loadingStages()
-	if stages[2].state != "done" || stages[2].detail != "2 chats" {
-		t.Fatalf("chats stage = %+v, want done/2 chats", stages[2])
+	if stages[2].state != "done" {
+		t.Fatalf("chats stage = %+v, want done", stages[2])
 	}
-	if stages[3].state != "done" || stages[3].detail != "1 contact" {
-		t.Fatalf("contacts stage = %+v, want done/1 contact", stages[3])
+	if stages[3].state != "done" {
+		t.Fatalf("contacts stage = %+v, want done", stages[3])
 	}
 
 	ready := m{status: "ready"}
 	for _, s := range ready.loadingStages() {
-		if s.label == "Session" && s.state != "done" {
+		if s.label == "Handshake" && s.state != "done" {
 			t.Fatalf("session stage at ready = %q, want done", s.state)
 		}
 	}
@@ -64,44 +65,52 @@ func TestRenderPiLogo(t *testing.T) {
 	}
 }
 
-func TestLoadingScreenContainsPiLogo(t *testing.T) {
+func TestLoadingScreenContainsBoltLogo(t *testing.T) {
 	model := m{
 		w:      80,
 		h:      24,
 		status: "Connecting...",
 	}
 	view := model.View()
-	if !strings.Contains(view, "WhatZap") {
-		t.Errorf("loading screen missing title 'WhatZap'")
+	if strings.Contains(view, "WhatZap") {
+		t.Errorf("loading screen should not show extra WhatZap text under the logo")
 	}
-	if !strings.Contains(view, "█") {
-		t.Errorf("loading screen missing Pi logo full block '█'")
-	}
-	if !strings.Contains(view, "▒") {
-		t.Errorf("loading screen missing Pi logo dither block '▒'")
+	if !strings.Contains(view, "▀") && !strings.Contains(view, "▄") {
+		t.Errorf("loading screen missing bolt block '▀'/'▄'")
 	}
 }
 
 func TestSignedInSplashVisualElements(t *testing.T) {
 	model := m{
-		w:      80,
-		h:      24,
+		w:      120,
+		h:      30,
 		status: "Connecting...",
 	}
 	view := model.View()
-	// Window card header
-	if !strings.Contains(view, "CONNECTING TO WHATSAPP") || !strings.Contains(view, "v0.1.0") {
-		t.Errorf("loading screen missing header title or version tag")
+	plainView := ansiStripRe.ReplaceAllString(view, "")
+	// Stage section header remains; page edge bars are removed.
+	if !strings.Contains(plainView, "CONNECTING TO WHATSAPP") || !strings.Contains(plainView, "v0.1.0") {
+		t.Errorf("loading screen missing stage header title or version tag")
 	}
-	// Checklist items
-	for _, item := range []string{"Backend", "Session", "Chats", "Contacts", "Encryption"} {
+	// Vertical branch stages keep only the live/done detail text, not stage-name labels.
+	for _, item := range []string{"Initiating handshake...", "Loading chats...", "Syncing contacts..."} {
 		if !strings.Contains(view, item) {
-			t.Errorf("loading screen missing checklist item %q", item)
+			t.Errorf("loading screen missing pipeline stage %q", item)
 		}
 	}
-	// System badges
-	if !strings.Contains(view, "8787") || !strings.Contains(view, "whatsmeow") || !strings.Contains(view, "device:") {
-		t.Errorf("loading screen missing system info badges")
+	for _, removed := range []string{" Backend ", " Handshake ", " Chats ", " Contacts "} {
+		if strings.Contains(plainView, removed) {
+			t.Errorf("loading screen should not show stage-name label %q", removed)
+		}
+	}
+	if !strings.Contains(plainView, "├─") || !strings.Contains(plainView, "└─") {
+		t.Errorf("loading screen missing vertical branch stages")
+	}
+	// System badges were removed from the clean splash.
+	for _, removed := range []string{"8787", "whatsmeow", "device:"} {
+		if strings.Contains(plainView, removed) {
+			t.Errorf("loading screen should not show system badge %q", removed)
+		}
 	}
 	// Command action bar
 	if !strings.Contains(view, "[ENTER]") || !strings.Contains(view, "[Q]") || !strings.Contains(view, "[R]") {
@@ -111,73 +120,36 @@ func TestSignedInSplashVisualElements(t *testing.T) {
 	if !strings.Contains(view, "Press any key to continue") {
 		t.Errorf("loading screen missing continue hint")
 	}
-	// Top bar
-	if !strings.Contains(view, "A private WhatsApp client for your terminal") {
-		t.Errorf("loading screen missing top bar tagline")
-	}
-	// Bottom bar
-	if !strings.Contains(view, "Terminal. Private. Yours.") || !strings.Contains(view, "https://github.com/whatzap") {
-		t.Errorf("loading screen missing bottom bar footer or github link")
+	// Page edge bars should be gone.
+	for _, removed := range []string{"A private WhatsApp client for your terminal", "Terminal. Private. Yours.", "https://github.com/whatzap"} {
+		if strings.Contains(plainView, removed) {
+			t.Errorf("loading screen should not show page edge bar text %q", removed)
+		}
 	}
 }
-func TestSignedInSplashHeaderBorderAlignment(t *testing.T) {
+func TestSignedInSplashPageEdgeBarsAreRemoved(t *testing.T) {
 	model := m{
 		w:      80,
 		h:      24,
 		status: "Connecting...",
 	}
-	view := model.View()
-	lines := strings.Split(view, "\n")
-	var topBorderLine, botBorderLine, dividerLine string
-	for _, l := range lines {
-		plain := ansiStripRe.ReplaceAllString(l, "")
-		if strings.Contains(plain, "CONNECTING TO WHATSAPP") && strings.Contains(plain, "╭") {
-			topBorderLine = plain
+	view := ansiStripRe.ReplaceAllString(model.View(), "")
+	for _, removed := range []string{"A private WhatsApp client for your terminal", "Terminal. Private. Yours.", "https://github.com/whatzap"} {
+		if strings.Contains(view, removed) {
+			t.Fatalf("page edge bar text should be removed: %q", removed)
 		}
-		if strings.Contains(plain, "╰") && strings.Contains(plain, "───") {
-			botBorderLine = plain
-		}
-		if strings.Contains(plain, "├") && strings.Contains(plain, "───") {
-			dividerLine = plain
-		}
-	}
-	if topBorderLine == "" || botBorderLine == "" || dividerLine == "" {
-		t.Fatalf("could not find card borders in view:\n%s", view)
-	}
-	topW := len([]rune(topBorderLine))
-	botW := len([]rune(botBorderLine))
-	divW := len([]rune(dividerLine))
-	if topW != botW || topW != divW {
-		t.Fatalf("header border width mismatch: top=%d, bottom=%d, divider=%d", topW, botW, divW)
 	}
 }
 
-func TestNoExtraBlankRowBelowBottomBar(t *testing.T) {
+func TestNoPageEdgeFooterOnSignedInSplash(t *testing.T) {
 	model := m{
 		w:      80,
 		h:      24,
 		status: "Connecting...",
 	}
-	view := model.View()
-	lines := strings.Split(view, "\n")
-	githubIdx := -1
-	outerBotIdx := -1
-	for i, l := range lines {
-		plain := ansiStripRe.ReplaceAllString(l, "")
-		if strings.Contains(plain, "github.com/whatzap") {
-			githubIdx = i
-		}
-		if strings.Contains(plain, "╰") && strings.HasPrefix(plain, "╰") {
-			outerBotIdx = i
-		}
-	}
-	if githubIdx == -1 {
-		t.Fatalf("could not find github link row in view:\n%s", view)
-	}
-	if outerBotIdx != -1 {
-		if outerBotIdx != githubIdx+1 {
-			t.Fatalf("expected outer bottom border immediately below github link row (idx %d vs %d):\n%s", outerBotIdx, githubIdx+1, view)
-		}
+	view := ansiStripRe.ReplaceAllString(model.View(), "")
+	if strings.Contains(view, "github.com/whatzap") {
+		t.Fatalf("signed-in splash should not render page edge footer:\n%s", view)
 	}
 }
 
@@ -189,16 +161,43 @@ func TestSignedInSplashEdgeToEdgeDimensions(t *testing.T) {
 	}
 	view := model.View()
 	lines := strings.Split(view, "\n")
-	if len(lines) != 24 {
-		t.Fatalf("expected view to have exactly 24 lines, got %d", len(lines))
+	if len(lines) < 24 {
+		t.Fatalf("view only has %d lines; expected at least 24 to fill h=24", len(lines))
 	}
-	firstPlain := ansiStripRe.ReplaceAllString(lines[0], "")
-	lastPlain := ansiStripRe.ReplaceAllString(lines[23], "")
-	if len([]rune(firstPlain)) != 80 {
-		t.Errorf("expected first line to be 80 runes wide, got %d", len([]rune(firstPlain)))
+	for i := range lines {
+		if i >= 24 {
+			break
+		}
+		plain := ansiStripRe.ReplaceAllString(lines[i], "")
+		if len([]rune(plain)) != 80 {
+			t.Errorf("line %d plain width = %d, want 80", i, len([]rune(plain)))
+		}
 	}
-	if len([]rune(lastPlain)) != 80 {
-		t.Errorf("expected last line to be 80 runes wide, got %d", len([]rune(lastPlain)))
+}
+
+func TestSignedInSplashActiveStageSpinnerAnimation(t *testing.T) {
+	model0 := m{
+		w:            80,
+		h:            24,
+		status:       "Connecting...",
+		spinnerFrame: 0,
+	}
+	view0 := model0.View()
+	expected0 := spinnerFrames[0] + " Initiating handshake..."
+	if !strings.Contains(view0, expected0) {
+		t.Errorf("expected view to contain active stage spinner %q", expected0)
+	}
+
+	model1 := m{
+		w:            80,
+		h:            24,
+		status:       "Connecting...",
+		spinnerFrame: 1,
+	}
+	view1 := model1.View()
+	expected1 := spinnerFrames[1] + " Initiating handshake..."
+	if !strings.Contains(view1, expected1) {
+		t.Errorf("expected view to contain active stage spinner %q", expected1)
 	}
 }
 
@@ -221,25 +220,182 @@ func TestSignedInSplashKeyReconnect(t *testing.T) {
 		t.Fatalf("expected reconnect command on 'r' during splash")
 	}
 }
-func TestChatBubbleLogoColorAnimation(t *testing.T) {
+// The signed-in splash logo is a static zap bolt (magenta -> orange,
+// full 11 rows / compact 11 rows). It does NOT animate across frames;
+// every call with the same compact flag must produce the same output.
+func TestRenderZapBolt(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
-	f0 := renderChatBubbleLogo(false, 0)
-	f3 := renderChatBubbleLogo(false, 3)
-	if f0 == f3 {
-		t.Fatalf("expected logo colors to shift across frames")
+	for _, tc := range []struct {
+		name      string
+		compact   bool
+		wantRows  int
+		wantWidth int
+	}{
+		{"full", false, 11, 13},
+		{"compact", true, 11, 13},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderZapBolt(tc.compact)
+			lines := strings.Split(got, "\n")
+			if len(lines) != tc.wantRows {
+				t.Fatalf("rows = %d, want %d", len(lines), tc.wantRows)
+			}
+			for i, line := range lines {
+				if n := lipgloss.Width(line); n != tc.wantWidth {
+					t.Errorf("row %d width = %d, want %d (line: %q)", i, n, tc.wantWidth, line)
+				}
+			}
+			if !strings.Contains(got, "▀") && !strings.Contains(got, "▄") {
+				t.Errorf("bolt missing block characters")
+			}
+			// Static: repeated calls must match byte-for-byte.
+			if got != renderZapBolt(tc.compact) {
+				t.Errorf("bolt output must be stable across calls")
+			}
+			// Gradient: every palette hex must appear.
+			for _, hex := range []string{
+				"#f472b6", "#ec4899", "#d946ef", "#a855f7", "#818cf8",
+				"#38bdf8", "#00f5d4", "#10b981", "#34d399", "#facc15", "#fb923c",
+			} {
+				prefix := strings.TrimSuffix(lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("#"), "#\x1b[0m")
+				code := strings.TrimSuffix(prefix, "m")
+				if !strings.Contains(got, code) {
+					t.Errorf("bolt missing gradient colour %s", hex)
+				}
+			}
+			// No leftover W-bubble artefacts.
+			if strings.Contains(got, "▒") || strings.Contains(got, "▀█") {
+				t.Errorf("bolt still contains W-bubble dither/tail glyphs")
+			}
+		})
 	}
-	// Plain text / structure must stay completely stationary
-	plain0 := ansiStripRe.ReplaceAllString(f0, "")
-	plain3 := ansiStripRe.ReplaceAllString(f3, "")
-	if plain0 != plain3 {
-		t.Fatalf("plain text structure must not move when colors animate:\nf0:\n%s\nf3:\n%s", plain0, plain3)
+}
+
+func TestRenderZapBoltAnimation(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	f0 := renderZapBolt(false, 0)
+	f1 := renderZapBolt(false, 1)
+	if f0 == f1 {
+		t.Fatalf("expected frames 0 and 1 to differ for animated gradient cycle")
 	}
-	// Must contain block characters
-	if !strings.Contains(f0, "█") || !strings.Contains(f0, "▒") {
-		t.Errorf("logo missing block characters")
+	f11 := renderZapBolt(false, 11)
+	if f0 != f11 {
+		t.Fatalf("expected 11-step animation cycle to repeat at frame 11")
+	}
+	for f := range 11 {
+		lines := strings.Split(renderZapBolt(false, f), "\n")
+		if len(lines) != 11 {
+			t.Fatalf("frame %d rows = %d, want 11", f, len(lines))
+		}
+		for i, line := range lines {
+			if n := lipgloss.Width(line); n != 13 {
+				t.Errorf("frame %d row %d width = %d, want 13", f, i, n)
+			}
+		}
+	}
+}
+
+func TestLoadingStagesHoldOneSecondEach(t *testing.T) {
+	loaded := func(bootAt time.Time) m {
+		return m{
+			status:       "Connecting...",
+			sessionReady: true,
+			chats:        []chat{{ID: "a@s.whatsapp.net"}},
+			contacts:     map[string]contact{"c@s.whatsapp.net": {ID: "c@s.whatsapp.net"}},
+			bootAt:       bootAt,
+		}
+	}
+	// Just booted: nothing may show done yet.
+	for _, s := range loaded(time.Now()).loadingStages() {
+		if s.state == "done" {
+			t.Fatalf("fresh boot stage %q = done, want held back", s.label)
+		}
+	}
+	// 2.5s in: first two stages done, third held at active, fourth pending.
+	stages := loaded(time.Now().Add(-2500 * time.Millisecond)).loadingStages()
+	want := []string{"done", "done", "active", "pending"}
+	for i, s := range stages {
+		if s.state != want[i] {
+			t.Fatalf("stage %q = %q, want %q", s.label, s.state, want[i])
+		}
+	}
+	// Long up: everything done.
+	for _, s := range loaded(time.Now().Add(-10 * time.Second)).loadingStages() {
+		if s.state != "done" {
+			t.Fatalf("old boot stage %q = %q, want done", s.label, s.state)
+		}
+	}
+}
+
+func TestSplashStageTexts(t *testing.T) {
+	fresh := m{w: 120, h: 30, status: "Connecting...", bootAt: time.Now()}
+	if out := fresh.View(); !strings.Contains(out, "Starting backend...") {
+		t.Errorf("fresh splash missing backend working text")
+	}
+	done := m{
+		w:            120,
+		h:            30,
+		status:       "Connecting...",
+		sessionReady: true,
+		chats:        []chat{{ID: "a@s.whatsapp.net"}, {ID: "b@s.whatsapp.net"}},
+		contacts:     map[string]contact{"c@s.whatsapp.net": {ID: "c@s.whatsapp.net"}},
+		bootAt:       time.Now().Add(-10 * time.Second),
+	}
+	out := done.View()
+	for _, want := range []string{"backend running", "handshake done", "2 chats loaded", "1 contact synced"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("finished splash missing %q", want)
+		}
+	}
+}
+
+func TestSplashStageSectionIsCompactAndCentered(t *testing.T) {
+	model := m{w: 120, h: 30, status: "Connecting..."}
+	out := ansiStripRe.ReplaceAllString(model.View(), "")
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "├─") && strings.Contains(l, "backend running") {
+			trimmed := strings.TrimSpace(l)
+			if got := len([]rune(trimmed)); got > 42 {
+				t.Fatalf("stage row width = %d, want compact <= 42: %q", got, trimmed)
+			}
+			leftPad := len([]rune(l)) - len([]rune(strings.TrimLeft(l, " ")))
+			rightPad := len([]rune(l)) - len([]rune(strings.TrimRight(l, " ")))
+			if diff := leftPad - rightPad; diff < -20 || diff > 20 {
+				t.Fatalf("stage row should stay near center, leftPad=%d rightPad=%d line=%q", leftPad, rightPad, l)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing compact centered stage row in view:\n%s", out)
+}
+
+func TestSplashVerticalBranchStages(t *testing.T) {
+	model := m{w: 120, h: 30, status: "Connecting..."}
+	out := ansiStripRe.ReplaceAllString(model.View(), "")
+	lines := strings.Split(out, "\n")
+	var branchLines []string
+	for _, l := range lines {
+		if strings.Contains(l, "├─") || strings.Contains(l, "└─") {
+			branchLines = append(branchLines, l)
+		}
+	}
+	if len(branchLines) != 4 {
+		t.Fatalf("expected 4 vertical branch stage rows, got %d:\n%s", len(branchLines), out)
+	}
+	if !strings.Contains(branchLines[0], "backend running") {
+		t.Fatalf("first branch should show backend status, got %q", branchLines[0])
+	}
+	if !strings.Contains(branchLines[1], "Initiating handshake...") {
+		t.Fatalf("second branch should show active handshake status, got %q", branchLines[1])
+	}
+	if !strings.Contains(branchLines[3], "└─") {
+		t.Fatalf("last branch should use terminator, got %q", branchLines[3])
 	}
 }
 
@@ -255,6 +411,12 @@ func TestRenderBootStagesPipelineTree(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[3], "└─") {
 		t.Errorf("last line should start with └─, got %q", lines[3])
+	}
+	plain := ansiStripRe.ReplaceAllString(tree, "")
+	for _, banned := range []string{"backend", "handshake", "chats", "contacts", "ready", "waiting", "syncing", "connecting", "starting"} {
+		if strings.Contains(strings.ToLower(plain), banned) {
+			t.Errorf("boot stages should not show stage/detail text %q, got %q", banned, plain)
+		}
 	}
 }
 
@@ -279,5 +441,48 @@ func TestSplashHoldSkipsOnKeypress(t *testing.T) {
 	got := next.(m)
 	if got.status != "ready" {
 		t.Fatalf("expected status 'ready' after keypress, got %q", got.status)
+	}
+}
+
+// The pixel wordmark is Cyber neon: indigo "What", cyan "Zap", with the
+// accent bridging the two. Structure must stay identical to the old
+// single-colour-per-word render.
+func TestRenderPixelWordmarkCyberNeon(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	mark := renderPixelWordmark()
+	plain := ansiStripRe.ReplaceAllString(mark, "")
+	got := strings.Split(plain, "\n")
+	want := []string{
+		"▄ ▄ ▄ █▄▄▄ ▄▄▄▄ ▄█▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄",
+		"█ █ █ █  █ ▄▄▄█  █   ▄▄█ ▄▄▄█ █  █",
+		"█▄█▄█ █  █ █▄▄█  █▄ █▄▄▄ █▄▄█ █▄▄█",
+		"                              ▀",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("wordmark rows = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if strings.TrimRight(got[i], " ") != want[i] {
+			t.Errorf("row %d = %q, want %q", i, strings.TrimRight(got[i], " "), want[i])
+		}
+		if n := len([]rune(got[i])); n != len([]rune(want[0])) {
+			t.Errorf("row %d width = %d runes, want %d (columns must stay aligned)", i, n, len([]rune(want[0])))
+		}
+	}
+
+	// Every glyph of a letter must carry that letter's colour.
+	prefix := func(hex string) string {
+		return strings.TrimSuffix(lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("#"), "#\x1b[0m")
+	}
+	for _, hex := range []string{"#a5b4fc", "#818cf8", "#6366f1", "#38bdf8", "#00f5d4", "#25d366"} {
+		if !strings.Contains(mark, prefix(hex)) {
+			t.Errorf("wordmark missing Cyber neon colour %s", hex)
+		}
+	}
+	if strings.Contains(mark, prefix("#94a3b8")) || strings.Contains(mark, prefix("#ffffff")) {
+		t.Errorf("wordmark still uses the old slate/white palette")
 	}
 }

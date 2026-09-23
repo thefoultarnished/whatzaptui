@@ -380,10 +380,55 @@ func TestRenderStartupViewStages(t *testing.T) {
 					t.Fatalf("borderless=%v, status=%s: missing QR link hint: %q", borderless, status, out)
 				}
 			} else {
-				if !strings.Contains(out, "WhatZap") {
+				if status == "Connecting..." {
+					if strings.Contains(out, "WhatZap") {
+						t.Fatalf("borderless=%v, status=%s: should not show extra WhatZap text under loading logo: %q", borderless, status, out)
+					}
+				} else if !strings.Contains(out, "WhatZap") {
 					t.Fatalf("borderless=%v, status=%s: missing WhatZap logo/title: %q", borderless, status, out)
 				}
 			}
+		}
+	}
+}
+
+func TestRenderStatusBoxHasNoOuterBorder(t *testing.T) {
+	for _, borderless := range []bool{false, true} {
+		currentConfig.Borderless = borderless
+		out := renderStatusBox("hi", 78, 22, 80, 24)
+		if !strings.Contains(out, "hi") {
+			t.Fatalf("borderless=%v: status box missing body", borderless)
+		}
+		for _, r := range []string{"╭", "╰", "╯", "╮"} {
+			if strings.Contains(out, r) {
+				t.Fatalf("borderless=%v: status box should not draw outer border, found %q", borderless, r)
+			}
+		}
+	}
+}
+
+func TestWelcomePaneSectionHeadersAlignWithItems(t *testing.T) {
+	model := m{w: 80, h: 30, spinnerFrame: 1}
+	out := ansiStripRe.ReplaceAllString(model.renderWelcomePane(60, 25), "")
+	lines := strings.Split(out, "\n")
+	headerIdx := map[string]int{}
+	for i, l := range lines {
+		for _, h := range []string{"Navigation", "In Chat", "Quick Actions"} {
+			if strings.TrimSpace(l) == h {
+				headerIdx[h] = i
+			}
+		}
+	}
+	if len(headerIdx) != 3 {
+		t.Fatalf("missing section headers, got %q", out)
+	}
+	for h, i := range headerIdx {
+		headerLine := lines[i]
+		headerIndent := len(headerLine) - len(strings.TrimLeft(headerLine, " "))
+		itemLine := lines[i+1]
+		itemIndent := len(itemLine) - len(strings.TrimLeft(itemLine, " "))
+		if headerIndent != itemIndent {
+			t.Errorf("%q header indent %d != item indent %d", h, headerIndent, itemIndent)
 		}
 	}
 }

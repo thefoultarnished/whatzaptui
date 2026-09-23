@@ -10,6 +10,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func mouseModeCmd(enabled bool) tea.Cmd {
+	if enabled {
+		return func() tea.Msg { return tea.EnableMouseCellMotion() }
+	}
+	return func() tea.Msg { return tea.DisableMouse() }
+}
+
 func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	markPasteLikeInput := func() {
 		x.lastPasteLikeAt = time.Now()
@@ -128,9 +135,9 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		currentConfig.MouseEnabled = x.mouseEnabled
 		saveConfig()
 		if x.mouseEnabled {
-			return x, tea.Batch(x.setTopBar("Mouse on"), func() tea.Msg { return tea.EnableMouseCellMotion() })
+			return x, tea.Batch(x.setTopBar("Mouse on"), mouseModeCmd(true))
 		}
-		return x, tea.Batch(x.setTopBar("Mouse off - zoom restored"), func() tea.Msg { return tea.DisableMouse() })
+		return x, tea.Batch(x.setTopBar("Mouse off - zoom restored"), mouseModeCmd(false))
 	case "alt+b", "alt+w":
 		return x, x.toggleWhitelistForSelection()
 	case "alt+o":
@@ -304,11 +311,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) && settingsDefs[x.settingsPicker.idx].name == "Mouse" {
 					x.mouseEnabled = currentConfig.MouseEnabled
-					if x.mouseEnabled {
-						cmd = func() tea.Msg { return tea.EnableMouseCellMotion() }
-					} else {
-						cmd = func() tea.Msg { return tea.DisableMouse() }
-					}
+					cmd = mouseModeCmd(x.mouseEnabled)
 					return x, tea.Batch(x.setTopBar(msg), cmd)
 				}
 				return x, x.setTopBar(msg)
@@ -1013,7 +1016,6 @@ func (x *m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (
 	}
 	return *x, nil
 }
-
 
 func (x m) handleFileBrowser(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := x.fileBrowserVisibleRows(max(1, x.h-8))
