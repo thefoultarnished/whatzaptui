@@ -139,20 +139,72 @@ func (x m) renderStartupView(frameW int) string {
 		if qrBody == "" {
 			qrBody = x.qrRaw
 		}
-		qrBoxed := lipgloss.NewStyle().
-			Background(qrDark).
-			Padding(0, 1).
+		cardW := 58
+
+		// --- Top Bar (App Branding) ---
+		topTitle := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("WHATZAP")
+		topDiv := lipgloss.NewStyle().Foreground(muted).Render("│")
+		topDesc := lipgloss.NewStyle().Foreground(text).Render("Terminal WhatsApp Client")
+		topVer := lipgloss.NewStyle().Foreground(muted).Render("v0.1.0")
+
+		leftPart := topTitle + "  " + topDiv + "  " + topDesc
+		rightPart := topVer
+		topGap := max(1, cardW-lipgloss.Width(leftPart)-lipgloss.Width(rightPart)-4)
+		topContent := leftPart + strings.Repeat(" ", topGap) + rightPart
+
+		topBar := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(brand).
-			BorderBackground(lipgloss.Color(currentTheme.SidebarActiveBg)).
-			Render(qrBody)
+			Background(qrDark).
+			Padding(0, 1).
+			Width(cardW).
+			Render(topContent)
 
-		titleSt := lipgloss.NewStyle().Foreground(brand).Bold(true)
-		subSt := mutedStyle
-		spinSt := logoStyle
-		numSt := lipgloss.NewStyle().Foreground(brand).Bold(true)
+		// --- Main Instructions Card ---
+		hTitle := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("Scan to Connect ")
+		hRuleLen := max(2, cardW-lipgloss.Width(hTitle)-6)
+		hRule := lipgloss.NewStyle().Foreground(brand).Render(strings.Repeat("─", hRuleLen))
+		headerLine := hTitle + hRule
+		subtitle := lipgloss.NewStyle().Foreground(muted).Render("Link WhatsApp with your phone to get started.")
+
+		numBox := func(num string) (top, mid, bot string) {
+			st := lipgloss.NewStyle().Foreground(brand)
+			numSt := lipgloss.NewStyle().Foreground(brand).Bold(true)
+			top = st.Render("┌───┐")
+			mid = st.Render("│ ") + numSt.Render(num) + st.Render(" │")
+			bot = st.Render("└───┘")
+			return
+		}
+
+		type qrStep struct {
+			title string
+			desc  string
+		}
+		steps := []qrStep{
+			{"Open WhatsApp", "Open WhatsApp on your mobile device"},
+			{"Go to Linked Devices", "Tap Menu (⋮) on Android or Settings on iOS"},
+			{"Tap Link a Device", "Confirm biometrics or PIN if prompted"},
+			{"Point camera at this screen", "Hold steady to scan the QR code"},
+		}
+
 		stepTitleSt := lipgloss.NewStyle().Foreground(text).Bold(true)
 		stepDescSt := mutedStyle
+		pipeSt := lipgloss.NewStyle().Foreground(brand)
+
+		var stepLines []string
+		for i, s := range steps {
+			nTop, nMid, nBot := numBox(fmt.Sprintf("%d", i+1))
+			stepLines = append(stepLines, nTop+"  "+stepTitleSt.Render(s.title))
+			stepLines = append(stepLines, nMid+"  "+stepDescSt.Render(s.desc))
+			if i < len(steps)-1 {
+				stepLines = append(stepLines, nBot)
+				stepLines = append(stepLines, pipeSt.Render("  │  "))
+			} else {
+				stepLines = append(stepLines, nBot)
+			}
+		}
+
+		divLine := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", cardW-6))
 
 		qrReceived := x.qrReceivedAt
 		if qrReceived.IsZero() {
@@ -162,59 +214,83 @@ func (x m) renderStartupView(frameW int) string {
 		elapsed := int(time.Since(qrReceived).Seconds())
 		remaining := max(0, qrTTL-elapsed)
 
-		var timerLine string
-		if remaining <= 10 {
-			timerLine = lipgloss.NewStyle().Foreground(amber).Render(fmt.Sprintf("↻ QR code refreshes in %ds", remaining))
-		} else {
-			timerLine = mutedStyle.Render("↻ QR code refreshes in ") +
-				lipgloss.NewStyle().Foreground(accent).Bold(true).Render(fmt.Sprintf("%ds", remaining))
-		}
+		barW := 12
+		filledW := min(barW, max(0, (remaining*barW)/qrTTL))
+		emptyW := barW - filledW
 
-		leftLines := []string{
-			titleSt.Render("Scan to Connect"),
-			subSt.Render("Link WhatZap with your phone"),
-			spinSt.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)] + " waiting for scan..."),
-			"",
-			numSt.Render("1. ") + stepTitleSt.Render("Open WhatsApp"),
-			"   " + stepDescSt.Render("Open WhatsApp on your mobile device"),
-			"",
-			numSt.Render("2. ") + stepTitleSt.Render("Go to Linked Devices"),
-			"   " + stepDescSt.Render("Tap Menu (⋮) on Android or Settings (⚙) on iOS"),
-			"",
-			numSt.Render("3. ") + stepTitleSt.Render("Tap Link a Device"),
-			"   " + stepDescSt.Render("Confirm biometrics or PIN if prompted"),
-			"",
-			numSt.Render("4. ") + stepTitleSt.Render("Point camera at this screen"),
-			"   " + stepDescSt.Render("Hold steady to scan the QR code"),
-			"",
-			timerLine,
+		var barFilledColor lipgloss.Color = brand
+		if remaining <= 10 {
+			barFilledColor = amber
 		}
-		leftBlock := lipgloss.JoinVertical(lipgloss.Left, leftLines...)
-		leftBoxed := lipgloss.NewStyle().
+		barFilled := lipgloss.NewStyle().Foreground(barFilledColor).Render(strings.Repeat("■", filledW))
+		barEmpty := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("░", emptyW))
+		bar := lipgloss.NewStyle().Foreground(muted).Render("[ ") + barFilled + barEmpty + lipgloss.NewStyle().Foreground(muted).Render(" ]")
+
+		timerIcon := lipgloss.NewStyle().Foreground(brand).Render("\U000F0450")
+		timerText := lipgloss.NewStyle().Foreground(text).Render(fmt.Sprintf(" QR code refreshes in %ds", remaining))
+		timerLeft := timerIcon + timerText
+		timerGap := max(1, cardW-lipgloss.Width(timerLeft)-lipgloss.Width(bar)-6)
+		timerRow := timerLeft + strings.Repeat(" ", timerGap) + bar
+
+		brailleIcon := logoStyle.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)])
+		shineBase := lipgloss.NewStyle().Foreground(brand)
+		shineHigh := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+		shiningText := renderShine("waiting for scan...", shineBase, shineHigh, x.shineFrame)
+		statusContent := lipgloss.PlaceHorizontal(cardW-10, lipgloss.Center, brailleIcon+"  "+shiningText)
+
+		statusBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(brand).
+			Background(qrDark).
+			Padding(0, 1).
+			Width(cardW - 6).
+			Render(statusContent)
+
+		mainCardLines := []string{
+			headerLine,
+			subtitle,
+			"",
+		}
+		mainCardLines = append(mainCardLines, stepLines...)
+		mainCardLines = append(mainCardLines, "", divLine, "", timerRow, "", statusBox)
+
+		mainCard := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(brand).
+			Background(qrDark).
+			Padding(1, 2).
+			Width(cardW).
+			Render(strings.Join(mainCardLines, "\n"))
+
+		fullLeftCol := lipgloss.JoinVertical(lipgloss.Left, topBar, mainCard)
+		leftH := lipgloss.Height(fullLeftCol)
+
+		qrBoxed := lipgloss.NewStyle().
 			Background(qrDark).
 			Padding(1, 2).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(brand).
-			BorderBackground(lipgloss.Color(currentTheme.SidebarActiveBg)).
-			Render(leftBlock)
+			Height(leftH - 2).
+			AlignVertical(lipgloss.Center).
+			Render(qrBody)
 
 		var body string
-		leftW := lipgloss.Width(leftBoxed)
+		leftW := lipgloss.Width(fullLeftCol)
 		qrW := lipgloss.Width(qrBoxed)
-		if innerW >= leftW+qrW+6 {
-			spacerW := min(16, innerW-(leftW+qrW)-4)
-			if spacerW < 6 {
-				spacerW = 6
+		if innerW >= leftW+qrW+4 {
+			spacerW := min(8, innerW-(leftW+qrW)-2)
+			if spacerW < 2 {
+				spacerW = 2
 			}
 			spacer := strings.Repeat(" ", spacerW)
-			row := lipgloss.JoinHorizontal(lipgloss.Center, leftBoxed, spacer, qrBoxed)
+			row := lipgloss.JoinHorizontal(lipgloss.Top, fullLeftCol, spacer, qrBoxed)
 			body = lipgloss.PlaceHorizontal(innerW, lipgloss.Center, row)
 		} else {
 			body = lipgloss.JoinVertical(
 				lipgloss.Center,
 				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
 				"",
-				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, leftBoxed),
+				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, fullLeftCol),
 			)
 		}
 		return renderStatusBox(body, innerW, innerH, outerW, outerH)
