@@ -105,10 +105,6 @@ func buildSettingsPickerItems() []pickerItem {
 	return items
 }
 
-func (p *picker) settingsGroupOffset(g int) int {
-	return 0
-}
-
 func settingsVisualPos(idx int) (g, row, col int) {
 	return 0, idx / 2, idx % 2
 }

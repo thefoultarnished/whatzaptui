@@ -140,10 +140,39 @@ func Run() {
 	// value the loggers will actually use.
 	log.Printf("[backend] log level: %s (set WHATZAP_LOG_LEVEL to change)", resolveWhatsmeowLogLevel())
 
+	// Open the per-session action log next to the DB. Created here
+	// (not in NewApp) so a token rotation after startup keeps the
+	// redactor in sync via the same secretFn the default logger
+	// uses. Defer the close so the file is always flushed on exit.
+	sessionStart := time.Now()
+	cacheDir, cerr := resolveBackendCacheDir(mustGetwd())
+	if cerr != nil {
+		log.Fatalf("init failed: %v", cerr)
+	}
+	actionLog, err := openActionLog(cacheDir, sessionStart, secretFn)
+	if err != nil {
+		log.Fatalf("init failed: %v", err)
+	}
+	defer func() {
+		actionLog.Event("session.end", map[string]string{
+			"uptimeMs": fmt.Sprintf("%d", time.Since(sessionStart).Milliseconds()),
+		})
+		if cErr := actionLog.Close(); cErr != nil {
+			log.Printf("action log close: %v", cErr)
+		}
+	}()
+	actionLog.Event("session.boot", map[string]string{
+		"logLevel":  resolveWhatsmeowLogLevel(),
+		"tokenPath": tokenPath,
+		"dataRoot":  filepath.Dir(filepath.Dir(tokenPath)),
+		"cacheDir":  cacheDir,
+	})
+
 	app, err := NewApp(token, tokenPath)
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
+	app.actionLog = actionLog
 	globalApp.Store(app)
 
 	// A-13: periodic eviction of in-memory maps. Runs every 30s
@@ -188,6 +217,7 @@ func Run() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	app.onShutdown = stop
 
 	go func() {
 		log.Printf("whatsmeow backend listening on http://%s", addr)
@@ -214,6 +244,17 @@ func Run() {
 	if app.db != nil {
 		_ = app.db.Close()
 	}
+}
+
+// mustGetwd returns the current working directory or fatals — Run has
+// already touched os.Stderr by this point so log.Fatalf carries the
+// usual cleanup semantics (the deferred Close on actionLog still runs).
+func mustGetwd() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("getwd: %v", err)
+	}
+	return wd
 }
 
 func whatzapDataRoot() (string, error) {

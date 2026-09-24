@@ -61,14 +61,16 @@ func (a *App) handleResolveLIDPN(w http.ResponseWriter, r *http.Request) {
 		out["lookup"] = "pn_to_lid"
 		out["lid"] = lid.String()
 		if err != nil {
-			out["error"] = err.Error()
+			log.Printf("resolve LID for PN: %v", err)
+			out["error"] = "lookup failed"
 		}
 	case types.HiddenUserServer:
 		pn, err := a.client.Store.LIDs.GetPNForLID(ctx, jid)
 		out["lookup"] = "lid_to_pn"
 		out["pn"] = pn.String()
 		if err != nil {
-			out["error"] = err.Error()
+			log.Printf("resolve PN for LID: %v", err)
+			out["error"] = "lookup failed"
 		}
 	default:
 		writeErr(w, http.StatusBadRequest, "id must be @s.whatsapp.net or @lid")
@@ -89,16 +91,12 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.client.Store != nil && a.client.Store.AppState != nil {
-		for _, patch := range []appstate.WAPatchName{
+		fetchAppStates([]appstate.WAPatchName{
 			appstate.WAPatchCriticalBlock,
 			appstate.WAPatchRegularLow,
 			appstate.WAPatchRegularHigh,
 			appstate.WAPatchRegular,
-		} {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			a.safeFetchAppState(ctx, patch)
-			cancel()
-		}
+		}, a.safeFetchAppState)
 	}
 	if a.client.Store == nil || a.client.Store.Contacts == nil {
 		writeErr(w, http.StatusInternalServerError, "contacts store unavailable")
@@ -115,8 +113,30 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 
 	updated := 0
 	total := 0
-	a.mu.Lock()
-	a.state.Contacts = make(map[string]Contact)
+	// LID resolution hits the store DB per contact: resolve everything
+	// before taking the write lock so a big address book doesn't freeze
+	// all other requests (even /health) for the whole pass.
+	type syncEntry struct {
+		cid                                         string
+		fullName, firstName, businessName, pushName string
+	}
+	entries := make([]syncEntry, 0, len(allContacts))
+	for jid, info := range allContacts {
+		raw := strings.TrimSpace(jid.String())
+		if raw == "" {
+			continue
+		}
+		entries = append(entries, syncEntry{
+			cid:          a.canonicalizeChatID(raw),
+			fullName:     strings.TrimSpace(info.FullName),
+			firstName:    strings.TrimSpace(info.FirstName),
+			businessName: strings.TrimSpace(info.BusinessName),
+			pushName:     strings.TrimSpace(info.PushName),
+		})
+	}
+	// Wipe the DB rows before taking a.mu: waiting for the single SQLite
+	// connection while holding a.mu deadlocks against a history-sync
+	// transaction that owns the connection and needs a.mu to finish.
 	if err := a.withTx(func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`DELETE FROM contacts`); err != nil {
 			return fmt.Errorf("delete contacts: %w", err)
@@ -128,23 +148,21 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		log.Printf("syncContacts wipe: %v", err)
 	}
+	a.mu.Lock()
+	a.state.Contacts = make(map[string]Contact)
 	for id, ch := range a.state.Chats {
 		if ch.ConversationTimestamp == 0 && !strings.HasSuffix(id, "@g.us") {
 			delete(a.state.Chats, id)
 		}
 	}
-	for jid, info := range allContacts {
-		raw := strings.TrimSpace(jid.String())
-		if raw == "" {
-			continue
-		}
+	for _, e := range entries {
 		total++
-		cid := a.canonicalizeChatID(raw)
+		cid := e.cid
 
-		fullName := strings.TrimSpace(info.FullName)
-		firstName := strings.TrimSpace(info.FirstName)
-		businessName := strings.TrimSpace(info.BusinessName)
-		pushName := strings.TrimSpace(info.PushName)
+		fullName := e.fullName
+		firstName := e.firstName
+		businessName := e.businessName
+		pushName := e.pushName
 
 		ch, hasChat := a.state.Chats[cid]
 		if hasChat && ch.ConversationTimestamp == 0 {
@@ -228,7 +246,16 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 		queried = len(unique)
 
 		const batchSize = 100
+	batchLoop:
 		for i := 0; i < len(unique); i += batchSize {
+			// Stop launching new batches once the caller went away: the
+			// TUI caps this call, and churning WhatsApp queries for a
+			// dead request only prolongs the next sync.
+			select {
+			case <-r.Context().Done():
+				break batchLoop
+			default:
+			}
 			end := i + batchSize
 			if end > len(unique) {
 				end = len(unique)
@@ -241,9 +268,14 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 				lookupErrors++
 				continue
 			}
-			a.mu.Lock()
+			// Resolve names before taking the write lock so slow store
+			// lookups never freeze other requests mid-batch.
+			type enrichedContact struct {
+				cid  string
+				name string
+			}
+			pending := make([]enrichedContact, 0, len(infoMap))
 			for pnJID, info := range infoMap {
-				cid := a.canonicalizeChatID(pnJID.String())
 				name := ""
 				if info.VerifiedName != nil && info.VerifiedName.Details != nil {
 					name = strings.TrimSpace(info.VerifiedName.Details.GetVerifiedName())
@@ -251,7 +283,12 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 				if name == "" {
 					continue
 				}
-
+				pending = append(pending, enrichedContact{cid: a.canonicalizeChatID(pnJID.String()), name: name})
+			}
+			a.mu.Lock()
+			for _, e := range pending {
+				cid := e.cid
+				name := e.name
 				ct := a.state.Contacts[cid]
 				if ct.ID == "" {
 					ct.ID = cid

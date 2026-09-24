@@ -479,6 +479,38 @@ func TestHandleLogoutSuccess(t *testing.T) {
 	}
 }
 
+// Bug fix #4 (login-sync audit): logout wipes all state, so it must re-arm
+// needsBootstrapSync. Otherwise a new QR login in the same backend process
+// never runs bootstrapFromStore and chats/contacts never sync until restart.
+func TestHandleLogoutRearmsBootstrapSync(t *testing.T) {
+	app := newTestApp(t)
+	app.started = true
+	app.connected = true
+	// Simulate a backend that already consumed the flag on a prior login.
+	app.needsBootstrapSync = false
+	app.state.Chats["c1"] = Chat{ID: "c1", Name: "Alice"}
+
+	rec := httptest.NewRecorder()
+	app.handleLogout(rec, httptest.NewRequest(http.MethodPost, "/logout", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !app.needsBootstrapSync {
+		t.Fatal("logout must set needsBootstrapSync=true so the next QR login bootstraps the wiped state")
+	}
+}
+
+func TestBootstrapFromStoreRequiresLogin(t *testing.T) {
+	app := newTestApp(t)
+	app.needsBootstrapSync = true
+	// client is nil / not logged in
+	app.bootstrapFromStore()
+	if !app.needsBootstrapSync {
+		t.Fatal("bootstrapFromStore must not consume needsBootstrapSync when not logged in")
+	}
+}
+
 func TestHandleLogoutPreservesChatPermissions(t *testing.T) {
 	app := newTestApp(t)
 	app.cacheDir = t.TempDir()
@@ -929,7 +961,7 @@ func TestHandleLogoutFailsWhenCacheDirCannotBeRecreated(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "state cleanup failed") {
 		t.Fatalf("response leaked internal error text: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "internal error (ref: err-") {
+	if !strings.Contains(rec.Body.String(), "logout failed: backend cleanup failed (ref: err-") {
 		t.Fatalf("unexpected error body: %s", rec.Body.String())
 	}
 }
@@ -3586,6 +3618,105 @@ func TestApplyHistorySyncTwoPhaseUpdatesState(t *testing.T) {
 	}
 }
 
+// A permission lookup waiting for the single SQLite connection must not hold
+// a.mu, or a history-sync transaction that owns the connection deadlocks on
+// a.mu.Lock() in upsertMessageTx (first-login sync froze the backend).
+func TestPermissionLookupDoesNotDeadlockHistorySyncTx(t *testing.T) {
+	app := newTestApp(t)
+	app.db.SetMaxOpenConns(1)
+
+	tx, err := app.db.Begin()
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	permDone := make(chan struct{})
+	go func() {
+		app.migrateLIDPermissions("123456789", "15551230001")
+		close(permDone)
+	}()
+	// Give the permission lookup time to block on the connection held by tx.
+	time.Sleep(100 * time.Millisecond)
+
+	upsertDone := make(chan struct{})
+	go func() {
+		app.upsertMessageTx(tx, "15551230001@s.whatsapp.net", WireMessage{
+			Key:              WireKey{ID: "hist-1", RemoteJID: "15551230001@s.whatsapp.net"},
+			MessageTimestamp: 100,
+			Message:          map[string]any{"conversation": "hi"},
+		})
+		close(upsertDone)
+	}()
+	select {
+	case <-upsertDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upsertMessageTx deadlocked behind a permission lookup waiting for the DB connection")
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	select {
+	case <-permDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("permission lookup never finished after tx commit")
+	}
+	var n int
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE id = 'hist-1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("history message not stored: n=%d err=%v", n, err)
+	}
+}
+
+// A reply in a history-sync chunk looks up the quoted message's from_me in
+// the DB. That lookup must not run while the sync's transaction holds the
+// single SQLite connection, or the sync waits on itself forever (the whole
+// first-login history then never reaches the DB or the TUI).
+func TestApplyHistorySyncWithQuotedReplyDoesNotDeadlock(t *testing.T) {
+	app := newTestApp(t)
+	app.db.SetMaxOpenConns(1)
+	chatID := "15551230001@s.whatsapp.net"
+
+	history := &waHistorySync.HistorySync{
+		Conversations: []*waHistorySync.Conversation{{
+			ID:                    proto.String(chatID),
+			ConversationTimestamp: proto.Uint64(200),
+			Messages: []*waHistorySync.HistorySyncMsg{
+				{Message: &waWeb.WebMessageInfo{
+					Key:              &waCommon.MessageKey{ID: proto.String("orig"), RemoteJID: proto.String(chatID), FromMe: proto.Bool(true)},
+					MessageTimestamp: proto.Uint64(100),
+					Message:          &waE2E.Message{Conversation: proto.String("original")},
+				}},
+				{Message: &waWeb.WebMessageInfo{
+					Key:              &waCommon.MessageKey{ID: proto.String("reply"), RemoteJID: proto.String(chatID), FromMe: proto.Bool(false)},
+					MessageTimestamp: proto.Uint64(150),
+					Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+						Text: proto.String("reply"),
+						ContextInfo: &waE2E.ContextInfo{
+							StanzaID:      proto.String("orig"),
+							QuotedMessage: &waE2E.Message{Conversation: proto.String("original")},
+						},
+					}},
+				}},
+			},
+		}},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		app.applyHistorySync(history)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("applyHistorySync deadlocked on a quoted reply")
+	}
+	var n int
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE chat_id = ?`, chatID).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("stored messages = %d (err %v), want 2", n, err)
+	}
+}
+
 // #7: pushname from history sync must fall through to chat name when no display name is set.
 func TestApplyHistorySyncPushnamePopulatesChatName(t *testing.T) {
 	app := newTestApp(t)
@@ -3607,6 +3738,32 @@ func TestApplyHistorySyncPushnamePopulatesChatName(t *testing.T) {
 	chat := app.state.Chats[chatID]
 	if chat.Name != "Bob" {
 		t.Fatalf("chat.Name = %q, want Bob (from pushname fallback)", chat.Name)
+	}
+}
+
+// A pushname with no matching Conversation object must not create a Chats
+// entry. WhatsApp sends a pushname for nearly anyone who has ever shown up
+// in a synced group or chat (a single history-sync chunk can carry
+// thousands), and only a fraction of those are people you actually have a
+// 1:1 conversation with. Before this fix, every pushname turned into a
+// zero-message "chat" (reported symptom: 943 of 1000 served chats had
+// conv_ts=0) — a saved contact name must only update Contacts.
+func TestApplyHistorySyncPushnameAloneDoesNotCreatePhantomChat(t *testing.T) {
+	app := newTestApp(t)
+	chatID := "15551230002@s.whatsapp.net"
+
+	history := &waHistorySync.HistorySync{
+		Pushnames: []*waHistorySync.Pushname{
+			{ID: proto.String(chatID), Pushname: proto.String("Stranger")},
+		},
+	}
+	app.applyHistorySync(history)
+
+	if _, ok := app.state.Chats[chatID]; ok {
+		t.Fatalf("pushname alone (no Conversation) must not create a Chats entry, got %+v", app.state.Chats[chatID])
+	}
+	if got := app.state.Contacts[chatID].Notify; got != "Stranger" {
+		t.Fatalf("Contacts[%s].Notify = %q, want Stranger", chatID, got)
 	}
 }
 
@@ -4289,6 +4446,22 @@ func TestWriteInternalErrReturnsOpaqueID(t *testing.T) {
 	}
 	if !strings.Contains(payload.Error, "ref: err-") {
 		t.Fatalf("response missing opaque ref ID: %q", payload.Error)
+	}
+}
+
+func TestWriteLogoutErrClassifiesDatabaseLock(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeLogoutErr(rec, errors.New("database is locked (5)"))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "database is busy or locked") {
+		t.Fatalf("response missing database lock guidance: %s", body)
+	}
+	if strings.Contains(body, "database is locked (5)") {
+		t.Fatalf("response leaked raw database error: %s", body)
 	}
 }
 

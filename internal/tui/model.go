@@ -242,16 +242,16 @@ type m struct {
 	drafts                                   map[string]string // chatID -> unsent composer text
 
 	// WhatsApp Entities
-	chats                          []chat
-	contacts                       map[string]contact
-	contactsByNumber               map[string]contact
-	msgs                           map[string][]wireMsg
-	groupPreviews                  map[string]groupPreview
-	whitelist                      map[string]string // phone -> name, allowed=1 only
-	denied                         map[string]bool   // phone -> true, allowed=0 overrides
-	defaultAllowed                 bool              // global default from backend
-	names                          map[string]string // phone -> custom display name
-	syncingContacts, syncingGroups bool
+	chats                                          []chat
+	contacts                                       map[string]contact
+	contactsByNumber                               map[string]contact
+	msgs                                           map[string][]wireMsg
+	groupPreviews                                  map[string]groupPreview
+	whitelist                                      map[string]string // phone -> name, allowed=1 only
+	denied                                         map[string]bool   // phone -> true, allowed=0 overrides
+	defaultAllowed                                 bool              // global default from backend
+	names                                          map[string]string // phone -> custom display name
+	syncingContacts, syncingGroups, syncingHistory bool
 
 	// In-Flight Tasks & Downloads
 	loadingOlder     map[string]bool                 // chatID → fetch in flight
@@ -284,38 +284,38 @@ type m struct {
 	reactPickSender       string // sender JID for reaction target
 
 	// Message Operations (Reply/Edit/Attachment)
-	replyTo                                             *wireMsg // message being replied to
-	selectedMsgID                                       string   // message ID highlighted
-	replyPickMode                                       bool     // Alt+R reply pick mode
-	replyPickIndex                                      int      // index into visible messages
-	editingMsgID                                        string   // message ID being edited
-	editPickMode                                        bool     // Alt+A edit pick mode
-	editPickIndex                                       int      // index into edit candidates
-	pendingAttachmentPath                               string
-	pendingAttachmentKind                               string
-	pendingAttachmentName                               string
+	replyTo               *wireMsg // message being replied to
+	selectedMsgID         string   // message ID highlighted
+	replyPickMode         bool     // Alt+R reply pick mode
+	replyPickIndex        int      // index into visible messages
+	editingMsgID          string   // message ID being edited
+	editPickMode          bool     // Alt+A edit pick mode
+	editPickIndex         int      // index into edit candidates
+	pendingAttachmentPath string
+	pendingAttachmentKind string
+	pendingAttachmentName string
 
 	// Activity, Ticks & Animation State
-	topBarMsg                                                            string
-	topBarShown, topBarVer                                               int
-	cursorOn, pulseOn                                                    bool
-	spinnerFrame, shineFrame                                             int
-	bootAt, msgActivityUntil                                             time.Time
-	msgActivityType                                                      string // "sent" or "received"
-	flashUntil, typingChats, lastNotifyAt                                map[string]time.Time
-	lastNotifyGlobal, lastTypeTime, lastPasteLikeAt                      time.Time
-	lastClickY                                                           int
-	lastClickTime                                                        time.Time
-	pendingSendSeq                                                       int
-	pendingSendArmed                                                     bool
-	lastComposingChat                                                    string
-	restartRequested                                                     bool
-	soundEnabled                                                         bool
-	soundProfile                                                         int
-	identityVersion                                                      int
-	sidebarMarqueeOffset, sidebarMarqueePause, sidebarMarqueeDir         int
-	sidebarMarqueeKey                                                    string
-	sidebarMarqueeTick                                                   int
+	topBarMsg                                                    string
+	topBarShown, topBarVer                                       int
+	cursorOn, pulseOn                                            bool
+	spinnerFrame, shineFrame                                     int
+	bootAt, msgActivityUntil                                     time.Time
+	msgActivityType                                              string // "sent" or "received"
+	flashUntil, typingChats, lastNotifyAt                        map[string]time.Time
+	lastNotifyGlobal, lastTypeTime, lastPasteLikeAt              time.Time
+	lastClickY                                                   int
+	lastClickTime                                                time.Time
+	pendingSendSeq                                               int
+	pendingSendArmed                                             bool
+	lastComposingChat                                            string
+	restartRequested                                             bool
+	soundEnabled                                                 bool
+	soundProfile                                                 int
+	identityVersion                                              int
+	sidebarMarqueeOffset, sidebarMarqueePause, sidebarMarqueeDir int
+	sidebarMarqueeKey                                            string
+	sidebarMarqueeTick                                           int
 
 	// Caches & Graphics
 	sidebarCache *sidebarCache
@@ -463,6 +463,9 @@ type syncContactsDoneMsg struct {
 	msg string
 }
 type syncGroupsDoneMsg struct {
+	msg string
+}
+type syncHistoryDoneMsg struct {
 	msg string
 }
 type clipboardPasteMsg struct {

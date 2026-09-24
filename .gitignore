@@ -38,3 +38,8 @@ go.sum.bak
 *.db-*
 *.sqlite
 *.sqlite3
+
+# Stray shell-redirect artifacts (e.g. a PowerShell command misparsed as a
+# literal filename)
+$null
+*.received.txt

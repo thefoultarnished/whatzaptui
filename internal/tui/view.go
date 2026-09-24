@@ -1089,6 +1089,9 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	} else if x.syncingGroups {
 		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
 		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing groups...", amberStyle, shineStyle, x.shineFrame)
+	} else if x.syncingHistory {
+		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing history...", amberStyle, shineStyle, x.shineFrame)
 	} else if x.active != "" {
 		displayName := x.nameFor(x.active)
 		var avatarStr string
@@ -1486,11 +1489,7 @@ func (x m) renderSearchBox() string {
 		placeholder = "type to search users"
 	}
 	if searchFocused && x.sidebarTab == "contacts" && searchValue == "" {
-		if true {
-			searchLine += inputCursorStyle.Render(inputCursorGlyph)
-		} else {
-			searchLine += " "
-		}
+		searchLine += inputCursorStyle.Render(inputCursorGlyph)
 		searchLine += mutedStyle.Render(placeholder)
 		return searchLine
 	}
@@ -1500,11 +1499,7 @@ func (x m) renderSearchBox() string {
 		searchLine += lipgloss.NewStyle().Foreground(text).Render(searchValue)
 	}
 	if searchFocused {
-		if true {
-			searchLine += inputCursorStyle.Render(inputCursorGlyph)
-		} else {
-			searchLine += " "
-		}
+		searchLine += inputCursorStyle.Render(inputCursorGlyph)
 	}
 	return searchLine
 }

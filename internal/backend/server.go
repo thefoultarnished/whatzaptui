@@ -90,6 +90,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/resolve/lidpn", a.handleResolveLIDPN)
 	mux.HandleFunc("/sync/contacts", a.handleSyncContacts)
 	mux.HandleFunc("/sync/groups", a.handleSyncGroups)
+	mux.HandleFunc("/sync/history", a.handleSyncHistory)
 	mux.HandleFunc("/messages", a.handleMessages)
 	mux.HandleFunc("/messages/send", a.handleSendMessage)
 	mux.HandleFunc("/messages/send-file", a.handleSendFile)
@@ -109,7 +110,70 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/block", a.handleBlock)
 	mux.HandleFunc("/group/members", a.handleGroupMembers)
 	mux.HandleFunc("/session/register", a.handleSessionRegister)
-	return withRecovery(withCORS(a.withAuth(mux)))
+	mux.HandleFunc("/shutdown", a.handleShutdown)
+	return withRecovery(withCORS(a.withRequestLog(a.withAuth(mux))))
+}
+
+// requestLogPaths are the load-path endpoints (backend start → chat list →
+// messages on screen) whose every call is logged. Other endpoints are only
+// logged when they fail with 5xx or run slow.
+var requestLogPaths = map[string]bool{
+	"/start":        true,
+	"/chats":        true,
+	"/contacts":     true,
+	"/messages":     true,
+	"/sync/history": true,
+}
+
+// slowRequest is the duration after which any request is logged.
+const slowRequest = 2 * time.Second
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// withRequestLog records "http.req" (path, status, duration, redacted chat)
+// in the action log, and if a request is still running after stallAfter it
+// logs "http.stall" and dumps goroutine stacks, so a request stuck behind a
+// lock or the DB connection shows exactly what it is waiting on.
+func (a *App) withRequestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/ws" || path == "/health" || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		stall := time.AfterFunc(stallAfter, func() {
+			a.actionLog.Event("http.stall", map[string]string{"path": path, "elapsedMs": durMs(time.Since(start))})
+			a.dumpGoroutines("http:" + path)
+		})
+		next.ServeHTTP(rec, r)
+		stall.Stop()
+		elapsed := time.Since(start)
+		if !requestLogPaths[path] && rec.status < 500 && elapsed < slowRequest {
+			return
+		}
+		kv := map[string]string{
+			"path":      path,
+			"method":    r.Method,
+			"status":    intStr(rec.status),
+			"elapsedMs": durMs(elapsed),
+		}
+		if c := strings.TrimSpace(r.URL.Query().Get("chatId")); c != "" {
+			kv["chat"] = redactChatID(c)
+		}
+		a.actionLog.Event("http.req", kv)
+	})
 }
 
 func (a *App) withAuth(next http.Handler) http.Handler {
@@ -310,12 +374,14 @@ func (a *App) startSession() error {
 		}
 		a.recanonicalizeState()
 		a.mu.RLock()
-		bootstrap := a.needsBootstrapSync
+		bootstrap := a.needsBootstrapSync && a.client != nil && a.client.IsLoggedIn()
 		a.mu.RUnlock()
 		if bootstrap {
 			go a.bootstrapFromStore()
 		}
-		go a.refreshGroupMetadata()
+		if a.client != nil && a.client.IsLoggedIn() {
+			go a.refreshGroupMetadata()
+		}
 	}()
 	return nil
 }
@@ -435,6 +501,17 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// broadcastLogTypes are the load-path WS events recorded in the action log
+// (with the number of connected clients), so the log shows whether the TUI
+// was told to refetch. High-volume types (message, receipt, typing) are not.
+var broadcastLogTypes = map[string]bool{
+	"qr":               true,
+	"ready":            true,
+	"status":           true,
+	"chats:loaded":     true,
+	"contacts:updated": true,
+}
+
 func (a *App) broadcast(evt EventEnvelope) {
 	data, err := json.Marshal(evt)
 	if err != nil {
@@ -446,6 +523,13 @@ func (a *App) broadcast(evt EventEnvelope) {
 		clients = append(clients, client)
 	}
 	a.wsMu.Unlock()
+	if broadcastLogTypes[evt.Type] {
+		// Payloads are never logged (qr carries the pairing code).
+		a.actionLog.Event("ws.broadcast", map[string]string{
+			"type":    evt.Type,
+			"clients": intStr(len(clients)),
+		})
+	}
 	for _, client := range clients {
 		go func() {
 			if err := client.write(data); err != nil {
@@ -460,6 +544,20 @@ func (a *App) broadcast(evt EventEnvelope) {
 				}
 			}
 		}()
+	}
+}
+
+// handleShutdown lets the TUI stop the backend when it exits (Ctrl+C,
+// /exit). Auth is enforced by withAuth. The shutdown itself runs async so
+// srv.Shutdown doesn't deadlock waiting for this in-flight handler.
+func (a *App) handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	if a.onShutdown != nil {
+		go a.onShutdown()
 	}
 }
 
@@ -560,7 +658,11 @@ func (a *App) resetRuntimeState() []error {
 	a.client = nil
 	a.started = false
 	a.connected = false
-	a.needsBootstrapSync = false
+	// Logout wipes all in-memory state and storage, so the next QR login
+	// is a first login again: it must run bootstrapFromStore (app-state +
+	// contacts sync). Leaving this false (the old behavior) permanently
+	// skipped first-login sync until the backend process restarted.
+	a.needsBootstrapSync = true
 	a.state = PersistedState{
 		Chats:    map[string]Chat{},
 		Contacts: map[string]Contact{},
@@ -657,7 +759,7 @@ func (a *App) teardownAndReinitStorage(hadRuntimeResources bool, dbPath string, 
 			return fmt.Errorf("state cleanup failed: %w", err)
 		}
 	} else {
-		if err := os.RemoveAll(a.cacheDir); err != nil {
+		if err := wipeCacheDirExceptLogs(a.cacheDir); err != nil {
 			return fmt.Errorf("state cleanup failed: %w", err)
 		} else if err := os.MkdirAll(a.cacheDir, 0o700); err != nil {
 			return fmt.Errorf("state cleanup failed: %w", err)
@@ -677,23 +779,21 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// A-5: serialize the whole teardown against any other concurrent
 	// /logout so two callers can't race through os.RemoveAll + DB reopen.
-	// Held for the full body, not just the in-memory state mutation —
-	// the data-folder teardown is what corrupts under concurrency, and
-	// it's the part that needs the lock.
 	a.logoutMu.Lock()
 	defer a.logoutMu.Unlock()
 
-	// shuttingDown is also a "logout in flight" signal that other code
-	// paths (persistState, persistStateWithErr) already check. Cheap to
-	// set under the same lock.
 	if a.shuttingDown {
 		writeErr(w, http.StatusConflict, "logout already in progress")
 		return
 	}
+
+	// Block new DB writers by holding the write lock briefly just to set
+	// shuttingDown. This unblocks active readers quickly so they finish and
+	// exit cleanly. Don't hold the lock during slow WhatsApp logout or file
+	// teardown — that causes deadlock if any reader was in flight.
+	a.dbLifecycleMu.Lock()
 	a.shuttingDown = true
-	defer func() {
-		a.shuttingDown = false
-	}()
+	a.dbLifecycleMu.Unlock()
 
 	dbPath := filepath.Join(a.cacheDir, "store.db")
 	backup, defaultAllowed := a.backupPermissions(dbPath)
@@ -707,8 +807,12 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		errs = append(errs, err)
 	}
 
+	a.mu.Lock()
+	a.shuttingDown = false
+	a.mu.Unlock()
+
 	if len(errs) > 0 {
-		writeInternalErr(w, errors.Join(errs...))
+		writeLogoutErr(w, errors.Join(errs...))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Logged out successfully"})
@@ -774,6 +878,24 @@ func writeInternalErr(w http.ResponseWriter, err error) {
 	id := nextInternalErrID()
 	log.Printf("[%s] %v", id, err)
 	writeErr(w, http.StatusInternalServerError, fmt.Sprintf("internal error (ref: %s)", id))
+}
+
+func writeLogoutErr(w http.ResponseWriter, err error) {
+	id := nextInternalErrID()
+	log.Printf("[%s] logout: %v", id, err)
+
+	detail := "backend cleanup failed"
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "database is locked"),
+		strings.Contains(lower, "database table is locked"),
+		strings.Contains(lower, "database is busy"):
+		detail = "database is busy or locked"
+	case strings.Contains(lower, "context deadline exceeded"),
+		strings.Contains(lower, "timeout"):
+		detail = "operation timed out while contacting WhatsApp or closing storage"
+	}
+	writeErr(w, http.StatusInternalServerError, fmt.Sprintf("logout failed: %s (ref: %s)", detail, id))
 }
 
 func sanitizeOutgoingText(s string) string {

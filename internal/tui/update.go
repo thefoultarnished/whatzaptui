@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var splashHoldDuration = 10 * time.Second
+var splashHoldDuration time.Duration
 
 // nextReconnectDelay doubles the WS reconnect backoff (1s start, 30s cap)
 // and returns the delay to wait before the next attempt.
@@ -36,6 +36,7 @@ func (x m) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	resM.boundCaches()
 	resM.invalidate()
+	traceRenderState(resM)
 	var bgCmd tea.Cmd
 	if inlineMediaArt() && resM.active != "" {
 		bgCmd = resM.triggerBackgroundDownloads()
@@ -60,6 +61,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		x.w, x.h = v.Width, v.Height
 	case initMsg:
+		tlog("backend.init", "started", fmt.Sprintf("%t", v.started), "demo", fmt.Sprintf("%t", v.demo), "err", traceErr(v.err))
 		if v.err != nil {
 			x.err = ""
 			x.status = "Error: " + v.err.Error()
@@ -76,7 +78,13 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			postEmpty(x.reqCtx(), x.client, x.baseURL+"/start", nil),
 			registerSession(x.reqCtx(), x.client, x.baseURL, x.apiToken),
 		)
+	case sessionRegisterMsg:
+		if v.err != nil {
+			return x, x.setTopBar("Session registration failed: " + v.err.Error())
+		}
+		return x, nil
 	case wsOpenMsg:
+		tlog("ws.open", "ok", fmt.Sprintf("%t", v.err == nil), "err", traceErr(v.err))
 		if v.err != nil {
 			x.wsDisconnected = true
 			delay := x.nextReconnectDelay()
@@ -111,6 +119,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataErr:
 		x.syncingContacts = false
 		x.syncingGroups = false
+		x.syncingHistory = false
 		if v.err != nil {
 			x.err = ""
 			if strings.Contains(v.err.Error(), "not connected") {
@@ -142,6 +151,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case syncGroupsDoneMsg:
 		x.syncingGroups = false
 		return x, tea.Batch(x.setTopBar(v.msg), getChats(x.reqCtx(), x.client, x.baseURL))
+	case syncHistoryDoneMsg:
+		x.syncingHistory = false
+		return x, tea.Batch(x.setTopBar(v.msg), getChats(x.reqCtx(), x.client, x.baseURL))
 	case cursorBlinkMsg:
 		if time.Since(x.lastTypeTime) < 1*time.Second {
 			x.cursorOn = true
@@ -172,6 +184,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.advanceSidebarMarquee()
 		return x, nextSpinnerTick()
 	case chatsMsg:
+		tlog("chats.loaded", "count", fmt.Sprintf("%d", len(v.chats)), "err", traceErr(v.err))
 		if v.err != nil {
 			if x.dropPreReadyFetchErr(v.err) {
 				return x, nil
@@ -193,6 +206,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return x, tea.Batch(cmds...)
 		}
 	case contactsMsg:
+		tlog("contacts.loaded", "count", fmt.Sprintf("%d", len(v.contacts)), "err", traceErr(v.err))
 		if v.err != nil {
 			if x.dropPreReadyFetchErr(v.err) {
 				return x, nil
@@ -212,6 +226,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.markIdentityChanged()
 		}
 	case msgsMsg:
+		tlog("messages.loaded", "chat", traceChat(v.chatID), "count", fmt.Sprintf("%d", len(v.msgs)),
+			"hasMore", fmt.Sprintf("%t", v.hasMore), "err", traceErr(v.err))
 		if v.err != nil {
 			if x.dropPreReadyFetchErr(v.err) {
 				return x, nil

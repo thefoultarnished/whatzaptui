@@ -17,13 +17,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"whatzap/internal/whatsapp"
 	"go.mau.fi/whatsmeow"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
+	"whatzap/internal/whatsapp"
 )
 
 var extractSearchableText = whatsapp.ExtractSearchableText
@@ -129,6 +129,14 @@ func boolToInt(b bool) int {
 }
 
 func (a *App) upsertMessage(chatID string, msg WireMessage) {
+	a.dbLifecycleMu.RLock()
+	defer a.dbLifecycleMu.RUnlock()
+	a.mu.RLock()
+	shuttingDown := a.shuttingDown
+	a.mu.RUnlock()
+	if shuttingDown {
+		return
+	}
 	a.mu.RLock()
 	db := a.db
 	a.mu.RUnlock()
@@ -321,6 +329,11 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
+	a.actionLog.Event("messages.served", map[string]string{
+		"chat":    redactChatID(chatID),
+		"count":   intStr(len(msgs)),
+		"hasMore": boolStr(hasMore),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "hasMore": hasMore})
 }
 
@@ -515,6 +528,90 @@ func (a *App) requireConnectedClient(w http.ResponseWriter) bool {
 	return true
 }
 
+// historySyncPageSize is how many older messages to request per chat per
+// /sync/history call (the recommended page size). Re-running walks further
+// back: each run anchors at the then-oldest stored message.
+const historySyncPageSize = 50
+
+// handleSyncHistory asks the phone for older history, chat by chat, like a
+// first login does. Each request anchors at the oldest stored message and
+// asks for the page before it; answers arrive as HistorySync events and are
+// applied by the normal event path. Slow work stays outside a.mu so a big
+// book never freezes other requests.
+func (a *App) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !a.requireConnectedClient(w) {
+		return
+	}
+	a.mu.RLock()
+	chatIDs := make([]string, 0, len(a.state.Chats))
+	for id := range a.state.Chats {
+		chatIDs = append(chatIDs, id)
+	}
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		writeInternalErr(w, fmt.Errorf("db not initialized"))
+		return
+	}
+	finish := a.actionLog.Timed("sync.history", nil)
+	requested, skipped, failed := 0, 0, 0
+	for _, rawID := range chatIDs {
+		// Stop launching new requests once the caller went away.
+		select {
+		case <-r.Context().Done():
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok": true, "requested": requested, "chats": len(chatIDs), "skipped": skipped, "failed": failed,
+			})
+			return
+		default:
+		}
+		cid := a.canonicalizeChatID(strings.TrimSpace(rawID))
+		if cid == "" || cid == "status@broadcast" {
+			skipped++
+			continue
+		}
+		jid, err := types.ParseJID(cid)
+		if err != nil || jid.IsEmpty() {
+			skipped++
+			continue
+		}
+		var msgID string
+		var fromMe int
+		var ts int64
+		if err := db.QueryRow(`SELECT id, from_me, ts FROM messages WHERE chat_id = ? AND ts > 0 ORDER BY ts ASC LIMIT 1`, cid).Scan(&msgID, &fromMe, &ts); err != nil || msgID == "" {
+			skipped++
+			continue
+		}
+		mi := types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: jid, IsFromMe: fromMe == 1},
+			ID:            types.MessageID(msgID),
+			Timestamp:     time.Unix(ts, 0),
+		}
+		req := a.client.BuildHistorySyncRequest(&mi, historySyncPageSize)
+		sendCtx, sendCancel := context.WithTimeout(r.Context(), 15*time.Second)
+		_, err = a.client.SendPeerMessage(sendCtx, req)
+		sendCancel()
+		if err != nil {
+			failed++
+			continue
+		}
+		requested++
+	}
+	finish("ok", map[string]string{
+		"chats":     intStr(len(chatIDs)),
+		"requested": intStr(requested),
+		"skipped":   intStr(skipped),
+		"failed":    intStr(failed),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "requested": requested, "chats": len(chatIDs), "skipped": skipped, "failed": failed,
+	})
+}
+
 func (a *App) isChatAllowed(chatID string) (bool, error) {
 	phone := phoneFromJID(chatID)
 	var allowed int
@@ -625,7 +722,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(64<<10))
 
 	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
+		writeErr(w, http.StatusBadRequest, "invalid multipart body")
 		return
 	}
 

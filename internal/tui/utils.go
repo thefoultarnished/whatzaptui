@@ -105,7 +105,7 @@ func resolveConfigPath() string {
 		return path
 	}
 	if data, err := os.ReadFile(legacyPath); err == nil {
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0600); err != nil {
 			log.Printf("migrate legacy config: %v", err)
 		}
 	}
@@ -119,7 +119,7 @@ func saveConfig() {
 		log.Printf("saveConfig: marshal: %v", err)
 		return
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		log.Printf("saveConfig: write %s: %v", path, err)
 	}
 }
@@ -532,33 +532,17 @@ func renderQR(payload string, maxW, maxH int) string {
 			downsample = vScale
 		}
 	}
-	upscale := 1
-	if downsample == 1 {
-		hScale := 1
-		if maxW > 0 {
-			hScale = max(1, maxW/cols)
-		}
-		vScale := 1
-		if maxH > 0 {
-			vScale = max(1, (2*maxH)/rows)
-		}
-		upscale = min(hScale, vScale)
-		if upscale < 1 {
-			upscale = 1
-		}
-		upscale = min(upscale, 1)
-	}
-	virtualRows := rows * upscale
-	virtualCols := cols * upscale
+	virtualRows := rows
+	virtualCols := cols
 	lines := make([]string, 0, virtualRows/2+1)
 	for y := 0; y < virtualRows; y += 2 {
 		var line strings.Builder
 		for x := 0; x < virtualCols; x++ {
-			srcX := x / upscale
-			top := bitmap[min(rows-1, y/upscale)][srcX]
+			srcX := x
+			top := bitmap[min(rows-1, y)][srcX]
 			bot := false
 			if y+1 < virtualRows {
-				bot = bitmap[min(rows-1, (y+1)/upscale)][srcX]
+				bot = bitmap[min(rows-1, y+1)][srcX]
 			}
 			switch {
 			case top && bot:
@@ -634,19 +618,6 @@ func formatExactTime(ts int64) string {
 		return fmt.Sprintf("%dm ago", int(diff.Minutes()))
 	}
 	return t.Format("03:04 PM")
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func num(jid string) string {
