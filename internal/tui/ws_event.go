@@ -40,6 +40,7 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 		}
 		x.status = "qr"
 		x.qrRaw = qr
+		x.qrReceivedAt = time.Now()
 	case "ready":
 		x.sessionReady = true
 		x.qrRaw = ""

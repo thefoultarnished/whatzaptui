@@ -80,6 +80,11 @@ var (
 		"/emoji",
 		"/send",
 	}
+	quadBlocks [16]string
+	quadRunes  = [16]string{
+		" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛",
+		"▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
+	}
 )
 
 func init() {
@@ -95,6 +100,7 @@ func init() {
 		"/sound1", "/sound2", "/sound3", "/sound4", "/sound5", "/soundon", "/soundoff",
 	)
 	systemCommands = cmds
+	rehashStyles()
 }
 
 var (
@@ -219,6 +225,10 @@ func rehashStyles() {
 	bw = lipgloss.NewStyle().Foreground(bColor).Background(wColor).Render("▀")
 	wb = lipgloss.NewStyle().Foreground(wColor).Background(bColor).Render("▀")
 	ww = lipgloss.NewStyle().Foreground(wColor).Background(wColor).Render("▀")
+	quadSt := lipgloss.NewStyle().Foreground(bColor).Background(wColor)
+	for i, ch := range quadRunes {
+		quadBlocks[i] = quadSt.Render(ch)
+	}
 
 	imageTagStyle = lipgloss.NewStyle().Foreground(tagInk).Background(imageTag).Bold(true)
 	videoTagStyle = lipgloss.NewStyle().Foreground(tagInk).Background(videoTag).Bold(true)
