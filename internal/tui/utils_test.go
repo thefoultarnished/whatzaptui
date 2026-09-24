@@ -129,6 +129,55 @@ func TestSanitizeIncomingTextPreservesEmojiAndZWJ(t *testing.T) {
 	}
 }
 
+func TestSanitizeIncomingTextForcesEmojiPresentationForSkinTone(t *testing.T) {
+	in := "Me too✌\U0001F3FB"
+	want := "Me too✌️\U0001F3FB"
+	got := sanitizeIncomingText(in)
+	if got != want {
+		t.Fatalf("sanitizeIncomingText(%q) = %q, want %q", in, got, want)
+	}
+	// lipgloss pads rows with its own width; it must agree with ours and
+	// with the 2 columns Windows Terminal draws, or the row overflows.
+	if lw, ow := lipgloss.Width(got), runeDisplayWidth(got); lw != 8 || ow != 8 {
+		t.Fatalf("widths disagree: lipgloss=%d ours=%d, want 8", lw, ow)
+	}
+	// Already-wide bases and already-VS16 input stay untouched.
+	for _, s := range []string{"\U0001F91E\U0001F3FB", "✌️\U0001F3FB"} {
+		if got := sanitizeIncomingText(s); got != s {
+			t.Fatalf("sanitizeIncomingText(%q) = %q, want unchanged", s, got)
+		}
+	}
+}
+
+func TestIncomingSkinToneMessageHasNoGapBeforeTimestamp(t *testing.T) {
+	setTestTheme(t, TokyoNight)
+	saved := currentConfig.TimestampNewLine
+	t.Cleanup(func() { currentConfig.TimestampNewLine = saved })
+	currentConfig.TimestampNewLine = true
+
+	var msg wireMsg
+	raw := `{"key":{"id":"m1","remoteJid":"15551230001@s.whatsapp.net","fromMe":false},` +
+		`"messageTimestamp":1710000000,"message":{"conversation":"Me too✌🏻"}}`
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatal(err)
+	}
+	model := m{active: msg.Key.RemoteJID, msgs: map[string][]wireMsg{msg.Key.RemoteJID: {msg}}}
+	for _, w := range []int{40, 60, 80} {
+		lines := strings.Split(model.renderMain(w, 10), "\n")
+		for i, ln := range lines {
+			if !strings.Contains(ansiStripRe.ReplaceAllString(ln, ""), "Me too") {
+				continue
+			}
+			if !strings.Contains(ln, "✌️\U0001F3FB") {
+				t.Fatalf("width %d: emoji not normalized in rendered line %q", w, ln)
+			}
+			if i+1 >= len(lines) || !strings.Contains(lines[i+1], "PM") && !strings.Contains(lines[i+1], "AM") {
+				t.Fatalf("width %d: timestamp not directly under message", w)
+			}
+		}
+	}
+}
+
 func TestSanitizeIncomingTextPreservesCombiningMarks(t *testing.T) {
 	s := "زَرٰ"
 	if got := sanitizeIncomingText(s); got != s {
