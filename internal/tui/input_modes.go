@@ -95,7 +95,7 @@ func (x m) handleSearchKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		q := strings.TrimSpace(x.searchInput)
 		if q == "/logout" {
-			x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
+			x.confirmDialog.OpenWithWarning("Log out?", "Are you sure you want to log out?", "This will delete all your data from this computer.", "logout")
 			return x, nil
 		}
 		x.sidebarFocused = false

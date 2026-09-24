@@ -9,14 +9,14 @@ import (
 // A-6: confirmDialog is the "are you sure?" modal shown before /logout,
 // /whitelistall, /blacklistall.
 
-func TestConfirmDialogOpenDefaultsToNo(t *testing.T) {
+func TestConfirmDialogOpenDefaultsToYes(t *testing.T) {
 	var d confirmDialog
 	d.Open("Log out?", "Ends your session.", "logout")
 	if !d.open {
 		t.Fatalf("Open() did not set open = true")
 	}
-	if d.idx != 1 {
-		t.Fatalf("Open() idx = %d, want 1 (No)", d.idx)
+	if d.idx != 0 {
+		t.Fatalf("Open() idx = %d, want 0 (Yes)", d.idx)
 	}
 	if d.action != "logout" {
 		t.Fatalf("Open() action = %q, want %q", d.action, "logout")

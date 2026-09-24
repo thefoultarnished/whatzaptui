@@ -44,6 +44,7 @@ func TestIsInvisibleProtocolMessage(t *testing.T) {
 		{"revoke stays", protoMsgWithType(t, waE2E.ProtocolMessage_REVOKE), false},
 		{"edit stays", protoMsgWithType(t, waE2E.ProtocolMessage_MESSAGE_EDIT), false},
 		{"ephemeral setting stays", protoMsgWithType(t, waE2E.ProtocolMessage_EPHEMERAL_SETTING), false},
+		{"sender key distribution", &waE2E.Message{SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{}}, true},
 	}
 	for _, c := range cases {
 		if got := isInvisibleProtocolMessage(c.msg); got != c.want {

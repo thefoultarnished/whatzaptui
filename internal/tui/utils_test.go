@@ -149,6 +149,17 @@ func TestSanitizeIncomingTextForcesEmojiPresentationForSkinTone(t *testing.T) {
 	}
 }
 
+func TestSanitizeIncomingTextReplacesHalfwidthSoundMarks(t *testing.T) {
+	got := sanitizeIncomingText("hi *ﾟ+ ﾞ")
+	want := "hi *°+ \""
+	if got != want {
+		t.Fatalf("sanitizeIncomingText() = %q, want %q", got, want)
+	}
+	if lw, ow := lipgloss.Width(got), runeDisplayWidth(got); lw != 8 || ow != 8 {
+		t.Fatalf("widths disagree: lipgloss=%d ours=%d, want 8", lw, ow)
+	}
+}
+
 func TestIncomingSkinToneMessageHasNoGapBeforeTimestamp(t *testing.T) {
 	setTestTheme(t, TokyoNight)
 	saved := currentConfig.TimestampNewLine

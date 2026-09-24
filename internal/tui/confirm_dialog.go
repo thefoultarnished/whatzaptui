@@ -14,18 +14,26 @@ type confirmDialog struct {
 	open    bool
 	title   string
 	message string
+	warning string // optional second line shown below message, italicised
 	action  string // identifies what to do on confirm: "logout" | "whitelistall" | "blacklistall" | "audioplayer"
 	idx     int    // 0 = Yes, 1 = No
 }
 
 // Open shows the dialog with the given title/message, defaulting the
-// selection to "No" so an accidental Enter cancels.
+// selection to "Yes" so Enter confirms immediately.
 func (d *confirmDialog) Open(title, message, action string) {
 	d.open = true
 	d.title = title
 	d.message = message
+	d.warning = ""
 	d.action = action
-	d.idx = 1
+	d.idx = 0
+}
+
+// OpenWithWarning is like Open but shows an extra warning line below the message.
+func (d *confirmDialog) OpenWithWarning(title, message, warning, action string) {
+	d.Open(title, message, action)
+	d.warning = warning
 }
 
 func (d *confirmDialog) Close() {
@@ -68,7 +76,7 @@ func (d *confirmDialog) Render(w, h int) string {
 	panelBg := lipgloss.Color(currentTheme.SidebarActiveBg)
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(red).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
 	divSt := bg(lipgloss.NewStyle().Foreground(muted))
@@ -82,7 +90,14 @@ func (d *confirmDialog) Render(w, h int) string {
 	lines := []string{ln(titleSt.Render(d.title)), divLine, ln("")}
 
 	for _, line := range strings.Split(wrapText(d.message, innerW), "\n") {
-		lines = append(lines, ln(msgSt.Render(line)))
+		lines = append(lines, ln(lipgloss.PlaceHorizontal(innerW, lipgloss.Center, msgSt.Render(line), lipgloss.WithWhitespaceBackground(panelBg))))
+	}
+	if d.warning != "" {
+		lines = append(lines, ln(""))
+		warnSt := bg(lipgloss.NewStyle().Foreground(muted).Italic(true))
+		for _, line := range strings.Split(wrapText(d.warning, innerW), "\n") {
+			lines = append(lines, ln(lipgloss.PlaceHorizontal(innerW, lipgloss.Center, warnSt.Render(line), lipgloss.WithWhitespaceBackground(panelBg))))
+		}
 	}
 	lines = append(lines, ln(""))
 
@@ -90,18 +105,20 @@ func (d *confirmDialog) Render(w, h int) string {
 	// reads as "theme colored" without the full-bright accent fill.
 	// (Raw ShortcutActive is near-invisible on dark themes and washed
 	// out on light ones.) Text stays the theme text color for contrast.
-	selBg := lipgloss.Color(blendHex(string(accent), string(panelBg), 0.55))
-	activeBg := lipgloss.NewStyle().Background(selBg)
+	yesSelBg := lipgloss.Color(blendHex(string(red), string(panelBg), 0.55))
+	noSelBg := lipgloss.Color(blendHex(string(accent), string(panelBg), 0.55))
+	yesActiveBg := lipgloss.NewStyle().Background(yesSelBg)
+	noActiveBg := lipgloss.NewStyle().Background(noSelBg)
 
-	renderButton := func(label string, active bool) string {
+	renderButton := func(label string, activeBg lipgloss.Style, active bool) string {
 		if active {
 			return activeBg.Foreground(text).Bold(true).Padding(0, 2).Render(label)
 		}
 		return bg(lipgloss.NewStyle().Foreground(text)).Padding(0, 2).Render(label)
 	}
 
-	yesBtn := renderButton("Yes", d.idx == 0)
-	noBtn := renderButton("No", d.idx == 1)
+	yesBtn := renderButton("Yes", yesActiveBg, d.idx == 0)
+	noBtn := renderButton("No", noActiveBg, d.idx == 1)
 	buttonsRow := lipgloss.JoinHorizontal(lipgloss.Top, yesBtn, bg(lipgloss.NewStyle()).Render("   "), noBtn)
 	buttonsLine := ln(lipgloss.PlaceHorizontal(innerW, lipgloss.Center, buttonsRow, lipgloss.WithWhitespaceBackground(panelBg)))
 	lines = append(lines, buttonsLine, ln(""))

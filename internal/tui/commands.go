@@ -363,7 +363,7 @@ func (x *m) runMediaSendCommand(txt string, includeGlobal bool) (tea.Cmd, bool) 
 func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
 	switch {
 	case txt == "/logout":
-		x.confirmDialog.Open("Log out?", "Are you sure you want to log out?", "logout")
+		x.confirmDialog.OpenWithWarning("Log out?", "Are you sure you want to log out?", "This will delete all your data from this computer.", "logout")
 		return nil, true
 	case txt == "/emoji":
 		x.openEmojiPicker()

@@ -201,7 +201,8 @@ func (a *App) upsertMessageTx(exec dbExecutor, chatID string, msg WireMessage) {
 		atomic.StoreUint32(&a.persistDirty, 1)
 	}
 	permName := msg.PushName
-	if msg.Key.FromMe {
+	if msg.Key.FromMe || strings.HasSuffix(chatID, "@g.us") {
+		// In a group the push name is the sender's, not the group's.
 		permName = ""
 	}
 	// prevNotify is the push name the permission row was last written with,

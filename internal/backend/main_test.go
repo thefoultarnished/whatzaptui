@@ -4694,3 +4694,55 @@ func TestResolveWhatsmeowLogLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupMessageDoesNotWriteSenderNameToGroupPermission(t *testing.T) {
+	app := newTestApp(t)
+	group := "120363399151277191@g.us"
+	app.upsertMessage(group, WireMessage{
+		Key:              WireKey{ID: "g1", FromMe: false, Participant: "15551230001@s.whatsapp.net"},
+		MessageTimestamp: 100,
+		Message:          map[string]any{"conversation": "hi"},
+		PushName:         "Alex",
+	})
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var n int
+		_ = app.db.QueryRow(`SELECT COUNT(*) FROM chat_permissions WHERE phone = '120363399151277191' AND name != ''`).Scan(&n)
+		if n > 0 {
+			t.Fatal("group permission row got the sender's push name")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestPurgeGroupSenderNamesRunsOnce(t *testing.T) {
+	app := newTestApp(t)
+	for _, q := range []string{
+		`INSERT INTO chats(id) VALUES ('120363399151277191@g.us'), ('15551230001@s.whatsapp.net')`,
+		`INSERT INTO chat_permissions(phone, name, allowed) VALUES ('120363399151277191', 'asmah', 0), ('15551230001', 'Alex', 1)`,
+	} {
+		if _, err := app.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nameOf := func(phone string) string {
+		var n string
+		_ = app.db.QueryRow(`SELECT name FROM chat_permissions WHERE phone = ?`, phone).Scan(&n)
+		return n
+	}
+
+	app.purgeGroupSenderNames()
+	if got := nameOf("120363399151277191"); got != "" {
+		t.Fatalf("group name = %q, want cleared", got)
+	}
+	if got := nameOf("15551230001"); got != "Alex" {
+		t.Fatalf("contact name = %q, want Alex kept", got)
+	}
+
+	// A later /rename of the group must survive the next startup.
+	_, _ = app.db.Exec(`UPDATE chat_permissions SET name = 'My Group' WHERE phone = '120363399151277191'`)
+	app.purgeGroupSenderNames()
+	if got := nameOf("120363399151277191"); got != "My Group" {
+		t.Fatalf("group name = %q, want My Group kept on second run", got)
+	}
+}

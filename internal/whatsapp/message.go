@@ -97,9 +97,13 @@ func VisibleProtocolType(t waE2E.ProtocolMessage_Type) bool {
 }
 
 // IsInvisibleProtocolMessage reports whether msg is a bare protocol control message with no user-visible meaning.
+// This includes SenderKeyDistributionMessage, which is a key-exchange handshake, not user content.
 func IsInvisibleProtocolMessage(msg *waE2E.Message) bool {
 	if msg == nil {
 		return false
+	}
+	if msg.GetSenderKeyDistributionMessage() != nil {
+		return true
 	}
 	pm := msg.GetProtocolMessage()
 	if pm == nil {
