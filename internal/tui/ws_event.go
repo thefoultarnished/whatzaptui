@@ -11,7 +11,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// wsTraceSkip are high-volume WS event types left out of the trace log.
+var wsTraceSkip = map[string]bool{"message": true, "receipt": true, "typing": true}
+
 func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
+	if !v.ok {
+		tlog("ws.closed")
+	} else if !wsTraceSkip[v.evt.Type] {
+		tlog("ws.event", "type", v.evt.Type)
+	}
 	if !v.ok {
 		x.wsDisconnected = true
 		delay := x.nextReconnectDelay()

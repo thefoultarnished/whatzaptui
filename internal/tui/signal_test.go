@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,5 +57,18 @@ func TestExitCommandCancelsRequests(t *testing.T) {
 	}
 	if ctx.Err() == nil {
 		t.Fatal("/exit must cancel in-flight requests")
+	}
+}
+
+func TestSignalCancellationErrorsIgnored(t *testing.T) {
+	errs := []error{
+		tea.ErrProgramKilled,
+		tea.ErrInterrupted,
+		context.Canceled,
+	}
+	for _, err := range errs {
+		if !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) && !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected error %v to be recognized as signal cancellation", err)
+		}
 	}
 }

@@ -13,14 +13,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"whatzap/internal/store"
-	"whatzap/internal/whatsapp"
 	"go.mau.fi/whatsmeow/appstate"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	_ "modernc.org/sqlite"
+	"whatzap/internal/store"
+	"whatzap/internal/whatsapp"
 )
 
 // A-13: in-memory map caps for unbounded-growth maps. Trimmed on
@@ -101,10 +101,43 @@ func (a *App) resetPersistentStorage() error {
 	}
 
 	if strings.TrimSpace(a.cacheDir) != "" {
-		if err := os.RemoveAll(a.cacheDir); err != nil {
+		if err := wipeCacheDirExceptLogs(a.cacheDir); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(a.cacheDir, 0o700); err != nil {
 			return err
 		}
 		return a.initPersistentResources()
+	}
+	return nil
+}
+
+// wipeCacheDirExceptLogs removes every entry directly under dir except the
+// actionLog's own "logs" subdirectory. Logout used to os.RemoveAll(dir)
+// wholesale, which includes the actionLog's currently-open log file —
+// Windows refuses to delete a file another handle still has open, so that
+// RemoveAll failed with a generic "used by another process" error the
+// moment a session had generated enough log lines to still be flushing at
+// wipe time. Every /logout then came back "backend cleanup failed", and
+// whatever had already been removed (session.token, store.db) stayed gone
+// while the still-open logs/ directory blocked the rest, leaving cacheDir
+// half-wiped. Logs are meant to survive a logout anyway — they are the
+// diagnostic trail for exactly this kind of failure.
+func wipeCacheDirExceptLogs(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == actionLogDir {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -317,11 +350,18 @@ func (a *App) refreshGroupMetadata() int {
 	}
 
 	changed := 0
-	a.mu.Lock()
-	if a.shuttingDown || a.db == nil {
-		a.mu.Unlock()
-		return 0
+	// Slow work (LID resolution hits the store DB, MAX(ts) hits messages)
+	// must stay outside the write lock: holding a.mu across per-group
+	// lookups freezes every other request (even /health) for the whole
+	// run. So collect everything first, then apply under one brief lock.
+	type groupUpdate struct {
+		cid        string
+		name       string
+		topic      string
+		maxTS      int64
+		needsMaxTS bool
 	}
+	updates := make([]groupUpdate, 0, len(groups))
 	for _, g := range groups {
 		if g == nil || g.JID.IsEmpty() {
 			continue
@@ -330,24 +370,37 @@ func (a *App) refreshGroupMetadata() int {
 		if cid == "" {
 			continue
 		}
-		ch := a.state.Chats[cid]
-		ch.ID = cid
-		name := strings.TrimSpace(g.Name)
-		if name != "" && ch.Name != name {
-			ch.Name = name
+		u := groupUpdate{cid: cid, name: strings.TrimSpace(g.Name), topic: strings.TrimSpace(g.Topic)}
+		a.mu.RLock()
+		cur, ok := a.state.Chats[cid]
+		a.mu.RUnlock()
+		if !ok || cur.ConversationTimestamp == 0 {
+			u.needsMaxTS = true
+			_ = db.QueryRow(`SELECT COALESCE(MAX(ts), 0) FROM messages WHERE chat_id = ? AND ts > 0`, cid).Scan(&u.maxTS)
+		}
+		updates = append(updates, u)
+	}
+	a.mu.Lock()
+	if a.shuttingDown || a.db == nil {
+		a.mu.Unlock()
+		return 0
+	}
+	for _, u := range updates {
+		ch := a.state.Chats[u.cid]
+		ch.ID = u.cid
+		if u.name != "" && ch.Name != u.name {
+			ch.Name = u.name
 			changed++
 		}
-		if topic := strings.TrimSpace(g.Topic); topic != "" && ch.Subject != topic {
-			ch.Subject = topic
+		if u.topic != "" && ch.Subject != u.topic {
+			ch.Subject = u.topic
 			changed++
 		}
-		if ch.ConversationTimestamp == 0 {
-			var maxTS int64
-			_ = a.db.QueryRow(`SELECT COALESCE(MAX(ts), 0) FROM messages WHERE chat_id = ? AND ts > 0`, cid).Scan(&maxTS)
-			ch.ConversationTimestamp = maxTS
+		if ch.ConversationTimestamp == 0 && u.needsMaxTS && u.maxTS > 0 {
+			ch.ConversationTimestamp = u.maxTS
 		}
-		a.state.Chats[cid] = ch
-		delete(a.state.Contacts, cid)
+		a.state.Chats[u.cid] = ch
+		delete(a.state.Contacts, u.cid)
 	}
 	a.mu.Unlock()
 
@@ -621,14 +674,20 @@ func (a *App) bootstrapFromStore() {
 		a.mu.Unlock()
 		return
 	}
+	if a.client == nil || !a.client.IsLoggedIn() {
+		a.mu.Unlock()
+		return
+	}
 	a.needsBootstrapSync = false
 	a.mu.Unlock()
 
-	a.broadcast(EventEnvelope{Type: "status", Payload: "Bootstrapping chat state..."})
+	a.broadcast(EventEnvelope{Type: "status", Payload: "Loading chats and contacts..."})
+	finish := a.actionLog.Timed("bootstrap", map[string]string{})
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
 	if a.client == nil || a.client.Store == nil {
+		finish("no-store", nil)
 		return
 	}
 	if a.client.Store.AppState == nil {
@@ -645,63 +704,7 @@ func (a *App) bootstrapFromStore() {
 	if a.client.Store.Contacts == nil {
 		return
 	}
-	allContacts, err := a.client.Store.Contacts.GetAllContacts(ctx)
-	if err != nil {
-		return
-	}
-
-	a.mu.Lock()
-	seeded := 0
-	for jid, info := range allContacts {
-		raw := strings.TrimSpace(jid.String())
-		if raw == "" {
-			continue
-		}
-		cid := a.canonicalizeChatID(raw)
-
-		fullName := strings.TrimSpace(info.FullName)
-		firstName := strings.TrimSpace(info.FirstName)
-		businessName := strings.TrimSpace(info.BusinessName)
-		pushName := strings.TrimSpace(info.PushName)
-
-		ch, hasChat := a.state.Chats[cid]
-		if hasChat && ch.ConversationTimestamp == 0 {
-			hasChat = false
-		}
-		if fullName == "" && firstName == "" && businessName == "" && !hasChat {
-			continue
-		}
-
-		name := fullName
-		if name == "" {
-			name = firstName
-		}
-		if name == "" {
-			name = businessName
-		}
-		if name == "" {
-			name = pushName
-		}
-
-		ct := a.state.Contacts[cid]
-		ct.ID = cid
-		if name != "" && ct.Notify == "" {
-			ct.Notify = name
-		}
-		if fullName != "" || firstName != "" || businessName != "" {
-			ct.Stored = true
-		}
-		a.state.Contacts[cid] = ct
-
-		if ch.ID != "" {
-			if name != "" && ch.Name == "" {
-				ch.Name = name
-				a.state.Chats[cid] = ch
-			}
-		}
-		seeded++
-	}
-	a.mu.Unlock()
+	seeded := a.seedContactsFromStore(ctx, a.client.Store.Contacts.GetAllContacts)
 
 	if seeded > 0 {
 		a.persistState()
@@ -709,16 +712,183 @@ func (a *App) bootstrapFromStore() {
 		a.broadcast(EventEnvelope{Type: "chats:loaded"})
 		a.broadcast(EventEnvelope{Type: "status", Payload: "Bootstrap complete"})
 	}
+	finish("ok", map[string]string{
+		"seeded":   intStr(seeded),
+		"contacts": intStr(len(a.state.Contacts)),
+		"chats":    intStr(len(a.state.Chats)),
+	})
+}
+
+// seedContactsFromStore additively merges getAllContacts (whatsmeow's own
+// address-book table) into a.state.Contacts/Chats, marking a contact
+// Stored when it carries a real saved name (not just a push name). Shared
+// by bootstrapFromStore (the initial pass, run moments after connecting)
+// and runContactReseed (re-run whenever WhatsApp finishes pushing more app
+// state) because the address book often keeps arriving in the background
+// for a while after the initial bootstrap already returned — see
+// handleAppStateSyncComplete.
+//
+// getAllContacts is a parameter (not a.client.Store.Contacts.GetAllContacts
+// read inline) so this is unit-testable without a live whatsmeow client.
+// LID resolution hits the store DB per contact, so every entry is resolved
+// before a.mu is taken: holding a.mu across that would freeze every other
+// request (even /health) for the whole pass, the same class of bug fixed
+// in the history-sync deadlock (see applyHistorySync).
+func (a *App) seedContactsFromStore(ctx context.Context, getAllContacts func(context.Context) (map[types.JID]types.ContactInfo, error)) int {
+	if getAllContacts == nil {
+		return 0
+	}
+	allContacts, err := getAllContacts(ctx)
+	if err != nil {
+		return 0
+	}
+
+	type seedEntry struct {
+		cid                                         string
+		fullName, firstName, businessName, pushName string
+	}
+	entries := make([]seedEntry, 0, len(allContacts))
+	for jid, info := range allContacts {
+		raw := strings.TrimSpace(jid.String())
+		if raw == "" {
+			continue
+		}
+		entries = append(entries, seedEntry{
+			cid:          a.canonicalizeChatID(raw),
+			fullName:     strings.TrimSpace(info.FullName),
+			firstName:    strings.TrimSpace(info.FirstName),
+			businessName: strings.TrimSpace(info.BusinessName),
+			pushName:     strings.TrimSpace(info.PushName),
+		})
+	}
+	a.mu.Lock()
+	seeded := 0
+	for _, e := range entries {
+		ch, hasChat := a.state.Chats[e.cid]
+		if hasChat && ch.ConversationTimestamp == 0 {
+			hasChat = false
+		}
+		if e.fullName == "" && e.firstName == "" && e.businessName == "" && !hasChat {
+			continue
+		}
+
+		name := e.fullName
+		if name == "" {
+			name = e.firstName
+		}
+		if name == "" {
+			name = e.businessName
+		}
+		if name == "" {
+			name = e.pushName
+		}
+
+		ct := a.state.Contacts[e.cid]
+		ct.ID = e.cid
+		if name != "" && ct.Notify == "" {
+			ct.Notify = name
+		}
+		if e.fullName != "" || e.firstName != "" || e.businessName != "" {
+			ct.Stored = true
+		}
+		a.state.Contacts[e.cid] = ct
+
+		// Do not write a Chats entry here: a saved-contact name alone
+		// (no hasChat) must not synthesize a phantom zero-message chat
+		// — same bug as the historysync pushname path (events.go). A
+		// real chat's name is already filled in from Contacts at serve
+		// time (handleChats), so writing it here again was redundant
+		// for real chats and actively wrong for everyone else.
+		seeded++
+	}
+	a.mu.Unlock()
+	return seeded
+}
+
+// contactReseedDebounce coalesces a burst of AppStateSyncComplete events
+// (WhatsApp fires one per app-state patch category, often several within
+// a second) into a single reseed pass. Var, not const, so tests can
+// shrink it.
+var contactReseedDebounce = 2 * time.Second
+
+// handleAppStateSyncComplete is called for every events.AppStateSyncComplete
+// whatsmeow dispatches — both the ones bootstrapFromStore triggers directly
+// and the ones whatsmeow triggers on its own later, when the server pushes
+// a "server_sync" notification with a newer app-state version (this is how
+// a large address book that didn't finish syncing within the first ~25s
+// bootstrap window still reaches the People tab, without a manual
+// /synccontacts). Debounced via scheduleContactReseed.
+func (a *App) handleAppStateSyncComplete(name appstate.WAPatchName) {
+	a.mu.RLock()
+	shuttingDown := a.shuttingDown
+	a.mu.RUnlock()
+	if shuttingDown {
+		return
+	}
+	a.actionLog.Event("appstate.sync.complete", map[string]string{"patch": string(name)})
+	a.scheduleContactReseed()
+}
+
+// scheduleContactReseed (re)arms a single debounce timer so a burst of
+// events collapses into one reseed run. onContactReseed lets tests observe
+// invocations without a live whatsmeow client; nil (the normal case) runs
+// the real runContactReseed.
+func (a *App) scheduleContactReseed() {
+	a.contactReseedMu.Lock()
+	defer a.contactReseedMu.Unlock()
+	if a.contactReseedTimer != nil {
+		a.contactReseedTimer.Stop()
+	}
+	run := a.runContactReseed
+	if a.onContactReseed != nil {
+		run = a.onContactReseed
+	}
+	a.contactReseedTimer = time.AfterFunc(contactReseedDebounce, run)
+}
+
+// runContactReseed is scheduleContactReseed's default action: re-run
+// seedContactsFromStore and, if it found anything new, persist and tell
+// the TUI to refetch. Reads a.client through a local snapshot rather than
+// re-reading the field mid-call, so a concurrent logout nil-ing it out
+// can't race this goroutine onto a nil pointer.
+func (a *App) runContactReseed() {
+	a.mu.RLock()
+	shuttingDown := a.shuttingDown
+	client := a.client
+	a.mu.RUnlock()
+	if shuttingDown || client == nil || !client.IsLoggedIn() || client.Store == nil || client.Store.Contacts == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	seeded := a.seedContactsFromStore(ctx, client.Store.Contacts.GetAllContacts)
+	a.actionLog.Event("contacts.reseed", map[string]string{"seeded": intStr(seeded)})
+	if seeded == 0 {
+		return
+	}
+	if err := a.persistStateWithErr(); err != nil {
+		log.Printf("persistState: %v", err)
+	}
+	a.broadcast(EventEnvelope{Type: "contacts:updated"})
+	a.broadcast(EventEnvelope{Type: "chats:loaded"})
 }
 
 func (a *App) safeFetchAppState(ctx context.Context, name appstate.WAPatchName) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("bootstrap: recovered panic during app state fetch %s: %v", name, r)
+			a.actionLog.Event("bootstrap.appstate.panic", map[string]string{
+				"patch": string(name),
+				"err":   fmt.Sprintf("%v", r),
+			})
 		}
 	}()
 	if err := a.client.FetchAppState(ctx, name, true, false); err != nil {
 		log.Printf("bootstrap: failed to fetch app state %s: %v", name, err)
+		a.actionLog.Event("bootstrap.appstate.fail", map[string]string{
+			"patch": string(name),
+			"err":   truncateErr(err),
+		})
 	}
 }
 
@@ -783,6 +953,12 @@ func (a *App) persistState() {
 }
 
 func (a *App) persistStateWithErr() error {
+	a.dbLifecycleMu.RLock()
+	defer a.dbLifecycleMu.RUnlock()
+	return a.persistStateWithErrUnlocked()
+}
+
+func (a *App) persistStateWithErrUnlocked() error {
 	a.mu.RLock()
 	if a.shuttingDown || a.db == nil {
 		a.mu.RUnlock()
@@ -826,6 +1002,8 @@ func (a *App) persistStateWithErr() error {
 
 // withTx runs fn inside a single SQLite transaction.
 func (a *App) withTx(fn func(tx *sql.Tx) error) error {
+	a.dbLifecycleMu.RLock()
+	defer a.dbLifecycleMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("db not initialized")
 	}
@@ -1151,16 +1329,24 @@ func (a *App) upsertPermission(phone, name, prevName string) {
 	}
 }
 
-// withPermissionDB holds a.mu.RLock() for the entire duration of fn so that
-// logout cannot close a.db while the caller is still using it.
+// withPermissionDB holds dbLifecycleMu.RLock() for the entire duration of fn
+// so that logout cannot close a.db while the caller is still using it (logout
+// takes dbLifecycleMu.Lock() to set shuttingDown before closing anything).
+// a.mu is only held briefly to read the handle: holding it while fn waits for
+// the single SQLite connection deadlocks against a history-sync transaction
+// that owns the connection and needs a.mu.Lock() to update chat state.
 func (a *App) withPermissionDB(fn func(*sql.DB) error) error {
 	if a == nil {
 		return fmt.Errorf("permission store unavailable")
 	}
+	a.dbLifecycleMu.RLock()
+	defer a.dbLifecycleMu.RUnlock()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if a.shuttingDown || a.db == nil {
+	shuttingDown := a.shuttingDown
+	db := a.db
+	a.mu.RUnlock()
+	if shuttingDown || db == nil {
 		return fmt.Errorf("permission store unavailable")
 	}
-	return fn(a.db)
+	return fn(db)
 }

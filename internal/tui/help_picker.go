@@ -29,6 +29,7 @@ var helpCommands = []struct {
 	{"/block", "Block on WhatsApp"},
 	{"/synccontacts", "Sync contacts"},
 	{"/syncgroups", "Sync groups"},
+	{"/synchistory", "Sync chat history"},
 	{"/allcontacts", "Toggle stored-only People"},
 	{"Alt+B / Alt+W", "Toggle whitelist for selected contact"},
 	// Sounds
@@ -50,7 +51,7 @@ var helpGroupDefs = []struct {
 	count int
 }{
 	{"Interface", 8},
-	{"Contacts", 9},
+	{"Contacts", 10},
 	{"Sounds", 7},
 	{"Session", 3},
 }

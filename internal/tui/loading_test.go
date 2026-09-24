@@ -425,6 +425,12 @@ func TestRenderBootStagesPipelineTree(t *testing.T) {
 	}
 }
 
+func TestSplashHoldHasNoWait(t *testing.T) {
+	if splashHoldDuration != 0 {
+		t.Fatalf("splashHoldDuration = %v, want 0 (no loading-screen wait)", splashHoldDuration)
+	}
+}
+
 func TestSplashHoldTransitionsOnTimer(t *testing.T) {
 	model := m{
 		status:       "Connecting...",

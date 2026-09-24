@@ -87,6 +87,16 @@ func (a *App) handleChats(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(chats, func(i, j int) bool {
 		return chats[i].ConversationTimestamp > chats[j].ConversationTimestamp
 	})
+	named := 0
+	for _, c := range chats {
+		if strings.TrimSpace(c.Name) != "" || strings.TrimSpace(c.Subject) != "" {
+			named++
+		}
+	}
+	a.actionLog.Event("chats.served", map[string]string{
+		"count": intStr(len(chats)),
+		"named": intStr(named),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
 }
 

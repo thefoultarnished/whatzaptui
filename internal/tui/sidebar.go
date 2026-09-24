@@ -58,9 +58,6 @@ func (x m) sidebarItems() []chat {
 		if ch.ID == "" || ch.ID == "status@broadcast" {
 			continue
 		}
-		if ch.ConversationTimestamp == 0 && len(x.msgs[ch.ID]) == 0 {
-			continue
-		}
 		out = append(out, ch)
 	}
 	return out

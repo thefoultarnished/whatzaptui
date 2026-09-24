@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"whatzap/internal/whatsapp"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"whatzap/internal/whatsapp"
 )
 
 func (a *App) bindEvents() {
@@ -24,11 +24,23 @@ func (a *App) bindEvents() {
 			a.connState = "ready"
 			a.lastQR = ""
 			a.mu.Unlock()
+			a.actionLog.Event("client.connected", nil)
 			go func() {
 				presCtx, presCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer presCancel()
-				_ = a.client.SendPresence(presCtx, types.PresenceAvailable)
+				if err := a.client.SendPresence(presCtx, types.PresenceAvailable); err != nil {
+					a.actionLog.Event("client.presence.error", map[string]string{
+						"err": truncateErr(err),
+					})
+				}
 			}()
+			a.mu.RLock()
+			bootstrap := a.needsBootstrapSync
+			a.mu.RUnlock()
+			if bootstrap {
+				go a.bootstrapFromStore()
+			}
+			go a.refreshGroupMetadata()
 			a.broadcast(EventEnvelope{Type: "ready"})
 			a.broadcast(EventEnvelope{Type: "chats:loaded"})
 		case *events.Disconnected:
@@ -91,6 +103,9 @@ func (a *App) bindEvents() {
 			// Check both the raw envelope and the unwrapped effective message —
 			// some protocol messages arrive nested inside DeviceSentMessage.
 			if isInvisibleProtocolMessage(v.Message) || isInvisibleProtocolMessage(effectiveMessage(v.Message)) {
+				a.actionLog.Event("message.protocol.dropped", map[string]string{
+					"chat": redactChatID(chatID),
+				})
 				return
 			}
 			msg := a.toWireMessage(v)
@@ -99,6 +114,12 @@ func (a *App) bindEvents() {
 				msg.Key.Participant = a.canonicalizeChatID(msg.Key.Participant)
 			}
 			a.upsertMessage(chatID, msg)
+			a.actionLog.Event("message.received", map[string]string{
+				"chat": redactChatID(chatID),
+				"kind": redactMessageKind(msg.Message),
+				"from": redactChatID(strings.TrimSpace(msg.Key.Participant)),
+				"name": redactPushName(msg.PushName),
+			})
 			a.broadcast(EventEnvelope{Type: "message", Payload: msg})
 			a.broadcast(EventEnvelope{Type: "chats:loaded"})
 		case *events.Receipt:
@@ -156,6 +177,10 @@ func (a *App) bindEvents() {
 			}
 		case *events.HistorySync:
 			a.applyHistorySync(v.Data)
+		case *events.AppStateSyncComplete:
+			if v != nil {
+				a.handleAppStateSyncComplete(v.Name)
+			}
 		case *events.CallOffer:
 			a.broadcast(EventEnvelope{Type: "call", Payload: a.toWireCallEvent("incoming", v.BasicCallMeta, "")})
 		case *events.CallOfferNotice:
@@ -193,6 +218,14 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 	if data == nil {
 		return
 	}
+	a.dbLifecycleMu.RLock()
+	defer a.dbLifecycleMu.RUnlock()
+	a.mu.RLock()
+	shuttingDown := a.shuttingDown
+	a.mu.RUnlock()
+	if shuttingDown {
+		return
+	}
 
 	a.mu.Lock()
 	a.historySyncing = true
@@ -203,14 +236,57 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		a.mu.Unlock()
 	}()
 
-	changedChats := a.syncPushnamesAndConversations(data)
+	// Pre-flight counts: how much HistorySync did WhatsApp push this
+	// time? Conversations / Pushnames come from the protobuf header;
+	// the message total is summed inline so the line can show "we got
+	// N messages but only managed to insert M" without a second pass.
+	totalConvs := 0
+	totalMessages := 0
+	for _, conv := range data.GetConversations() {
+		totalConvs++
+		totalMessages += len(conv.GetMessages())
+	}
+	totalPushnames := len(data.GetPushnames())
+	progress := int(data.GetProgress())
+	startedAt := time.Now()
+	a.actionLog.Event("historysync.received", map[string]string{
+		"conversations": intStr(totalConvs),
+		"messages":      intStr(totalMessages),
+		"pushnames":     intStr(totalPushnames),
+		"progress":      intStr(progress),
+	})
 
+	// The watchdog logs the current phase (and dumps goroutine stacks once)
+	// if this chunk stops making progress, so a hang names its own spot.
+	watch := a.startStallWatch("historysync")
+	defer watch.Stop()
+
+	watch.Phase("metadata")
+	changedChats := a.syncPushnamesAndConversations(data)
+	a.actionLog.Event("historysync.phase", map[string]string{
+		"phase": "metadata", "changed": boolStr(changedChats), "elapsedMs": durMs(time.Since(startedAt)),
+	})
+
+	// Convert every message BEFORE opening the transaction. Conversion does
+	// DB lookups on the pool (e.g. quotedStanzaFromMe for replies) and LID
+	// lookups in whatsmeow's store; with a single-connection pool, running
+	// them while the tx holds the connection waits on itself forever.
+	watch.Phase("prepare")
+	pending := a.prepareHistoryMessages(data)
+	a.actionLog.Event("historysync.phase", map[string]string{
+		"phase": "prepare", "messages": intStr(len(pending)), "elapsedMs": durMs(time.Since(startedAt)),
+	})
+
+	watch.Phase("begin-tx")
 	var tx *sql.Tx
 	var err error
-	if a.db != nil {
+	if a.db != nil && len(pending) > 0 {
 		tx, err = a.db.Begin()
 		if err != nil {
 			log.Printf("applyHistorySync: begin tx: %v", err)
+			a.actionLog.Event("historysync.tx.begin.fail", map[string]string{
+				"err": truncateErr(err),
+			})
 		}
 	}
 	defer func() {
@@ -224,25 +300,55 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		exec = tx
 	}
 
-	if a.syncConversationMessages(data, exec) {
+	watch.Phase("insert")
+	if a.insertHistoryMessages(exec, pending, watch) {
 		changedChats = true
 	}
 
+	watch.Phase("commit")
+	commitErr := ""
 	if tx != nil {
-		if err := tx.Commit(); err != nil {
-			log.Printf("applyHistorySync: commit tx: %v", err)
+		if cErr := tx.Commit(); cErr != nil {
+			log.Printf("applyHistorySync: commit tx: %v", cErr)
+			commitErr = truncateErr(cErr)
+			a.actionLog.Event("historysync.tx.commit.fail", map[string]string{
+				"err": commitErr,
+			})
 		} else {
 			tx = nil
 		}
 	}
 
+	a.actionLog.Event("historysync.applied", map[string]string{
+		"conversations":  intStr(totalConvs),
+		"messagesSeen":   intStr(totalMessages),
+		"messagesStored": intStr(len(pending)),
+		"elapsedMs":      intStr(int(time.Since(startedAt).Milliseconds())),
+		"commitOk":       boolStr(commitErr == ""),
+	})
+
+	watch.Phase("reconcile-lid")
 	a.reconcileLIDChats()
 
+	watch.Phase("persist")
 	if changedChats {
-		a.persistState()
-		a.broadcast(EventEnvelope{Type: "chats:loaded"})
-		a.broadcast(EventEnvelope{Type: "contacts:updated"})
+		if err := a.persistStateWithErrUnlocked(); err != nil {
+			log.Printf("persistState: %v", err)
+			a.actionLog.Event("historysync.persist.fail", map[string]string{"err": truncateErr(err)})
+		}
 	}
+	// History sync arrives in chunks and may contain pushnames or messages
+	// without conversation metadata. Refresh both views after every chunk so
+	// a new account does not remain stuck on the empty pre-sync snapshot.
+	a.broadcast(EventEnvelope{Type: "chats:loaded"})
+	a.broadcast(EventEnvelope{Type: "contacts:updated"})
+	a.mu.RLock()
+	chatCount := len(a.state.Chats)
+	a.mu.RUnlock()
+	a.actionLog.Event("historysync.done", map[string]string{
+		"chatsInState": intStr(chatCount),
+		"elapsedMs":    durMs(time.Since(startedAt)),
+	})
 }
 
 type pushnameUpdate struct {
@@ -270,7 +376,7 @@ func (a *App) syncPushnamesAndConversations(data *waHistorySync.HistorySync) boo
 	}
 
 	var convMeta []convMetadata
-	changedChats := false
+	changedState := false
 	for _, conv := range data.GetConversations() {
 		chatID := a.historyConversationChatID(conv)
 		if chatID == "" || chatID == "status@broadcast" {
@@ -285,21 +391,26 @@ func (a *App) syncPushnamesAndConversations(data *waHistorySync.HistorySync) boo
 			ts = int64(conv.GetLastMsgTimestamp())
 		}
 		convMeta = append(convMeta, convMetadata{chatID, name, ts, int(conv.GetUnreadCount())})
-		changedChats = true
+		changedState = true
 	}
 
 	a.mu.Lock()
 	for _, u := range pushnameUpdates {
+		// Pushnames-only entries: WhatsApp sends one for nearly anyone
+		// who has ever appeared in a synced group or chat, most of whom
+		// you have no real 1:1 conversation with (a batch of 2000
+		// pushnames is normal for one history-sync chunk). This must
+		// only touch Contacts — writing a Chats entry here used to turn
+		// every one of those names into a phantom zero-message "chat"
+		// (reported: 943 of 1000 chats had conv_ts=0). A real chat's
+		// name is already filled in from Contacts at serve time
+		// (handleChats), so a Chats write here was always redundant on
+		// top of being wrong for everyone else.
 		contact := a.state.Contacts[u.id]
 		contact.ID = u.id
 		contact.Notify = u.name
 		a.state.Contacts[u.id] = contact
-		chat := a.state.Chats[u.id]
-		chat.ID = u.id
-		if chat.Name == "" {
-			chat.Name = u.name
-		}
-		a.state.Chats[u.id] = chat
+		changedState = true
 	}
 	for _, c := range convMeta {
 		chat := a.state.Chats[c.chatID]
@@ -325,11 +436,20 @@ func (a *App) syncPushnamesAndConversations(data *waHistorySync.HistorySync) boo
 		a.state.Chats[c.chatID] = chat
 	}
 	a.mu.Unlock()
-	return changedChats
+	return changedState
 }
 
-func (a *App) syncConversationMessages(data *waHistorySync.HistorySync, exec dbExecutor) bool {
-	changed := false
+// pendingHistoryMessage is one history message converted to wire form and
+// ready to insert under the sync transaction.
+type pendingHistoryMessage struct {
+	chatID string
+	msg    WireMessage
+}
+
+// prepareHistoryMessages converts a chunk's messages to wire form. It must
+// run with no transaction open (see applyHistorySync).
+func (a *App) prepareHistoryMessages(data *waHistorySync.HistorySync) []pendingHistoryMessage {
+	var pending []pendingHistoryMessage
 	for _, conv := range data.GetConversations() {
 		chatID := a.historyConversationChatID(conv)
 		if chatID == "" || chatID == "status@broadcast" {
@@ -357,9 +477,27 @@ func (a *App) syncConversationMessages(data *waHistorySync.HistorySync, exec dbE
 			if msg.Key.FromMe && msg.ReceiptStatus == "" {
 				msg.ReceiptStatus = "delivered"
 			}
-			a.upsertMessageTx(exec, msg.Key.RemoteJID, msg)
-			changed = true
+			pending = append(pending, pendingHistoryMessage{chatID: msg.Key.RemoteJID, msg: msg})
 		}
 	}
-	return changed
+	return pending
+}
+
+// historyInsertProgressEvery is how often (in messages) the insert phase
+// logs progress, so a slow or stuck insert shows how far it got.
+const historyInsertProgressEvery = 250
+
+// insertHistoryMessages writes prepared messages through exec (the sync
+// transaction when one is open). Reports true when anything was written.
+func (a *App) insertHistoryMessages(exec dbExecutor, pending []pendingHistoryMessage, watch *stallWatch) bool {
+	for i, p := range pending {
+		a.upsertMessageTx(exec, p.chatID, p.msg)
+		if n := i + 1; n%historyInsertProgressEvery == 0 && n < len(pending) {
+			watch.Phase("insert " + intStr(n) + "/" + intStr(len(pending)))
+			a.actionLog.Event("historysync.insert.progress", map[string]string{
+				"done": intStr(n), "total": intStr(len(pending)),
+			})
+		}
+	}
+	return len(pending) > 0
 }

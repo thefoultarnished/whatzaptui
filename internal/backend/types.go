@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"whatzap/internal/whatsapp"
-	"whatzap/internal/store"
 	"github.com/gorilla/websocket"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"whatzap/internal/store"
+	"whatzap/internal/whatsapp"
 )
 
 type EventEnvelope struct {
@@ -130,6 +130,7 @@ type App struct {
 	needsBootstrapSync bool
 	historySyncing     bool
 	shuttingDown       bool
+	dbLifecycleMu      sync.RWMutex
 	persistDirty       uint32 // atomic: 1 = needs persist
 	stopPersist        chan struct{}
 	stopPersistOnce    sync.Once
@@ -138,11 +139,24 @@ type App struct {
 	lidMigrateOnce     sync.Once
 	lidMigrateJobs     chan lidMigrateJob
 
+	// contactReseedMu/contactReseedTimer debounce handleAppStateSyncComplete
+	// (see state.go) so a burst of app-state patches triggers one contact
+	// reseed, not one per patch. onContactReseed lets tests observe a
+	// scheduled reseed without a live whatsmeow client; nil in production.
+	contactReseedMu    sync.Mutex
+	contactReseedTimer *time.Timer
+	onContactReseed    func()
+
 	// logoutMu serializes the /logout handler against itself so two
 	// concurrent calls can't race through the data-folder teardown.
 	// Kept separate from mu so a logout's network call to WhatsApp
 	// doesn't stall every other request that needs a read of a.state.
 	logoutMu sync.Mutex
+
+	// onShutdown is set by main Run() to the func that drives graceful
+	// shutdown (stops the signal context so the srv.Shutdown path runs).
+	// POST /shutdown invokes it asynchronously. Nil in tests unless set.
+	onShutdown func()
 
 	// startMu serializes /start so two concurrent calls can't race
 	// GetQRChannel against Connect (whatsmeow rejects GetQRChannel
@@ -156,6 +170,13 @@ type App struct {
 	// WebSocket after the qr event still gets it. Guarded by mu.
 	connState string
 	lastQR    string
+
+	// actionLog is the per-session structured event log. One file per
+	// backend startup, written next to the DB (inside <data-root>/backend/
+	// logs/, owner-only). Used for triage: durations, counts, error class,
+	// redacted identifiers — never bodies or tokens. Nil before NewApp
+	// completes and after Close; helpers are safe on a nil receiver.
+	actionLog *actionLog
 }
 
 type lidMigrateJob struct {

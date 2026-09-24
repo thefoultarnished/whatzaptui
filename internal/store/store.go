@@ -66,14 +66,21 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-// Close closes the underlying SQLite database.
+// Close closes the underlying SQLite database. It intentionally does not
+// nil out s.db afterward: initPersistentResources starts BackfillFTS in a
+// background goroutine, unsynchronized with Close, so a Close racing ahead
+// of it (e.g. an immediate shutdown, or /logout moments after a fresh
+// login) used to nil s.db out from under that goroutine's next s.db.Query
+// call — a nil *sql.DB dereference panics, whereas a closed-but-non-nil
+// one just returns a "sql: database is closed" error that BackfillFTS
+// already handles via its normal err-return path. sql.DB.Close is
+// documented idempotent, so a second Close() (e.g. this store's App-level
+// caller also nils its own a.db field independently) stays safe.
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	err := s.db.Close()
-	s.db = nil
-	return err
+	return s.db.Close()
 }
 
 // Vacuum triggers incremental or full vacuuming on the database.

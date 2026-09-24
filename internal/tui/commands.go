@@ -178,6 +178,12 @@ func (x *m) runGlobalCommand(txt string) (tea.Cmd, bool) {
 		}
 		x.syncingGroups = true
 		return tea.Batch(x.setTopBar("Syncing groups..."), syncGroups(x.reqCtx(), x.client, x.baseURL)), true
+	case "/synchistory":
+		if x.demoMode {
+			return x.setTopBar("Demo mode: history already fake"), true
+		}
+		x.syncingHistory = true
+		return tea.Batch(x.setTopBar("Syncing history..."), syncHistory(x.reqCtx(), x.client, x.baseURL)), true
 	case "/allcontacts":
 		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
 		saveConfig()

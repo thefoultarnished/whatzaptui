@@ -51,6 +51,43 @@ func TestCancelRequestsIsNilSafe(t *testing.T) {
 	x.cancelRequests() // must not panic
 }
 
+func TestSyncHistoryCommandIsHandled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	x := m{status: "ready", client: srv.Client(), baseURL: srv.URL}
+	cmd, ok := x.runCommand("/synchistory", true)
+	if !ok || cmd == nil {
+		t.Fatal("/synchistory must return a cmd")
+	}
+	if !x.syncingHistory {
+		t.Fatal("/synchistory must set syncingHistory")
+	}
+}
+
+func TestShutdownBackendPostsWithAuth(t *testing.T) {
+	var gotAuth, gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotMethod, gotPath = r.Header.Get(authHeaderName), r.Method, r.URL.Path
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	shutdownBackend(srv.Client(), srv.URL, "tok-123")
+	if gotMethod != http.MethodPost || gotPath != "/shutdown" {
+		t.Fatalf("shutdown request = %s %s, want POST /shutdown", gotMethod, gotPath)
+	}
+	if gotAuth != "Bearer tok-123" {
+		t.Fatalf("auth header = %q, want Bearer tok-123", gotAuth)
+	}
+}
+
+func TestShutdownBackendNilSafe(t *testing.T) {
+	shutdownBackend(nil, "", "")                                     // must not panic
+	shutdownBackend(http.DefaultClient, "", "tok")                   // must not panic
+	shutdownBackend(http.DefaultClient, "http://127.0.0.1:9", "tok") // dead server: must return, not hang
+}
+
 func TestOpenWSCancelledCtxFailsFast(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

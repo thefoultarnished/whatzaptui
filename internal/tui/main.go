@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +20,8 @@ import (
 )
 
 func Run() {
+	openTraceLog(filepath.Join(whatzapDataRoot(), "tui", "logs"))
+	defer closeTraceLog()
 	loadConfig()
 	apiToken, err := resolveSessionToken()
 	if err != nil {
@@ -29,10 +34,15 @@ func Run() {
 
 	backendDir := detectDirs()
 	demoMode := demoEnabled()
-	fmt.Fprintln(os.Stderr, "graphics protocol:", detectGraphicsProto())
-	apiCtx, apiCancel := context.WithCancel(context.Background())
-	defer apiCancel()
 	for {
+		// Route OS Ctrl+C/SIGTERM through Bubble Tea so p.Run() always returns
+		// and cleanup() (which now stops the backend too) always runs — even
+		// when the signal arrives as a real OS signal rather than a keypress.
+		// Re-created per-iteration so a cancelled context is not inherited on /restart.
+		sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		// Fresh per-iteration request context: quit cancels it, and a
+		// /restart must not inherit the cancelled context.
+		apiCtx, apiCancel := context.WithCancel(context.Background())
 		model := m{
 			baseURL:               "http://127.0.0.1:8787",
 			wsURL:                 "ws://127.0.0.1:8787/ws",
@@ -88,22 +98,29 @@ func Run() {
 			model.status = "Starting demo..."
 		}
 
-		opts := []tea.ProgramOption{tea.WithAltScreen()}
+		opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(sigCtx)}
 		if currentConfig.MouseEnabled {
 			opts = append(opts, tea.WithMouseCellMotion())
 		}
 
 		p := tea.NewProgram(model, opts...)
 		out, err := p.Run()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		apiCancel()
+		sigStop()
+		cleanedUp := false
 		if fm, ok := out.(m); ok {
 			fm.cleanup()
-			if fm.restartRequested {
+			cleanedUp = true
+			if err == nil && fm.restartRequested {
 				continue
 			}
+		}
+		if !cleanedUp {
+			model.cleanup()
+		}
+		if err != nil && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 		break
 	}

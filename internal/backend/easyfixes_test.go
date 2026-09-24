@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -174,6 +175,128 @@ func TestEnqueueLIDMigrationProcessesInQueue(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("queued LID migration did not complete as expected")
+	}
+}
+
+func TestHandleShutdown(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	// Unauthorized POST is rejected before reaching the handler.
+	unauth := httptest.NewRequest(http.MethodPost, "/shutdown", nil)
+	unauthRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(unauthRec, unauth)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth POST /shutdown status = %d, want 401", unauthRec.Code)
+	}
+
+	// GET is 405 even with auth.
+	getReq := authorizedRequest(httptest.NewRequest(http.MethodGet, "/shutdown", nil), app)
+	getRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /shutdown status = %d, want 405", getRec.Code)
+	}
+
+	// Authorized POST returns ok and fires onShutdown async.
+	fired := make(chan struct{}, 1)
+	app.onShutdown = func() { fired <- struct{}{} }
+	postReq := authorizedRequest(httptest.NewRequest(http.MethodPost, "/shutdown", nil), app)
+	postRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST /shutdown status = %d, want 200", postRec.Code)
+	}
+	select {
+	case <-fired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("POST /shutdown did not trigger onShutdown")
+	}
+}
+
+// Slow sync/group passes must not freeze reads: hammer the read endpoints
+// concurrently and require every one to answer fast. Guards the
+// collect-outside-the-lock restructuring (a write hold of minutes would
+// blow the per-request deadline below).
+func TestReadsStayResponsiveUnderConcurrentLoad(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+	app.mu.Lock()
+	for i := 0; i < 50; i++ {
+		id := strings.Repeat("1", 6) + string(rune('0'+i%10)) + "@s.whatsapp.net"
+		app.state.Chats[id] = Chat{ID: id, Name: "Chat", ConversationTimestamp: int64(1000 + i)}
+		app.state.Contacts[id] = Contact{ID: id, Notify: "Chat"}
+	}
+	app.mu.Unlock()
+
+	h := app.handler()
+	var wg sync.WaitGroup
+	errs := make(chan string, 200)
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			path := "/health"
+			switch i % 4 {
+			case 1:
+				path = "/chats"
+			case 2:
+				path = "/contacts"
+			case 3:
+				path = "/whitelist"
+			}
+			var req *http.Request
+			if path == "/health" {
+				req = httptest.NewRequest(http.MethodGet, path, nil)
+			} else {
+				req = authorizedRequest(httptest.NewRequest(http.MethodGet, path, nil), app)
+			}
+			rec := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() { h.ServeHTTP(rec, req); close(done) }()
+			select {
+			case <-done:
+				if rec.Code != http.StatusOK {
+					errs <- path + " status"
+				}
+			case <-time.After(5 * time.Second):
+				errs <- path + " timeout"
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Fatalf("responsive reads: %s", e)
+	}
+}
+
+func TestHandleSyncHistory(t *testing.T) {
+	app := newTestApp(t)
+	defer app.db.Close()
+
+	// Unauthorized POST is rejected before reaching the handler.
+	unauth := httptest.NewRequest(http.MethodPost, "/sync/history", nil)
+	unauthRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(unauthRec, unauth)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth POST /sync/history status = %d, want 401", unauthRec.Code)
+	}
+
+	// GET is 405 even with auth.
+	getReq := authorizedRequest(httptest.NewRequest(http.MethodGet, "/sync/history", nil), app)
+	getRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /sync/history status = %d, want 405", getRec.Code)
+	}
+
+	// No WhatsApp client connected (test app has none) is 409.
+	postReq := authorizedRequest(httptest.NewRequest(http.MethodPost, "/sync/history", nil), app)
+	postRec := httptest.NewRecorder()
+	app.handler().ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusConflict {
+		t.Fatalf("POST /sync/history without client status = %d, want 409", postRec.Code)
 	}
 }
 

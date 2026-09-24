@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -322,11 +321,13 @@ func postJSON(ctx context.Context, c *http.Client, url string, body any, ok func
 
 func logout(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
+		logoutClient := *c
+		logoutClient.Timeout = 60 * time.Second
 		b, _ := json.Marshal(map[string]string{})
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/logout", bytes.NewReader(b))
 		req.Header.Set("content-type", "application/json")
 		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := logoutClient.Do(req)
 		if err != nil {
 			return logoutMsg{err: err}
 		}
@@ -529,8 +530,7 @@ func send(ctx context.Context, c *http.Client, base, chatID, text string, replyT
 		if replyTo != nil {
 			payload["replyToMsgId"] = replyTo.Key.ID
 			rawText := renderMessageBody(replyTo.Message)
-			ansiRe := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-			payload["replyToText"] = ansiRe.ReplaceAllString(rawText, "")
+			payload["replyToText"] = ansiEscapeRegex.ReplaceAllString(rawText, "")
 			participant := replyTo.Key.RemoteJID
 			if replyTo.Key.Participant != "" {
 				participant = replyTo.Key.Participant
@@ -713,6 +713,10 @@ func (x m) cleanup() {
 	if x.ws != nil {
 		_ = x.ws.Close()
 	}
+	// Always ask the backend to shut down (best-effort): this covers the
+	// reused-backend case where startedBackend is false and we hold no
+	// child handle, so Ctrl+C never leaves an orphan on :8787 behind.
+	shutdownBackend(x.client, x.baseURL, x.apiToken)
 	if !x.startedBackend || x.backend == nil || x.backend.Process == nil {
 		return
 	}
@@ -721,6 +725,30 @@ func (x m) cleanup() {
 		return
 	}
 	_ = x.backend.Process.Kill()
+}
+
+// shutdownBackend asks the backend to exit via POST /shutdown. Best-effort:
+// failures (backend already gone, network closed) are ignored so quit never
+// blocks on a dead server.
+func shutdownBackend(c *http.Client, base, apiToken string) {
+	if c == nil || strings.TrimSpace(base) == "" {
+		return
+	}
+	call := *c
+	call.Timeout = 2 * time.Second
+	body, _ := json.Marshal(map[string]string{})
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+"/shutdown", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("content-type", "application/json")
+	attachAuthHeader(req, apiToken)
+	res, err := call.Do(req)
+	if err != nil {
+		return
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, res.Body)
 }
 
 func getWhitelist(ctx context.Context, c *http.Client, base string) tea.Cmd {
@@ -925,17 +953,30 @@ func apiTokenFromURL(base string) string {
 // backend uses this to rotate the session token if this process exits.
 func registerSession(ctx context.Context, c *http.Client, base, apiToken string) tea.Cmd {
 	return func() tea.Msg {
-		body, _ := json.Marshal(map[string]int{"pid": os.Getpid()})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session/register", bytes.NewReader(body))
+		body, err := json.Marshal(map[string]int{"pid": os.Getpid()})
+		if err != nil {
+			return sessionRegisterMsg{err: fmt.Errorf("encode session registration: %w", err)}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session/register", bytes.NewReader(body))
+		if err != nil {
+			return sessionRegisterMsg{err: fmt.Errorf("create session registration request: %w", err)}
+		}
 		req.Header.Set("Content-Type", "application/json")
 		attachAuthHeader(req, apiToken)
 		res, err := c.Do(req)
 		if err != nil {
-			return nil
+			return sessionRegisterMsg{err: err}
 		}
 		defer res.Body.Close()
-		return nil
+		if res.StatusCode/100 != 2 {
+			return sessionRegisterMsg{err: fmt.Errorf("session registration failed: %s", res.Status)}
+		}
+		return sessionRegisterMsg{}
 	}
+}
+
+type sessionRegisterMsg struct {
+	err error
 }
 
 func syncContacts(ctx context.Context, c *http.Client, base string) tea.Cmd {
@@ -973,6 +1014,30 @@ func syncGroups(ctx context.Context, c *http.Client, base string) tea.Cmd {
 			return syncGroupsDoneMsg{msg: "Groups sync complete"}
 		}
 		return syncGroupsDoneMsg{msg: fmt.Sprintf("Groups synced: %d/%d updated", out.Updated, out.Total)}
+	})
+}
+
+func syncHistory(ctx context.Context, c *http.Client, base string) tea.Cmd {
+	longClient := *c
+	longClient.Timeout = 5 * time.Minute
+	return postEmpty(ctx, &longClient, base+"/sync/history", func(raw []byte) tea.Msg {
+		var out struct {
+			Requested int `json:"requested"`
+			Chats     int `json:"chats"`
+			Skipped   int `json:"skipped"`
+			Failed    int `json:"failed"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return syncHistoryDoneMsg{msg: "History sync requested"}
+		}
+		msg := fmt.Sprintf("History requested for %d/%d chats", out.Requested, out.Chats)
+		if out.Failed > 0 {
+			msg += fmt.Sprintf(", %d failed", out.Failed)
+		}
+		if out.Skipped > 0 {
+			msg += fmt.Sprintf(", %d skipped (no messages yet)", out.Skipped)
+		}
+		return syncHistoryDoneMsg{msg: msg}
 	})
 }
 
