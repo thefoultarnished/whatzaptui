@@ -469,3 +469,14 @@ func TestRenderRightMainPickerPrecedence(t *testing.T) {
 		t.Fatalf("renderRightMain should render confirmDialog when open: %q", out)
 	}
 }
+
+func TestLoggedOutUsesSplashBoltLogo(t *testing.T) {
+	model := m{w: 80, h: 24, status: "Logged out. Bye!"}
+	out := model.renderStartupView(80)
+	if !strings.ContainsFunc(out, func(r rune) bool { return r >= 0x2801 && r <= 0x28ff }) {
+		t.Fatalf("logged-out view missing splash bolt braille characters")
+	}
+	if strings.Contains(out, "▒") {
+		t.Fatalf("logged-out view still shows old Pi logo dither")
+	}
+}
