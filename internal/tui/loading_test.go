@@ -48,23 +48,6 @@ func TestLoadingStages(t *testing.T) {
 	}
 }
 
-func TestRenderPiLogo(t *testing.T) {
-	logo := renderPiLogo()
-	lines := strings.Split(logo, "\n")
-	if len(lines) != 5 {
-		t.Fatalf("renderPiLogo lines count = %d, want 5", len(lines))
-	}
-	for i, line := range lines {
-		plain := ansiStripRe.ReplaceAllString(line, "")
-		if len([]rune(plain)) != 12 {
-			t.Errorf("line %d plain rune length = %d, want 12 (line: %q)", i, len([]rune(plain)), plain)
-		}
-	}
-	if !strings.Contains(logo, "█") || !strings.Contains(logo, "▒") {
-		t.Errorf("renderPiLogo missing block or dither characters")
-	}
-}
-
 func TestLoadingScreenContainsBoltLogo(t *testing.T) {
 	model := m{
 		w:      80,
@@ -221,57 +204,46 @@ func TestSignedInSplashKeyReconnect(t *testing.T) {
 	}
 }
 
-// The signed-in splash logo is a static zap bolt (yellow -> orange -> red,
-// full 6 rows / compact 6 rows). It does NOT animate across frames;
-// every call with the same compact flag must produce the same output.
+// The bolt logo is a static zap bolt (yellow -> orange -> red, 6 rows) at
+// frame 0. It does NOT animate at frame 0; every call must produce the same
+// output.
 func TestRenderZapBolt(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
-	for _, tc := range []struct {
-		name      string
-		compact   bool
-		wantRows  int
-		wantWidth int
-	}{
-		{"full", false, 6, 7},
-		{"compact", true, 6, 7},
+	const wantRows, wantWidth = 6, 7
+	got := renderZapBolt(0)
+	lines := strings.Split(got, "\n")
+	if len(lines) != wantRows {
+		t.Fatalf("rows = %d, want %d", len(lines), wantRows)
+	}
+	for i, line := range lines {
+		if n := lipgloss.Width(line); n != wantWidth {
+			t.Errorf("row %d width = %d, want %d (line: %q)", i, n, wantWidth, line)
+		}
+	}
+	if !strings.ContainsFunc(got, func(r rune) bool { return r >= 0x2801 && r <= 0x28ff }) {
+		t.Errorf("bolt missing braille characters")
+	}
+	// Static: repeated calls must match byte-for-byte.
+	if got != renderZapBolt(0) {
+		t.Errorf("bolt output must be stable across calls")
+	}
+	// Gradient: every palette hex must appear.
+	for _, hex := range []string{
+		"#fef08a", "#fde047", "#facc15", "#eab308", "#f59e0b",
+		"#fb923c", "#f97316", "#ea580c", "#ef4444", "#dc2626", "#b91c1c",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := renderZapBolt(tc.compact)
-			lines := strings.Split(got, "\n")
-			if len(lines) != tc.wantRows {
-				t.Fatalf("rows = %d, want %d", len(lines), tc.wantRows)
-			}
-			for i, line := range lines {
-				if n := lipgloss.Width(line); n != tc.wantWidth {
-					t.Errorf("row %d width = %d, want %d (line: %q)", i, n, tc.wantWidth, line)
-				}
-			}
-			if !strings.ContainsFunc(got, func(r rune) bool { return r >= 0x2801 && r <= 0x28ff }) {
-				t.Errorf("bolt missing braille characters")
-			}
-			// Static: repeated calls must match byte-for-byte.
-			if got != renderZapBolt(tc.compact) {
-				t.Errorf("bolt output must be stable across calls")
-			}
-			// Gradient: every palette hex must appear.
-			for _, hex := range []string{
-				"#fef08a", "#fde047", "#facc15", "#eab308", "#f59e0b",
-				"#fb923c", "#f97316", "#ea580c", "#ef4444", "#dc2626", "#b91c1c",
-			} {
-				prefix := strings.TrimSuffix(lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("#"), "#\x1b[0m")
-				code := strings.TrimSuffix(prefix, "m")
-				if !strings.Contains(got, code) {
-					t.Errorf("bolt missing gradient colour %s", hex)
-				}
-			}
-			// No leftover W-bubble artefacts.
-			if strings.Contains(got, "▒") || strings.Contains(got, "▀█") {
-				t.Errorf("bolt still contains W-bubble dither/tail glyphs")
-			}
-		})
+		prefix := strings.TrimSuffix(lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("#"), "#\x1b[0m")
+		code := strings.TrimSuffix(prefix, "m")
+		if !strings.Contains(got, code) {
+			t.Errorf("bolt missing gradient colour %s", hex)
+		}
+	}
+	// No leftover W-bubble artefacts.
+	if strings.Contains(got, "▒") || strings.Contains(got, "▀█") {
+		t.Errorf("bolt still contains W-bubble dither/tail glyphs")
 	}
 }
 
@@ -280,21 +252,21 @@ func TestRenderZapBoltAnimation(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
-	f0 := renderZapBolt(false, 0)
-	f1 := renderZapBolt(false, 1)
+	f0 := renderZapBolt(0)
+	f1 := renderZapBolt(1)
 	if f0 == f1 {
 		t.Fatalf("expected frames 0 and 1 to differ for animated crackle")
 	}
-	f2 := renderZapBolt(false, 2)
+	f2 := renderZapBolt(2)
 	if f1 != f2 {
 		t.Fatalf("expected frames 1 and 2 to hold within ~300ms crackle interval")
 	}
-	f4 := renderZapBolt(false, 4)
+	f4 := renderZapBolt(4)
 	if f1 == f4 {
 		t.Fatalf("expected frame 4 to advance to next crackle state")
 	}
 	for f := range 11 {
-		lines := strings.Split(renderZapBolt(false, f), "\n")
+		lines := strings.Split(renderZapBolt(f), "\n")
 		if len(lines) != 6 {
 			t.Fatalf("frame %d rows = %d, want 6", f, len(lines))
 		}
