@@ -23,6 +23,48 @@ func TestRenderLinkPanelMatchesHeightAndWidth(t *testing.T) {
 	}
 }
 
+// A tall terminal gives renderLinkPanel a large height. The layout grows the
+// step timeline's own connector lines to absorb that leftover instead of
+// piling it into a handful of blank gaps, so the exact row count has to
+// match on every height, not just a couple of samples - a prior version of
+// this logic silently undershot on specific heights (e.g. 43 rows short by
+// 4) because it recomputed the stretch only once instead of looping to a
+// fixed point.
+func TestRenderLinkPanelMatchesHeightAcrossRange(t *testing.T) {
+	x := m{qrReceivedAt: time.Now()}
+	floor := lipgloss.Height(x.renderLinkPanel(0))
+	for h := floor; h <= 150; h++ {
+		out := x.renderLinkPanel(h)
+		if got := lipgloss.Height(out); got != h {
+			t.Fatalf("height=%d: panel is %d rows, want %d", h, got, h)
+		}
+	}
+}
+
+// Within a realistic terminal height, gaps between sections should stay
+// capped (leftover height goes into the step timeline's own spacing
+// instead) - remainder from the floor division can add one extra blank line
+// to the earliest gaps, so the cap is a soft "maxGap+1" rather than an exact
+// ceiling. A pathologically tall height is allowed to fall back to plain
+// even gaps - see TestRenderLinkPanelMatchesHeightAcrossRange, which checks
+// the row count still comes out exact even then.
+func TestRenderLinkPanelCapsGapsOnTallTerminals(t *testing.T) {
+	x := m{qrReceivedAt: time.Now()}
+	out := stripAnsi(x.renderLinkPanel(45))
+	lines := strings.Split(out, "\n")
+	blank := 0
+	for _, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			blank++
+			if blank > 4 {
+				t.Fatalf("found a gap of more than 4 blank lines on a tall panel (h=45): %v", lines)
+			}
+			continue
+		}
+		blank = 0
+	}
+}
+
 func TestRenderLinkPanelKeepsMinimumGapsWhenShort(t *testing.T) {
 	out := (m{}).renderLinkPanel(0)
 	if lipgloss.Height(out) < 20 {

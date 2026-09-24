@@ -37,9 +37,14 @@ func (x m) renderLinkPanel(height int) string {
 		subSt.Render("Private WhatsApp, right in your terminal"),
 	)
 	header := lipgloss.JoinHorizontal(lipgloss.Center, renderZapBolt(x.shineFrame), "   ", mark)
+	headerLines := append(strings.Split(header, "\n"),
+		railSt.Render(strings.Repeat("─", linkPanelW)),
+		"",
+		lipgloss.PlaceHorizontal(linkPanelW, lipgloss.Center, textSt.Bold(true).Render("Ready to link your device?")),
+	)
 
 	headline := []string{
-		brandSt.Render("") + " " + textSt.Bold(true).Render("Here's how to link your phone"),
+		brandSt.Render("\U000F02FD") + " " + textSt.Bold(true).Render("Scan the QR with Your Phone"),
 		subSt.Render("Don't worry, your data stays on your device."),
 	}
 
@@ -56,29 +61,38 @@ func (x m) renderLinkPanel(height int) string {
 	if pulse > 1 {
 		pulse = 2 - pulse
 	}
-	var stepLines []string
-	for i, s := range steps {
-		chipBg := brand
-		titleSt := textSt.Bold(true)
-		title := titleSt.Render(s.title)
-		last := i == len(steps)-1
-		if last {
-			chipBg = lerpColor(brand, "#FFFFFF", 0.35*pulse)
-			title = brandSt.Bold(true).Render(s.title)
+	// buildSteps repeats the connector line between steps stretch times, so
+	// leftover height can expand the timeline itself instead of piling up
+	// as blank gaps elsewhere.
+	buildSteps := func(stretch int) []string {
+		var lines []string
+		for i, s := range steps {
+			chipBg := brand
+			titleSt := textSt.Bold(true)
+			title := titleSt.Render(s.title)
+			last := i == len(steps)-1
+			if last {
+				chipBg = lerpColor(brand, "#FFFFFF", 0.35*pulse)
+				title = brandSt.Bold(true).Render(s.title)
+			}
+			chip := lipgloss.NewStyle().Foreground(qrDark).Background(chipBg).Bold(true).Render(fmt.Sprintf(" %d ", i+1))
+			railGlyph := " │ "
+			if last {
+				railGlyph = "   "
+			}
+			lines = append(lines,
+				chip+"  "+title,
+				railSt.Render(railGlyph)+"  "+subSt.Render(s.desc),
+			)
+			if !last {
+				for range stretch {
+					lines = append(lines, railSt.Render(railGlyph))
+				}
+			}
 		}
-		chip := lipgloss.NewStyle().Foreground(qrDark).Background(chipBg).Bold(true).Render(fmt.Sprintf(" %d ", i+1))
-		railGlyph := " │ "
-		if last {
-			railGlyph = "   "
-		}
-		stepLines = append(stepLines,
-			chip+"  "+title,
-			railSt.Render(railGlyph)+"  "+subSt.Render(s.desc),
-		)
-		if !last {
-			stepLines = append(stepLines, railSt.Render(railGlyph))
-		}
+		return lines
 	}
+	stepLines := buildSteps(1)
 
 	// Countdown: a slim bar that drains in half-cell steps and warms from
 	// brand to amber to red, above a live status line.
@@ -125,14 +139,33 @@ func (x m) renderLinkPanel(height int) string {
 	}
 
 	// Spread the sections so the header sits on the QR box's top edge and
-	// the footer on its bottom edge.
-	blocks := [][]string{strings.Split(header, "\n"), headline, stepLines, timer, footer}
-	fixed := 0
-	for _, b := range blocks {
-		fixed += len(b)
-	}
+	// the footer on its bottom edge. Gaps between sections are capped so
+	// leftover height on a tall terminal doesn't pile up as dead space
+	// between unrelated blocks - past the cap, extra room instead stretches
+	// the step timeline's own connector lines, which reads as an
+	// intentional, evenly-paced list rather than empty gaps.
+	const maxGap = 3
+	const maxStretch = 6
+	blocks := [][]string{headerLines, headline, stepLines, timer, footer}
 	gaps := len(blocks) - 1
-	extra := max(gaps, height-fixed)
+	sum := func() int {
+		n := 0
+		for _, b := range blocks {
+			n += len(b)
+		}
+		return n
+	}
+	extra := max(gaps, height-sum())
+	// Grow the timeline's connector lines to soak up leftover height instead
+	// of it piling into a handful of blank gaps - but only up to maxStretch,
+	// so a very tall terminal doesn't turn the timeline itself into a wall
+	// of blank connector lines. Past that, the final loop below falls back
+	// to plain even gaps; since it never clamps, the total always still
+	// adds up to exactly height.
+	for stretch := 2; stretch <= maxStretch && extra/gaps > maxGap; stretch++ {
+		blocks[2] = buildSteps(stretch)
+		extra = max(gaps, height-sum())
+	}
 	var out []string
 	for i, b := range blocks {
 		if i > 0 {
