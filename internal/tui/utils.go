@@ -178,6 +178,7 @@ func hasVisibleText(s string) bool {
 func sanitizeIncomingText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
+	s = forceEmojiPresentation(s)
 	if !strings.ContainsFunc(s, unicode.IsControl) {
 		return s
 	}
@@ -337,14 +338,87 @@ func countEmojiHeuristic(s string) int {
 	return count
 }
 
-func runeDisplayWidth(s string) int {
-	extra := 0
-	for _, r := range s {
-		if r >= 0x1F300 {
-			extra++
+// isEmojiRune reports whether r is a wide (double-column) emoji codepoint
+// on its own (no trailing modifier needed).
+// Deliberately excludes the 0x2600-0x27BF dingbat block: this app uses
+// glyphs from that block (✦, ✓, etc.) as single-width UI chrome, not
+// double-width emoji, so widening them misaligns receipt ticks/icons.
+func isEmojiRune(r rune) bool {
+	return r >= 0x1F300 && r <= 0x1FAFF
+}
+
+// isEmojiBase reports whether r can be the base of an emoji modifier
+// sequence — either a standard emoji codepoint or a dingbat/symbol
+// (0x2600-0x27BF) that only turns into a wide emoji glyph when followed
+// by a skin-tone modifier or variation selector-16.
+func isEmojiBase(r rune) bool {
+	return isEmojiRune(r) || (r >= 0x2600 && r <= 0x27BF)
+}
+
+func isSkinTone(r rune) bool {
+	return r >= 0x1F3FB && r <= 0x1F3FF
+}
+
+// forceEmojiPresentation inserts VS16 (U+FE0F) between a text-default
+// symbol (0x2600-0x27BF, e.g. ✌) and a following skin-tone modifier.
+// Without it lipgloss/bubbletea measure "✌🏻" as 1 column while Windows
+// Terminal draws it 2 wide, so the row overflows the pane, the right
+// border is pushed off and the spill wraps into a blank row. With VS16
+// both sides agree on 2 columns.
+func forceEmojiPresentation(s string) string {
+	if !strings.ContainsFunc(s, isSkinTone) {
+		return s
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	b.Grow(len(s) + 3)
+	for i, r := range rs {
+		b.WriteRune(r)
+		if r >= 0x2600 && r <= 0x27BF && i+1 < len(rs) && isSkinTone(rs[i+1]) {
+			b.WriteRune(0xFE0F)
 		}
 	}
-	return len([]rune(s)) + extra
+	return b.String()
+}
+
+// nextGlyphWidth returns the display width of the glyph starting at r[i]
+// and how many runes it consumes: an emoji base plus an optional VS16 and
+// an optional skin-tone modifier form one 2-column glyph. Callers must
+// advance i by the returned count so such a glyph is never split.
+func nextGlyphWidth(r []rune, i int) (width, consumed int) {
+	if isEmojiBase(r[i]) {
+		j := i + 1
+		if j < len(r) && r[j] == 0xFE0F {
+			j++
+		}
+		if j < len(r) && isSkinTone(r[j]) {
+			j++
+		}
+		if j > i+1 {
+			return 2, j - i
+		}
+	}
+	if isEmojiRune(r[i]) {
+		return 2, 1
+	}
+	return 1, 1
+}
+
+// runeDisplayWidth returns the terminal display width of s. Plain
+// digits/letters/punctuation take the cheap rune-count path. A base emoji
+// glyph followed by a skin-tone modifier or variation selector (e.g.
+// "✌"+"🏻") is measured as a single 2-column glyph, matching how Windows
+// Terminal renders the fused sequence, rather than counting each
+// codepoint's width separately.
+func runeDisplayWidth(s string) int {
+	rs := []rune(s)
+	width := 0
+	for i := 0; i < len(rs); {
+		cw, consumed := nextGlyphWidth(rs, i)
+		width += cw
+		i += consumed
+	}
+	return width
 }
 
 func wrapText(s string, width int) string {
@@ -363,14 +437,15 @@ func wrapText(s string, width int) string {
 		var out []string
 		start := 0
 		cur := 0
-		for i := range r {
-			cw := runeDisplayWidth(string(r[i : i+1]))
+		for i := 0; i < len(r); {
+			cw, consumed := nextGlyphWidth(r, i)
 			if cur+cw > width && i > start {
 				out = append(out, string(r[start:i]))
 				start = i
 				cur = 0
 			}
 			cur += cw
+			i += consumed
 		}
 		if start < len(r) {
 			out = append(out, string(r[start:]))
@@ -462,14 +537,15 @@ func wrapTextWithPrefix(s string, width, prefixWidth int) string {
 		var out []string
 		start := 0
 		cur := 0
-		for i := range r {
-			cw := runeDisplayWidth(string(r[i : i+1]))
+		for i := 0; i < len(r); {
+			cw, consumed := nextGlyphWidth(r, i)
 			if cur+cw > lineWidth && i > start {
 				out = append(out, string(r[start:i]))
 				start = i
 				cur = 0
 			}
 			cur += cw
+			i += consumed
 		}
 		if start < len(r) {
 			out = append(out, string(r[start:]))

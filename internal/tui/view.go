@@ -1725,15 +1725,17 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 
 	for _, match := range matches {
 		// Process text segment before this ANSI sequence
-		textSeg := s[lastIdx:match[0]]
-		for _, r := range textSeg {
-			rw := runeDisplayWidth(string(r))
+		textSeg := []rune(s[lastIdx:match[0]])
+		for i := 0; i < len(textSeg); {
+			rw, consumed := nextGlyphWidth(textSeg, i)
+			glyph := string(textSeg[i : i+consumed])
 			if currentW+rw <= targetW {
-				sbPrefix.WriteRune(r)
+				sbPrefix.WriteString(glyph)
 				currentW += rw
 			} else {
-				sbSuffix.WriteRune(r)
+				sbSuffix.WriteString(glyph)
 			}
+			i += consumed
 		}
 
 		esc := s[match[0]:match[1]]
@@ -1751,15 +1753,17 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 		lastIdx = match[1]
 	}
 
-	textSeg := s[lastIdx:]
-	for _, r := range textSeg {
-		rw := runeDisplayWidth(string(r))
+	tailSeg := []rune(s[lastIdx:])
+	for i := 0; i < len(tailSeg); {
+		rw, consumed := nextGlyphWidth(tailSeg, i)
+		glyph := string(tailSeg[i : i+consumed])
 		if currentW+rw <= targetW {
-			sbPrefix.WriteRune(r)
+			sbPrefix.WriteString(glyph)
 			currentW += rw
 		} else {
-			sbSuffix.WriteRune(r)
+			sbSuffix.WriteString(glyph)
 		}
+		i += consumed
 	}
 
 	prefix := sbPrefix.String()
@@ -2876,13 +2880,15 @@ func padRight(s string, n int) string {
 	if w > n {
 		var b strings.Builder
 		used := 0
-		for _, r := range s {
-			rw := runeDisplayWidth(string(r))
+		rs := []rune(s)
+		for i := 0; i < len(rs); {
+			rw, consumed := nextGlyphWidth(rs, i)
 			if used+rw > n {
 				break
 			}
-			b.WriteRune(r)
+			b.WriteString(string(rs[i : i+consumed]))
 			used += rw
+			i += consumed
 		}
 		return b.String()
 	}

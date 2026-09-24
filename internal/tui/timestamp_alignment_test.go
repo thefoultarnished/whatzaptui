@@ -74,6 +74,52 @@ func TestTimestampNewLineAlignsLastCharWithReceiptTick(t *testing.T) {
 	}
 }
 
+// TestEmojiModifierMessageKeepsTimestampInline covers a message ending in
+// a dingbat-range emoji (e.g. victory hand) plus a skin-tone modifier. The
+// dingbat block (0x2600-0x27BF) is otherwise treated as single-width UI
+// chrome, so the base+modifier pair was previously measured as narrower
+// than it renders, tripping the "doesn't fit inline" fallback and pushing
+// the timestamp onto its own line below a near-empty row.
+func TestEmojiModifierMessageKeepsTimestampInline(t *testing.T) {
+	setTestTheme(t, TokyoNight)
+
+	saved := currentConfig.TimestampNewLine
+	t.Cleanup(func() { currentConfig.TimestampNewLine = saved })
+	currentConfig.TimestampNewLine = false
+
+	msg := wireMsg{
+		Message: map[string]any{"conversation": "Me too✌\U0001F3FB"},
+	}
+	msg.Key.ID = "m3"
+	msg.Key.RemoteJID = "15551230001@s.whatsapp.net"
+	msg.Key.FromMe = true
+	msg.MessageTimestamp = 1710000000
+	msg.ReceiptStatus = "read"
+
+	model := m{
+		active: msg.Key.RemoteJID,
+		msgs:   map[string][]wireMsg{msg.Key.RemoteJID: {msg}},
+	}
+
+	for _, w := range []int{40, 60, 80, 100} {
+		rendered := model.renderMain(w, 10)
+		visible := ansiStripRe.ReplaceAllString(rendered, "")
+		var bodyLine string
+		for _, ln := range strings.Split(visible, "\n") {
+			if strings.Contains(ln, "Me too") {
+				bodyLine = ln
+				break
+			}
+		}
+		if bodyLine == "" {
+			t.Fatalf("width %d: could not find message line in:\n%s", w, visible)
+		}
+		if !strings.Contains(bodyLine, "✓✓") {
+			t.Fatalf("width %d: timestamp/receipt not inline with message text, got gap line instead: %q", w, bodyLine)
+		}
+	}
+}
+
 func TestMediaMessageTimestampAlignment(t *testing.T) {
 	setTestTheme(t, TokyoNight)
 
