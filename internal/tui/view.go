@@ -133,22 +133,33 @@ func (x m) renderStartupView(frameW int) string {
 	}
 	if x.status == "qr" {
 		if x.qrRaw != "" {
-			hint = accentStyle.Copy().Bold(false).Render("WhatsApp > Linked Devices > Link a Device")
-			waiting := logoStyle.Render(spinnerFrames[x.spinnerFrame] + " waiting for scan")
-			qrMaxW := min(max(12, innerW-6), 56)
-			qrMaxH := min(max(8, innerH-6), 28)
-			qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
-			if qrBody == "" {
-				qrBody = x.qrRaw
-			}
-			body := lipgloss.JoinVertical(
-				lipgloss.Center,
-				waiting,
-				"",
-				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBody),
-				"",
-				hint,
-			)
+		heading := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("Scan to Connect")
+		waiting := logoStyle.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)] + " waiting for scan")
+		qrMaxW := min(max(12, innerW-6), 56)
+		qrMaxH := min(max(8, innerH-6), 28)
+		qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
+		if qrBody == "" {
+			qrBody = x.qrRaw
+		}
+		qrBoxed := lipgloss.NewStyle().
+			Background(qrDark).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(brand).
+			BorderBackground(lipgloss.Color(currentTheme.SidebarActiveBg)).
+			Render(qrBody)
+		steps := mutedStyle.Render("1. Open WhatsApp") + "  " +
+			mutedStyle.Render("2. ⋮ › Linked Devices") + "  " +
+			mutedStyle.Render("3. Link a Device")
+		body := lipgloss.JoinVertical(
+			lipgloss.Center,
+			heading,
+			waiting,
+			"",
+			lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
+			"",
+			lipgloss.PlaceHorizontal(innerW, lipgloss.Center, steps),
+		)
 			return renderStatusBox(body, innerW, innerH, outerW, outerH)
 		}
 		statusBody = "Generating QR..."
