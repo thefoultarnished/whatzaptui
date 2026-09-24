@@ -40,7 +40,7 @@ func (x m) renderLinkPanel(height int) string {
 	headerLines := append(strings.Split(header, "\n"),
 		railSt.Render(strings.Repeat("─", linkPanelW)),
 		"",
-		lipgloss.PlaceHorizontal(linkPanelW, lipgloss.Center, textSt.Bold(true).Render("Ready to link your device?")),
+		lipgloss.PlaceHorizontal(linkPanelW, lipgloss.Center, brandSt.Bold(true).Italic(true).Render("Ready to link your device?")),
 	)
 
 	headline := []string{
@@ -57,25 +57,15 @@ func (x m) renderLinkPanel(height int) string {
 		{"Tap Link a device", "Confirm with your PIN or biometrics"},
 		{"Point your camera at the QR", "Hold steady until it links"},
 	}
-	pulse := float64(x.shineFrame%16) / 8
-	if pulse > 1 {
-		pulse = 2 - pulse
-	}
 	// buildSteps repeats the connector line between steps stretch times, so
 	// leftover height can expand the timeline itself instead of piling up
 	// as blank gaps elsewhere.
 	buildSteps := func(stretch int) []string {
 		var lines []string
 		for i, s := range steps {
-			chipBg := brand
-			titleSt := textSt.Bold(true)
-			title := titleSt.Render(s.title)
+			title := textSt.Bold(true).Render(s.title)
 			last := i == len(steps)-1
-			if last {
-				chipBg = lerpColor(brand, "#FFFFFF", 0.35*pulse)
-				title = brandSt.Bold(true).Render(s.title)
-			}
-			chip := lipgloss.NewStyle().Foreground(qrDark).Background(chipBg).Bold(true).Render(fmt.Sprintf(" %d ", i+1))
+			chip := lipgloss.NewStyle().Foreground(qrDark).Background(brand).Bold(true).Render(fmt.Sprintf(" %d ", i+1))
 			railGlyph := " │ "
 			if last {
 				railGlyph = "   "
