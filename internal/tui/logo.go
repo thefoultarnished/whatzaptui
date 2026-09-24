@@ -121,7 +121,8 @@ func renderZapBolt(frame int) string {
 }
 
 // renderPixelWordmark draws the "WhatZap" wordmark in a blocky pixel font,
-// indigo "What" bridging into teal/green "Zap".
+// using the active theme's text color for "What" and a brand-to-accent gradient
+// across the letters of "Zap".
 //
 // This is the app's one wordmark: every screen that shows the WhatZap name
 // as a logo (not as plain text) calls this function, so a change here shows
@@ -170,19 +171,20 @@ func renderPixelWordmark() string {
 		"▀   ",
 	}
 
-	whatColors := []lipgloss.Color{"#a5b4fc", "#818cf8", "#818cf8", "#6366f1"}
-	zapColors := []lipgloss.Color{"#38bdf8", "#00f5d4", "#25d366"}
-
+	whatSt := lipgloss.NewStyle().Foreground(text)
+	zSt := lipgloss.NewStyle().Foreground(lerpColor(brand, accent, 0.0))
+	aSt := lipgloss.NewStyle().Foreground(lerpColor(brand, accent, 0.5))
+	pSt := lipgloss.NewStyle().Foreground(lerpColor(brand, accent, 1.0))
 	var rows []string
 	for r := range 4 {
 		segs := []string{
-			lipgloss.NewStyle().Foreground(whatColors[0]).Render(wGrid[r]),
-			lipgloss.NewStyle().Foreground(whatColors[1]).Render(hGrid[r]),
-			lipgloss.NewStyle().Foreground(whatColors[2]).Render(a1Grid[r]),
-			lipgloss.NewStyle().Foreground(whatColors[3]).Render(tGrid[r]),
-			lipgloss.NewStyle().Foreground(zapColors[0]).Render(zGrid[r]),
-			lipgloss.NewStyle().Foreground(zapColors[1]).Render(a2Grid[r]),
-			lipgloss.NewStyle().Foreground(zapColors[2]).Render(pGrid[r]),
+			whatSt.Render(wGrid[r]),
+			whatSt.Render(hGrid[r]),
+			whatSt.Render(a1Grid[r]),
+			whatSt.Render(tGrid[r]),
+			zSt.Render(zGrid[r]),
+			aSt.Render(a2Grid[r]),
+			pSt.Render(pGrid[r]),
 		}
 		rows = append(rows, strings.Join(segs, " "))
 	}
