@@ -376,7 +376,7 @@ func TestRenderStartupViewStages(t *testing.T) {
 				t.Fatalf("borderless=%v, status=%s: empty startup view", borderless, status)
 			}
 			if status == "qr" {
-				if !strings.Contains(out, "Link a Device") {
+				if !strings.Contains(out, "Link a device") {
 					t.Fatalf("borderless=%v, status=%s: missing QR link hint: %q", borderless, status, out)
 				}
 			} else {

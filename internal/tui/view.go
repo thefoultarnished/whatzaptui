@@ -119,7 +119,7 @@ func (x m) renderStartupView(frameW int) string {
 	outerH := x.h
 	innerW, innerH := outerW, outerH
 	statusBody := x.status
-	logo := renderZapBolt(innerH < 26, x.shineFrame)
+	logo := renderZapBolt(x.shineFrame)
 	title := logoStyle.Render("WhatZap")
 	subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
 	hint := mutedStyle.Render("Keep this window open  •  graphics: " + x.gfxName())
@@ -139,149 +139,21 @@ func (x m) renderStartupView(frameW int) string {
 		if qrBody == "" {
 			qrBody = x.qrRaw
 		}
-		cardW := 58
-
-		// --- Top Bar (App Branding) ---
-		topTitle := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("WHATZAP")
-		topDiv := lipgloss.NewStyle().Foreground(muted).Render("│")
-		topDesc := lipgloss.NewStyle().Foreground(text).Render("Terminal WhatsApp Client")
-		topVer := lipgloss.NewStyle().Foreground(muted).Render("v0.1.0")
-
-		leftPart := topTitle + "  " + topDiv + "  " + topDesc
-		rightPart := topVer
-		topGap := max(1, cardW-lipgloss.Width(leftPart)-lipgloss.Width(rightPart)-4)
-		topContent := leftPart + strings.Repeat(" ", topGap) + rightPart
-
-		topBar := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(brand).
-			Background(qrDark).
-			Padding(0, 1).
-			Width(cardW).
-			Render(topContent)
-
-		// --- Main Instructions Card ---
-		hTitle := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("Scan to Connect ")
-		hRuleLen := max(2, cardW-lipgloss.Width(hTitle)-6)
-		hRule := lipgloss.NewStyle().Foreground(brand).Render(strings.Repeat("─", hRuleLen))
-		headerLine := hTitle + hRule
-		subtitle := lipgloss.NewStyle().Foreground(muted).Render("Link WhatsApp with your phone to get started.")
-
-		numBox := func(num string) (top, mid, bot string) {
-			st := lipgloss.NewStyle().Foreground(brand)
-			numSt := lipgloss.NewStyle().Foreground(brand).Bold(true)
-			top = st.Render("┌───┐")
-			mid = st.Render("│ ") + numSt.Render(num) + st.Render(" │")
-			bot = st.Render("└───┘")
-			return
-		}
-
-		type qrStep struct {
-			title string
-			desc  string
-		}
-		steps := []qrStep{
-			{"Open WhatsApp", "Open WhatsApp on your mobile device"},
-			{"Go to Linked Devices", "Tap Menu (⋮) on Android or Settings on iOS"},
-			{"Tap Link a Device", "Confirm biometrics or PIN if prompted"},
-			{"Point camera at this screen", "Hold steady to scan the QR code"},
-		}
-
-		stepTitleSt := lipgloss.NewStyle().Foreground(text).Bold(true)
-		stepDescSt := mutedStyle
-		pipeSt := lipgloss.NewStyle().Foreground(brand)
-
-		var stepLines []string
-		for i, s := range steps {
-			nTop, nMid, nBot := numBox(fmt.Sprintf("%d", i+1))
-			stepLines = append(stepLines, nTop+"  "+stepTitleSt.Render(s.title))
-			stepLines = append(stepLines, nMid+"  "+stepDescSt.Render(s.desc))
-			if i < len(steps)-1 {
-				stepLines = append(stepLines, nBot)
-				stepLines = append(stepLines, pipeSt.Render("  │  "))
-			} else {
-				stepLines = append(stepLines, nBot)
-			}
-		}
-
-		divLine := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", cardW-6))
-
-		qrReceived := x.qrReceivedAt
-		if qrReceived.IsZero() {
-			qrReceived = time.Now()
-		}
-		const qrTTL = 60
-		elapsed := int(time.Since(qrReceived).Seconds())
-		remaining := max(0, qrTTL-elapsed)
-
-		barW := 12
-		filledW := min(barW, max(0, (remaining*barW)/qrTTL))
-		emptyW := barW - filledW
-
-		var barFilledColor lipgloss.Color = brand
-		if remaining <= 10 {
-			barFilledColor = amber
-		}
-		barFilled := lipgloss.NewStyle().Foreground(barFilledColor).Render(strings.Repeat("■", filledW))
-		barEmpty := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("░", emptyW))
-		bar := lipgloss.NewStyle().Foreground(muted).Render("[ ") + barFilled + barEmpty + lipgloss.NewStyle().Foreground(muted).Render(" ]")
-
-		timerIcon := lipgloss.NewStyle().Foreground(brand).Render("\U000F0450")
-		timerText := lipgloss.NewStyle().Foreground(text).Render(fmt.Sprintf(" QR code refreshes in %ds", remaining))
-		timerLeft := timerIcon + timerText
-		timerGap := max(1, cardW-lipgloss.Width(timerLeft)-lipgloss.Width(bar)-6)
-		timerRow := timerLeft + strings.Repeat(" ", timerGap) + bar
-
-		brailleIcon := logoStyle.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)])
-		shineBase := lipgloss.NewStyle().Foreground(brand)
-		shineHigh := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
-		shiningText := renderShine("waiting for scan...", shineBase, shineHigh, x.shineFrame)
-		statusContent := lipgloss.PlaceHorizontal(cardW-10, lipgloss.Center, brailleIcon+"  "+shiningText)
-
-		statusBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(brand).
-			Background(qrDark).
-			Padding(0, 1).
-			Width(cardW - 6).
-			Render(statusContent)
-
-		mainCardLines := []string{
-			headerLine,
-			subtitle,
-			"",
-		}
-		mainCardLines = append(mainCardLines, stepLines...)
-		mainCardLines = append(mainCardLines, "", divLine, "", timerRow, "", statusBox)
-
-		mainCard := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(brand).
-			Background(qrDark).
-			Padding(1, 2).
-			Width(cardW).
-			Render(strings.Join(mainCardLines, "\n"))
-
-		fullLeftCol := lipgloss.JoinVertical(lipgloss.Left, topBar, mainCard)
 		qrBoxed := renderViewfinder(qrBody, 6, 3, brand, qrDark)
+		qrW := lipgloss.Width(qrBoxed)
 
 		var body string
-		leftW := lipgloss.Width(fullLeftCol)
-		qrW := lipgloss.Width(qrBoxed)
-		if innerW >= leftW+qrW+4 {
-			spacerW := min(8, innerW-(leftW+qrW)-2)
-			if spacerW < 2 {
-				spacerW = 2
-			}
-			spacer := strings.Repeat(" ", spacerW)
-			row := lipgloss.JoinHorizontal(lipgloss.Center, fullLeftCol, spacer, qrBoxed)
+		if innerW >= linkPanelW+qrW+4 {
+			spacerW := max(2, min(8, innerW-(linkPanelW+qrW)-2))
+			panel := x.renderLinkPanel(lipgloss.Height(qrBoxed))
+			row := lipgloss.JoinHorizontal(lipgloss.Center, panel, strings.Repeat(" ", spacerW), qrBoxed)
 			body = lipgloss.PlaceHorizontal(innerW, lipgloss.Center, row)
 		} else {
 			body = lipgloss.JoinVertical(
 				lipgloss.Center,
 				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
 				"",
-				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, fullLeftCol),
+				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, x.renderLinkPanel(0)),
 			)
 		}
 		return renderStatusBox(body, innerW, innerH, outerW, outerH)
@@ -552,250 +424,6 @@ func (x m) renderSearchOverlay(frame string, outerW, outerH int) string {
 	return lipgloss.Place(outerW+2, outerH+2, lipgloss.Center, lipgloss.Center, popup, lipgloss.WithWhitespaceChars(" "))
 }
 
-func renderPiLogo() string {
-	c1 := lipgloss.Color("#fe5fd7") // Magenta
-	c2 := lipgloss.Color("#d65ed6") // Orchid
-	c3 := lipgloss.Color("#ad60d6") // Purple
-	c4 := lipgloss.Color("#875ffe") // Indigo
-	c5 := lipgloss.Color("#5e86fc") // Blue
-	c6 := lipgloss.Color("#5eaed7") // Cyan
-
-	s1 := lipgloss.NewStyle().Foreground(c1)
-	s2 := lipgloss.NewStyle().Foreground(c2)
-	s3 := lipgloss.NewStyle().Foreground(c3)
-	s4 := lipgloss.NewStyle().Foreground(c4)
-	s5 := lipgloss.NewStyle().Foreground(c5)
-	s6 := lipgloss.NewStyle().Foreground(c6)
-
-	const block = "█"
-	const dither = "▒"
-
-	r0 := s1.Render(block+block) + s2.Render(block+block+block+block) + s3.Render(block+block+block+block) + s4.Render(block+block)
-	r1 := "   " + s3.Render(block+block) + "  " + s4.Render(block+block) + "   "
-	r2 := "   " + s3.Render(block) + s4.Render(block) + "  " + s4.Render(block) + s5.Render(block) + "   "
-	r3 := "   " + s4.Render(dither+dither) + "  " + s5.Render(block+block) + "   "
-	r4 := "       " + s6.Render(block+block) + "   "
-
-	return r0 + "\n" + r1 + "\n" + r2 + "\n" + r3 + "\n" + r4
-}
-func renderZapBolt(compact bool, frame ...int) string {
-	palette := []lipgloss.Color{
-		"#fef08a", // spark yellow
-		"#fde047", // bright yellow
-		"#facc15", // gold yellow
-		"#eab308", // golden amber
-		"#f59e0b", // warm amber
-		"#fb923c", // electric orange
-		"#f97316", // deep orange
-		"#ea580c", // fiery orange-red
-		"#ef4444", // bright red
-		"#dc2626", // crimson red
-		"#b91c1c", // deep ruby red
-	}
-	pixels := []string{
-		"        #####",
-		"   ##  ######",
-		"   #   ##### ",
-		"     ######  ",
-		"     #####   ",
-		"    #####    ",
-		"  #######  # ",
-		"   #####  #  ",
-		"  #####  #   ",
-		" ############",
-		" ########### ",
-		"###########  ",
-		"      ####   ",
-		"     ####    ",
-		"  #  ####    ",
-		"   #####     ",
-		"    ###      ",
-		"   ###       ",
-		"   ##        ",
-		"   ##        ",
-		"  #          ",
-		"  #          ",
-	}
-
-	f := 0
-	if len(frame) > 0 {
-		f = frame[0]
-	}
-	f = max(0, f)
-	dotMap := [4][2]rune{
-		{0x01, 0x08},
-		{0x02, 0x10},
-		{0x04, 0x20},
-		{0x40, 0x80},
-	}
-
-	numBrailleRows := (len(pixels) + 3) / 4
-	const numBrailleCols = 7
-	var lines []string
-
-	for br := range numBrailleRows {
-		rBase := br * 4
-		var sb strings.Builder
-		prevIdx := -1
-
-		for bc := range numBrailleCols {
-			cBase := bc * 2
-			var mask rune
-			var activeSum, activeCount int
-
-			for rOff := range 4 {
-				r := rBase + rOff
-				if r >= len(pixels) {
-					continue
-				}
-				row := pixels[r]
-				for cOff := range 2 {
-					c := cBase + cOff
-					if c < len(row) && row[c] == '#' {
-						mask |= dotMap[rOff][cOff]
-						activeSum += r
-						activeCount++
-					}
-				}
-			}
-
-			if mask == 0 {
-				sb.WriteRune(' ')
-			} else {
-				div := activeCount * (len(pixels) - 1)
-				baseIdx := min(len(palette)-1, (activeSum*(len(palette)-1)+div/2)/div)
-				idx := baseIdx
-				if f > 0 {
-					tick := uint32((f-1)/3 + 1)
-					h := uint32(br+1)*31337 ^ uint32(bc+1)*1103515245 ^ (tick * 1337)
-					h = (h ^ (h >> 13)) * 1274126177
-					h = h ^ (h >> 16)
-
-					bands := []int{0, 1, 2, 4, 5, 6, 8, 9, 10}
-					bIdx := int(h % uint32(len(bands)))
-					idx = bands[bIdx]
-					if prevIdx >= 0 && idx == prevIdx {
-						bIdx = (bIdx + 1) % len(bands)
-						idx = bands[bIdx]
-					}
-					prevIdx = idx
-				}
-				st := lipgloss.NewStyle().Foreground(palette[idx])
-				sb.WriteString(st.Render(string(0x2800 + mask)))
-			}
-		}
-		lines = append(lines, sb.String())
-	}
-	return strings.Join(lines, "\n")
-}
-func renderPixelWordmark() string {
-	wGrid := []string{
-		"▄ ▄ ▄",
-		"█ █ █",
-		"█▄█▄█",
-		"     ",
-	}
-	hGrid := []string{
-		"█▄▄▄",
-		"█  █",
-		"█  █",
-		"    ",
-	}
-	a1Grid := []string{
-		"▄▄▄▄",
-		"▄▄▄█",
-		"█▄▄█",
-		"    ",
-	}
-	tGrid := []string{
-		"▄█▄",
-		" █ ",
-		" █▄",
-		"   ",
-	}
-	zGrid := []string{
-		"▄▄▄▄",
-		" ▄▄█",
-		"█▄▄▄",
-		"    ",
-	}
-	a2Grid := []string{
-		"▄▄▄▄",
-		"▄▄▄█",
-		"█▄▄█",
-		"    ",
-	}
-	pGrid := []string{
-		"▄▄▄▄",
-		"█  █",
-		"█▄▄█",
-		"▀   ",
-	}
-
-	// which row indices get the gray shadow peeking through gaps
-	shadowRows := map[int]bool{
-		1: true,
-		2: true,
-	}
-
-	addShadow := func(grid []string) []string {
-		result := make([]string, len(grid))
-		for row, line := range grid {
-			if !shadowRows[row] {
-				result[row] = line
-				continue
-			}
-			merged := make([]rune, 0, len(line))
-			for _, ch := range line {
-				if ch == ' ' {
-					merged = append(merged, '░')
-				} else {
-					merged = append(merged, ch)
-				}
-			}
-			result[row] = string(merged)
-		}
-		return result
-	}
-
-	letters := [][]string{
-		addShadow(wGrid),
-		addShadow(hGrid),
-		addShadow(a1Grid),
-		addShadow(tGrid),
-		addShadow(zGrid),
-		addShadow(a2Grid),
-		addShadow(pGrid),
-	}
-
-	var out strings.Builder
-	for row := 0; row < 4; row++ {
-		for _, letter := range letters {
-			out.WriteString(letter[row])
-			out.WriteString(" ")
-		}
-		out.WriteString("\n")
-	}
-
-	whatColors := []lipgloss.Color{"#a5b4fc", "#818cf8", "#818cf8", "#6366f1"}
-	zapColors := []lipgloss.Color{"#38bdf8", "#00f5d4", "#25d366"}
-
-	var rows []string
-	for r := range 4 {
-		segs := []string{
-			lipgloss.NewStyle().Foreground(whatColors[0]).Render(wGrid[r]),
-			lipgloss.NewStyle().Foreground(whatColors[1]).Render(hGrid[r]),
-			lipgloss.NewStyle().Foreground(whatColors[2]).Render(a1Grid[r]),
-			lipgloss.NewStyle().Foreground(whatColors[3]).Render(tGrid[r]),
-			lipgloss.NewStyle().Foreground(zapColors[0]).Render(zGrid[r]),
-			lipgloss.NewStyle().Foreground(zapColors[1]).Render(a2Grid[r]),
-			lipgloss.NewStyle().Foreground(zapColors[2]).Render(pGrid[r]),
-		}
-		rows = append(rows, strings.Join(segs, " "))
-	}
-	return strings.Join(rows, "\n")
-}
-
 func (x m) loadingPulse() string {
 	steps := []string{
 		"●○○",
@@ -1040,7 +668,7 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	centerH = max(1, centerH)
 
 	// 2. Logo, Title, Subtitle
-	logo := renderZapBolt(innerH < 26, x.shineFrame)
+	logo := renderZapBolt(x.shineFrame)
 	var title string
 	if centerH >= 18 {
 		title = renderPixelWordmark()
