@@ -133,9 +133,6 @@ func (x m) renderStartupView(frameW int) string {
 	}
 	if x.status == "qr" {
 		if x.qrRaw != "" {
-		heading := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("Scan to Connect")
-		waiting := logoStyle.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)] + " waiting for scan")
-		headerLine := heading + "  " + waiting
 		qrMaxW := min(max(12, innerW-6), 48)
 		qrMaxH := min(max(8, innerH-6), 24)
 		qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
@@ -144,23 +141,83 @@ func (x m) renderStartupView(frameW int) string {
 		}
 		qrBoxed := lipgloss.NewStyle().
 			Background(qrDark).
-			Padding(1, 2).
+			Padding(0, 1).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(brand).
 			BorderBackground(lipgloss.Color(currentTheme.SidebarActiveBg)).
 			Render(qrBody)
-		steps := mutedStyle.Render("1. Open WhatsApp") + "  " +
-			mutedStyle.Render("2. ⋮ › Linked Devices") + "  " +
-			mutedStyle.Render("3. Link a Device")
-		body := lipgloss.JoinVertical(
-			lipgloss.Center,
-			headerLine,
+
+		titleSt := lipgloss.NewStyle().Foreground(brand).Bold(true)
+		subSt := mutedStyle
+		spinSt := logoStyle
+		numSt := lipgloss.NewStyle().Foreground(brand).Bold(true)
+		stepTitleSt := lipgloss.NewStyle().Foreground(text).Bold(true)
+		stepDescSt := mutedStyle
+
+		qrReceived := x.qrReceivedAt
+		if qrReceived.IsZero() {
+			qrReceived = time.Now()
+		}
+		const qrTTL = 60
+		elapsed := int(time.Since(qrReceived).Seconds())
+		remaining := max(0, qrTTL-elapsed)
+
+		var timerLine string
+		if remaining <= 10 {
+			timerLine = lipgloss.NewStyle().Foreground(amber).Render(fmt.Sprintf("↻ QR code refreshes in %ds", remaining))
+		} else {
+			timerLine = mutedStyle.Render("↻ QR code refreshes in ") +
+				lipgloss.NewStyle().Foreground(accent).Bold(true).Render(fmt.Sprintf("%ds", remaining))
+		}
+
+		leftLines := []string{
+			titleSt.Render("Scan to Connect"),
+			subSt.Render("Link WhatZap with your phone"),
+			spinSt.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)] + " waiting for scan..."),
 			"",
-			lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
+			numSt.Render("1. ") + stepTitleSt.Render("Open WhatsApp"),
+			"   " + stepDescSt.Render("Open WhatsApp on your mobile device"),
 			"",
-			lipgloss.PlaceHorizontal(innerW, lipgloss.Center, steps),
-		)
-			return renderStatusBox(body, innerW, innerH, outerW, outerH)
+			numSt.Render("2. ") + stepTitleSt.Render("Go to Linked Devices"),
+			"   " + stepDescSt.Render("Tap Menu (⋮) on Android or Settings (⚙) on iOS"),
+			"",
+			numSt.Render("3. ") + stepTitleSt.Render("Tap Link a Device"),
+			"   " + stepDescSt.Render("Confirm biometrics or PIN if prompted"),
+			"",
+			numSt.Render("4. ") + stepTitleSt.Render("Point camera at this screen"),
+			"   " + stepDescSt.Render("Hold steady to scan the QR code"),
+			"",
+			timerLine,
+		}
+		leftBlock := lipgloss.JoinVertical(lipgloss.Left, leftLines...)
+		leftBoxed := lipgloss.NewStyle().
+			Background(qrDark).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(brand).
+			BorderBackground(lipgloss.Color(currentTheme.SidebarActiveBg)).
+			Render(leftBlock)
+
+		var body string
+		leftW := lipgloss.Width(leftBoxed)
+		qrW := lipgloss.Width(qrBoxed)
+		if innerW >= leftW+qrW+6 {
+			spacerW := min(16, innerW-(leftW+qrW)-4)
+			if spacerW < 6 {
+				spacerW = 6
+			}
+			spacer := strings.Repeat(" ", spacerW)
+			row := lipgloss.JoinHorizontal(lipgloss.Center, leftBoxed, spacer, qrBoxed)
+			body = lipgloss.PlaceHorizontal(innerW, lipgloss.Center, row)
+		} else {
+			body = lipgloss.JoinVertical(
+				lipgloss.Center,
+				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
+				"",
+				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, leftBoxed),
+			)
+		}
+		return renderStatusBox(body, innerW, innerH, outerW, outerH)
 		}
 		statusBody = "Generating QR..."
 		hint = mutedStyle.Render("Preparing login QR")

@@ -224,6 +224,7 @@ type m struct {
 	w, h         int
 	status, err  string
 	qrRaw        string
+	qrReceivedAt time.Time
 	sessionReady bool
 	demoMode     bool
 	windowTitle  string
