@@ -128,8 +128,8 @@ var (
 	msgPaneStyle = lipgloss.NewStyle().Padding(0, 1)
 	dateSepStyle = lipgloss.NewStyle().Foreground(muted).Bold(true)
 
-	bColor = qrDark
-	wColor = qrLight
+	bColor = qrLight
+	wColor = qrDark
 	bb     = lipgloss.NewStyle().Foreground(bColor).Background(bColor).Render("▀")
 	bw     = lipgloss.NewStyle().Foreground(bColor).Background(wColor).Render("▀")
 	wb     = lipgloss.NewStyle().Foreground(wColor).Background(bColor).Render("▀")
@@ -213,8 +213,8 @@ func rehashStyles() {
 	msgPaneStyle = lipgloss.NewStyle().Padding(0, 1)
 	dateSepStyle = lipgloss.NewStyle().Foreground(muted).Bold(true)
 
-	bColor = qrDark
-	wColor = qrLight
+	bColor = qrLight
+	wColor = qrDark
 	bb = lipgloss.NewStyle().Foreground(bColor).Background(bColor).Render("▀")
 	bw = lipgloss.NewStyle().Foreground(bColor).Background(wColor).Render("▀")
 	wb = lipgloss.NewStyle().Foreground(wColor).Background(bColor).Render("▀")
