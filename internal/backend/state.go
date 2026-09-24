@@ -582,6 +582,39 @@ func (a *App) purgeOwnPushNameFromContacts() {
 	}
 }
 
+// purgeGroupSenderNames clears chat_permissions.name on group rows. Legacy
+// bug: group messages wrote the sender's push name into the group's row, and
+// the TUI prefers that name over the group subject. Runs once (marker in
+// fts_backfill_meta) so a later /rename of a group isn't wiped on every start.
+func (a *App) purgeGroupSenderNames() {
+	if a.db == nil {
+		return
+	}
+	if _, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		log.Printf("purgeGroupSenderNames: %v", err)
+		return
+	}
+	var done int
+	_ = a.db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'group_name_purge'`).Scan(&done)
+	if done == 1 {
+		return
+	}
+	res, err := a.db.Exec(`UPDATE chat_permissions SET name = ''
+		WHERE name != '' AND phone IN (
+			SELECT substr(id, 1, length(id) - 5) FROM chats WHERE id LIKE '%@g.us')`)
+	if err != nil {
+		log.Printf("purgeGroupSenderNames: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("purgeGroupSenderNames: cleared %d group row(s)", n)
+	}
+	if _, err := a.db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('group_name_purge', 1)
+		ON CONFLICT(key) DO UPDATE SET val = 1`); err != nil {
+		log.Printf("purgeGroupSenderNames marker: %v", err)
+	}
+}
+
 // backfillReceipt upgrades any FromMe message row that has no receipt state
 // to "delivered". History sync (and pre-fix inserts) leave FromMe rows with
 // an empty receipt, which the TUI renders as a single tick — looking the
@@ -633,6 +666,7 @@ func (a *App) loadState() {
 	// Defensive: clear any chat_permissions rows that have the local user's own
 	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
 	a.purgeOwnPushNameFromContacts()
+	a.purgeGroupSenderNames()
 	// Upgrade FromMe rows that have no receipt state (legacy: pre-fix history
 	// sync inserted them as empty receipt, which the TUI renders as a single
 	// tick). Idempotent.

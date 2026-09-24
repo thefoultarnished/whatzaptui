@@ -175,10 +175,16 @@ func hasVisibleText(s string) bool {
 // printable Unicode (emoji, ZWJ joiners, variation selectors, combining
 // marks, RTL text). Newlines are preserved; \r\n and lone \r are normalized
 // to \n.
+var halfwidthMarkReplacer = strings.NewReplacer("ﾟ", "°", "ﾞ", "\"")
+
 func sanitizeIncomingText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	s = forceEmojiPresentation(s)
+	// Halfwidth (han)dakuten: lipgloss counts them as 0 columns (they join
+	// the previous character) but Windows Terminal draws them 1 wide, so the
+	// row overflows. Swap in 1-column look-alikes.
+	s = halfwidthMarkReplacer.Replace(s)
 	if !strings.ContainsFunc(s, unicode.IsControl) {
 		return s
 	}
