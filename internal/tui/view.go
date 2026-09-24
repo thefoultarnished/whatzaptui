@@ -119,7 +119,7 @@ func (x m) renderStartupView(frameW int) string {
 	outerH := x.h
 	innerW, innerH := outerW, outerH
 	statusBody := x.status
-	logo := renderPiLogo()
+	logo := renderZapBolt(innerH < 26, x.shineFrame)
 	title := logoStyle.Render("WhatZap")
 	subtitle := mutedStyle.Render("Private WhatsApp in your terminal")
 	hint := mutedStyle.Render("Keep this window open  •  graphics: " + x.gfxName())
