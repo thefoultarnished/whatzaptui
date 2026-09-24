@@ -673,8 +673,8 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	if centerH >= 18 {
 		title = renderPixelWordmark()
 	} else {
-		titleWhat := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#818cf8")).Render("What")
-		titleZap := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00f5d4")).Render("Zap")
+		titleWhat := lipgloss.NewStyle().Bold(true).Foreground(text).Render("What")
+		titleZap := lipgloss.NewStyle().Bold(true).Foreground(brand).Render("Zap")
 		title = titleWhat + titleZap
 	}
 	// 2. Stage section dimensions. Keep this compact now that stages

@@ -430,42 +430,74 @@ func TestSplashHoldSkipsOnKeypress(t *testing.T) {
 // The pixel wordmark is Cyber neon: indigo "What", cyan "Zap", with the
 // accent bridging the two. Structure must stay identical to the old
 // single-colour-per-word render.
-func TestRenderPixelWordmarkCyberNeon(t *testing.T) {
+func TestRenderPixelWordmarkThemeDriven(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
-	mark := renderPixelWordmark()
-	plain := ansiStripRe.ReplaceAllString(mark, "")
-	got := strings.Split(plain, "\n")
-	want := []string{
-		"▄ ▄ ▄ █▄▄▄ ▄▄▄▄ ▄█▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄",
-		"█ █ █ █  █ ▄▄▄█  █   ▄▄█ ▄▄▄█ █  █",
-		"█▄█▄█ █  █ █▄▄█  █▄ █▄▄▄ █▄▄█ █▄▄█",
-		"                              ▀",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("wordmark rows = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if strings.TrimRight(got[i], " ") != want[i] {
-			t.Errorf("row %d = %q, want %q", i, strings.TrimRight(got[i], " "), want[i])
-		}
-		if n := len([]rune(got[i])); n != len([]rune(want[0])) {
-			t.Errorf("row %d width = %d runes, want %d (columns must stay aligned)", i, n, len([]rune(want[0])))
-		}
+	prefix := func(hex lipgloss.Color) string {
+		return strings.TrimSuffix(lipgloss.NewStyle().Foreground(hex).Render("#"), "#\x1b[0m")
 	}
 
-	// Every glyph of a letter must carry that letter's colour.
-	prefix := func(hex string) string {
-		return strings.TrimSuffix(lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("#"), "#\x1b[0m")
+	testThemes := []struct {
+		name  string
+		theme Theme
+	}{
+		{"TokyoNight", TokyoNight},
+		{"Monokai", Monokai},
+		{"Nord", Nord},
+		{"Ember", Ember},
 	}
-	for _, hex := range []string{"#a5b4fc", "#818cf8", "#6366f1", "#38bdf8", "#00f5d4", "#25d366"} {
-		if !strings.Contains(mark, prefix(hex)) {
-			t.Errorf("wordmark missing Cyber neon colour %s", hex)
+
+	for _, tt := range testThemes {
+		t.Run(tt.name, func(t *testing.T) {
+			setTestTheme(t, tt.theme)
+
+			mark := renderPixelWordmark()
+			plain := ansiStripRe.ReplaceAllString(mark, "")
+			got := strings.Split(plain, "\n")
+			want := []string{
+				"▄ ▄ ▄ █▄▄▄ ▄▄▄▄ ▄█▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄",
+				"█ █ █ █  █ ▄▄▄█  █   ▄▄█ ▄▄▄█ █  █",
+				"█▄█▄█ █  █ █▄▄█  █▄ █▄▄▄ █▄▄█ █▄▄█",
+				"                              ▀",
+			}
+			if len(got) != len(want) {
+				t.Fatalf("wordmark rows = %d, want %d", len(got), len(want))
+			}
+			for i := range want {
+				if strings.TrimRight(got[i], " ") != want[i] {
+					t.Errorf("row %d = %q, want %q", i, strings.TrimRight(got[i], " "), want[i])
+				}
+				if n := len([]rune(got[i])); n != len([]rune(want[0])) {
+					t.Errorf("row %d width = %d runes, want %d (columns must stay aligned)", i, n, len([]rune(want[0])))
+				}
+			}
+
+			// "What" must carry the theme's Text color
+			textColor := lipgloss.Color(tt.theme.Text)
+			if !strings.Contains(mark, prefix(textColor)) {
+				t.Errorf("%s: wordmark missing theme Text colour %s", tt.name, tt.theme.Text)
+			}
+
+			// "Zap" starts at Brand and ends at Accent
+			brandColor := lipgloss.Color(tt.theme.Brand)
+			accentColor := lipgloss.Color(tt.theme.Accent)
+			if !strings.Contains(mark, prefix(brandColor)) {
+				t.Errorf("%s: wordmark missing theme Brand colour %s", tt.name, tt.theme.Brand)
+			}
+			if !strings.Contains(mark, prefix(accentColor)) {
+				t.Errorf("%s: wordmark missing theme Accent colour %s", tt.name, tt.theme.Accent)
+			}
+		})
+	}
+
+	// Must no longer contain the old hardcoded Cyber neon colours
+	setTestTheme(t, Ember)
+	emberMark := renderPixelWordmark()
+	for _, oldHex := range []string{"#a5b4fc", "#818cf8", "#6366f1", "#00f5d4"} {
+		if strings.Contains(emberMark, prefix(lipgloss.Color(oldHex))) {
+			t.Errorf("wordmark still contains hardcoded color %s in Ember theme", oldHex)
 		}
-	}
-	if strings.Contains(mark, prefix("#94a3b8")) || strings.Contains(mark, prefix("#ffffff")) {
-		t.Errorf("wordmark still uses the old slate/white palette")
 	}
 }
