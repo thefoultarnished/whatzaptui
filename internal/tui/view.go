@@ -135,8 +135,9 @@ func (x m) renderStartupView(frameW int) string {
 		if x.qrRaw != "" {
 		heading := lipgloss.NewStyle().Foreground(brand).Bold(true).Render("Scan to Connect")
 		waiting := logoStyle.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)] + " waiting for scan")
-		qrMaxW := min(max(12, innerW-6), 56)
-		qrMaxH := min(max(8, innerH-6), 28)
+		headerLine := heading + "  " + waiting
+		qrMaxW := min(max(12, innerW-6), 48)
+		qrMaxH := min(max(8, innerH-6), 24)
 		qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
 		if qrBody == "" {
 			qrBody = x.qrRaw
@@ -153,8 +154,7 @@ func (x m) renderStartupView(frameW int) string {
 			mutedStyle.Render("3. Link a Device")
 		body := lipgloss.JoinVertical(
 			lipgloss.Center,
-			heading,
-			waiting,
+			headerLine,
 			"",
 			lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
 			"",

@@ -598,34 +598,19 @@ func renderQR(payload string, maxW, maxH int) string {
 	if err != nil {
 		return ""
 	}
+	qr.DisableBorder = true
 	bitmap := qr.Bitmap()
 	if len(bitmap) == 0 || len(bitmap[0]) == 0 {
 		return ""
 	}
 	rows := len(bitmap)
 	cols := len(bitmap[0])
-	downsample := 1
-	if maxW > 0 && cols > maxW {
-		downsample = (cols + maxW - 1) / maxW
-	}
-	if maxH > 0 {
-		vScale := (rows + 2*maxH - 1) / (2 * maxH)
-		if vScale > downsample {
-			downsample = vScale
-		}
-	}
-	virtualRows := rows
-	virtualCols := cols
-	lines := make([]string, 0, virtualRows/2+1)
-	for y := 0; y < virtualRows; y += 2 {
+	lines := make([]string, 0, (rows+1)/2)
+	for y := 0; y < rows; y += 2 {
 		var line strings.Builder
-		for x := 0; x < virtualCols; x++ {
-			srcX := x
-			top := bitmap[min(rows-1, y)][srcX]
-			bot := false
-			if y+1 < virtualRows {
-				bot = bitmap[min(rows-1, y+1)][srcX]
-			}
+		for x := 0; x < cols; x++ {
+			top := bitmap[y][x]
+			bot := y+1 < rows && bitmap[y+1][x]
 			switch {
 			case top && bot:
 				line.WriteString(bb)
