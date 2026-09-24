@@ -603,8 +603,8 @@ func renderQR(payload string, maxW, maxH int) string {
 	if len(bitmap) == 0 || len(bitmap[0]) == 0 {
 		return ""
 	}
-	rows := len(bitmap)
 	cols := len(bitmap[0])
+	rows := len(bitmap)
 	lines := make([]string, 0, (rows+1)/2)
 	for y := 0; y < rows; y += 2 {
 		var line strings.Builder

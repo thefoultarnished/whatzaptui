@@ -263,16 +263,7 @@ func (x m) renderStartupView(frameW int) string {
 			Render(strings.Join(mainCardLines, "\n"))
 
 		fullLeftCol := lipgloss.JoinVertical(lipgloss.Left, topBar, mainCard)
-		leftH := lipgloss.Height(fullLeftCol)
-
-		qrBoxed := lipgloss.NewStyle().
-			Background(qrDark).
-			Padding(1, 2).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(brand).
-			Height(leftH - 2).
-			AlignVertical(lipgloss.Center).
-			Render(qrBody)
+		qrBoxed := renderViewfinder(qrBody, 6, 3, brand, qrDark)
 
 		var body string
 		leftW := lipgloss.Width(fullLeftCol)
@@ -283,7 +274,7 @@ func (x m) renderStartupView(frameW int) string {
 				spacerW = 2
 			}
 			spacer := strings.Repeat(" ", spacerW)
-			row := lipgloss.JoinHorizontal(lipgloss.Top, fullLeftCol, spacer, qrBoxed)
+			row := lipgloss.JoinHorizontal(lipgloss.Center, fullLeftCol, spacer, qrBoxed)
 			body = lipgloss.PlaceHorizontal(innerW, lipgloss.Center, row)
 		} else {
 			body = lipgloss.JoinVertical(
@@ -398,6 +389,65 @@ func renderStatusBox(body string, innerW, innerH, outerW, outerH int) string {
 	content := lipgloss.Place(outerW, outerH, lipgloss.Center, lipgloss.Center, body)
 	return lipgloss.NewStyle().Width(outerW).Height(outerH).Background(background).Render(content)
 }
+func renderViewfinder(content string, cornerLen, armHeight int, frameColor, bgColor lipgloss.Color) string {
+	bSt := lipgloss.NewStyle().Foreground(frameColor).Bold(true).Background(bgColor)
+	bgSt := lipgloss.NewStyle().Background(bgColor)
+
+	lines := strings.Split(content, "\n")
+	contentH := len(lines)
+	contentW := 0
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > contentW {
+			contentW = w
+		}
+	}
+
+	// Brackets are one QR module thick (▀ = half a cell tall, █ = one cell
+	// wide) and every gap is one module: the lower half of the top row, one
+	// pad column per side, and at the bottom the blank lower half the QR's
+	// odd module count always leaves in its last row. The top vertical arm
+	// gets one row fewer because its corner cell already spans a full row.
+	const hPad = 1
+	const vPad = 0
+
+	totalW := contentW + 2*hPad + 2
+	innerW := totalW - 2
+	totalH := contentH + 2*vPad
+
+	midSpace := max(0, totalW-2*cornerLen)
+	topRow := bSt.Render("█"+strings.Repeat("▀", cornerLen-1)) + bgSt.Render(strings.Repeat(" ", midSpace)) + bSt.Render(strings.Repeat("▀", cornerLen-1)+"█")
+	botRow := bSt.Render(strings.Repeat("▀", cornerLen)) + bgSt.Render(strings.Repeat(" ", midSpace)) + bSt.Render(strings.Repeat("▀", cornerLen))
+
+	out := []string{topRow}
+
+	for y := 0; y < totalH; y++ {
+		var leftBorder, rightBorder string
+		if y < armHeight-1 || y >= totalH-armHeight {
+			leftBorder = bSt.Render("█")
+			rightBorder = bSt.Render("█")
+		} else {
+			leftBorder = bgSt.Render(" ")
+			rightBorder = bgSt.Render(" ")
+		}
+
+		rowContent := ""
+		contentIdx := y - vPad
+		if contentIdx >= 0 && contentIdx < contentH {
+			rowContent = lines[contentIdx]
+		}
+
+		rowW := lipgloss.Width(rowContent)
+		padL := max(0, (innerW-rowW)/2)
+		padR := max(0, innerW-rowW-padL)
+
+		rowStr := leftBorder + bgSt.Render(strings.Repeat(" ", padL)) + rowContent + bgSt.Render(strings.Repeat(" ", padR)) + rightBorder
+		out = append(out, rowStr)
+	}
+
+	out = append(out, botRow)
+	return strings.Join(out, "\n")
+}
+
 
 func connectFrameJunctions(framedBody string) string {
 	lines := strings.Split(framedBody, "\n")
