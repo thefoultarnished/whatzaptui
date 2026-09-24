@@ -179,6 +179,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return x, nextCursorBlink()
 	case spinnerTickMsg:
+		if x.status == "qr" && x.qrReceivedAt.IsZero() {
+			x.qrReceivedAt = time.Now()
+		}
 		x.spinnerFrame = (x.spinnerFrame + 1) % len(spinnerFrames)
 		x.shineFrame++
 		x.advanceSidebarMarquee()
