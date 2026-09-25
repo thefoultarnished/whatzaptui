@@ -133,6 +133,7 @@ func loadConfig() {
 		SendTypingIndicator:  true,
 		FlashTaskbar:         true,
 		NotificationsEnabled: true,
+		SplashStageSpeed:     "normal",
 	}
 	path := resolveConfigPath()
 	data, err := os.ReadFile(path)
@@ -142,6 +143,9 @@ func loadConfig() {
 		}
 	}
 	currentConfig.SoundProfile = normalizeSoundProfile(currentConfig.SoundProfile)
+	if currentConfig.SplashStageSpeed == "" {
+		currentConfig.SplashStageSpeed = "normal"
+	}
 	if currentConfig.PointerIcon != "" {
 		receivedMsgIcon = currentConfig.PointerIcon
 	}

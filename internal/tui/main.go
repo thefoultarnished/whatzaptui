@@ -92,7 +92,8 @@ func Run() {
 			pointerPicker:         picker{title: "Select Pointer Icon", items: buildPointerPickerItems()},
 			helpPicker:            picker{title: "Commands", items: buildHelpPickerItems()},
 			settingsPicker:        picker{title: "Settings", items: buildSettingsPickerItems()},
-			typingAnimationPicker: picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()},
+			typingAnimationPicker: picker{title: "Typing Style", items: buildTypingAnimationPickerItems()},
+			splashSpeedPicker:     picker{title: "Startup Speed", items: buildSplashSpeedPickerItems()},
 		}
 		if demoMode {
 			model.status = "Starting demo..."

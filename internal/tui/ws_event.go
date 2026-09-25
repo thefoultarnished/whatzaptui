@@ -42,8 +42,14 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 		x.qrRaw = qr
 		x.qrReceivedAt = time.Now()
 	case "ready":
+		wasQR := x.status == "qr"
 		x.sessionReady = true
 		x.qrRaw = ""
+		if wasQR {
+			x.status = "Connecting..."
+			x.bootAt = time.Now()
+			x.invalidate()
+		}
 		cmds = append(cmds,
 			getChats(x.reqCtx(), x.client, x.baseURL),
 			getContacts(x.reqCtx(), x.client, x.baseURL),
@@ -52,7 +58,15 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 		if splashHoldDuration > 0 {
 			cmds = append(cmds, tea.Tick(splashHoldDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }))
 		} else {
-			cmds = append(cmds, func() tea.Msg { return splashDoneMsg{} })
+			if cmd := x.maybeFinishSplash(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			hold := splashStageHoldDuration()
+			timeout := 4*hold + 2*time.Second
+			if hold <= 0 || x.bootAt.IsZero() {
+				timeout = 2500 * time.Millisecond
+			}
+			cmds = append(cmds, tea.Tick(timeout, func(time.Time) tea.Msg { return splashDoneMsg{} }))
 		}
 	case "chats:loaded":
 		cmds = append(cmds, getChats(x.reqCtx(), x.client, x.baseURL))

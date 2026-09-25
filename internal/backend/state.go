@@ -715,7 +715,7 @@ func (a *App) bootstrapFromStore() {
 	a.needsBootstrapSync = false
 	a.mu.Unlock()
 
-	a.broadcast(EventEnvelope{Type: "status", Payload: "Loading chats and contacts..."})
+	a.broadcast(EventEnvelope{Type: "status", Payload: "Syncing chats and contacts..."})
 	finish := a.actionLog.Timed("bootstrap", map[string]string{})
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
@@ -744,7 +744,7 @@ func (a *App) bootstrapFromStore() {
 		a.persistState()
 		a.broadcast(EventEnvelope{Type: "contacts:updated"})
 		a.broadcast(EventEnvelope{Type: "chats:loaded"})
-		a.broadcast(EventEnvelope{Type: "status", Payload: "Bootstrap complete"})
+		a.broadcast(EventEnvelope{Type: "status", Payload: "Sync complete"})
 	}
 	finish("ok", map[string]string{
 		"seeded":   intStr(seeded),
