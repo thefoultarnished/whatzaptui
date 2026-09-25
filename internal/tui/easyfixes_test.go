@@ -12,15 +12,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func TestDetectDirsHasNoHardcodedPath(t *testing.T) {
-	got := detectDirs()
-	if strings.Contains(strings.ToLower(got), "users/nav") {
-		t.Fatalf("detectDirs = %q, still contains hardcoded dev path", got)
-	}
-	if !isProjectRoot(got) {
-		t.Fatalf("detectDirs = %q, want project root", got)
-	}
-}
 
 func TestOpenWSChannelIsBuffered(t *testing.T) {
 	upgrader := websocket.Upgrader{}

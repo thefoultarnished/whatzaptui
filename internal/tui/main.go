@@ -32,7 +32,6 @@ func Run() {
 
 	applyThemeByName(currentConfig.ThemeName)
 
-	backendDir := detectDirs()
 	demoMode := demoEnabled()
 	for {
 		// Route OS Ctrl+C/SIGTERM through Bubble Tea so p.Run() always returns
@@ -46,7 +45,6 @@ func Run() {
 		model := m{
 			baseURL:               "http://127.0.0.1:8787",
 			wsURL:                 "ws://127.0.0.1:8787/ws",
-			backendDir:            backendDir,
 			apiToken:              apiToken,
 			client:                &http.Client{Timeout: 12 * time.Second},
 			apiCtx:                apiCtx,
@@ -170,36 +168,3 @@ func resolveSessionToken() (string, error) {
 	}
 	return token, nil
 }
-
-func detectDirs() string {
-	cwd, _ := os.Getwd()
-	cands := []string{
-		cwd,
-		filepath.Join(cwd, ".."),
-		filepath.Join(cwd, "..", ".."),
-	}
-	if override := strings.TrimSpace(os.Getenv("WHATZAP_DIR")); override != "" {
-		cands = append(cands, override, filepath.Join(override, "backend"))
-	}
-	if exe, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exe)
-		cands = append(cands, exeDir, filepath.Join(exeDir, ".."), filepath.Join(exeDir, "..", ".."))
-	}
-	for _, c := range cands {
-		abs, _ := filepath.Abs(c)
-		if isProjectRoot(abs) {
-			return abs
-		}
-	}
-	// Packaged builds keep backend.exe beside the TUI executable.
-	if exe, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exe)
-		if exists(filepath.Join(exeDir, "backend.exe")) || exists(filepath.Join(exeDir, "backend")) {
-			return exeDir
-		}
-	}
-	abs, _ := filepath.Abs(cwd)
-	return filepath.Join(abs, "backend")
-}
-
-func exists(p string) bool { _, err := os.Stat(p); return err == nil }

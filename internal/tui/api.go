@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -26,6 +26,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
+
+	"whatzap/internal/buildid"
 )
 
 const backendStartupLogLimit = 8192
@@ -91,107 +93,112 @@ func apiErrorFromResponse(res *http.Response, fallback string) error {
 	return fmt.Errorf("%s: %s", res.Status, msg)
 }
 
-// backendBinPath returns the backend executable for dir.
-func backendBinPath(dir string) string {
-	name := "backend"
-	if runtime.GOOS == "windows" {
-		name = "backend.exe"
-	}
-	if isProjectRoot(dir) {
-		return filepath.Join(dir, "dist", name)
-	}
-	return filepath.Join(dir, name)
+type healthInfo struct {
+	ok        bool
+	connected bool
+	build     string
 }
 
-func isProjectRoot(dir string) bool {
-	return exists(filepath.Join(dir, "go.mod")) && exists(filepath.Join(dir, "cmd", "backend", "main.go"))
-}
-
-func backendBinStale(dir string) bool {
-	st, err := os.Stat(backendBinPath(dir))
+func checkHealth(ctx context.Context, c *http.Client, base string) (healthInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/health", nil)
 	if err != nil {
-		return true
+		return healthInfo{}, err
 	}
-	if isProjectRoot(dir) {
-		if mod, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil && mod.ModTime().After(st.ModTime()) {
-			return true
-		}
-		stale := false
-		_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil || stale {
-				return walkErr
-			}
-			if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == "dist") {
-				return filepath.SkipDir
-			}
-			if !entry.IsDir() && filepath.Ext(path) == ".go" {
-				if source, err := entry.Info(); err == nil && source.ModTime().After(st.ModTime()) {
-					stale = true
-				}
-			}
-			return nil
-		})
-		return stale
+	res, err := c.Do(req)
+	if err != nil {
+		return healthInfo{}, err
 	}
-	srcs, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-	for _, source := range srcs {
-		if info, err := os.Stat(source); err == nil && info.ModTime().After(st.ModTime()) {
-			return true
-		}
+	defer res.Body.Close()
+	if res.StatusCode/100 != 2 {
+		return healthInfo{}, fmt.Errorf("health status %s", res.Status)
 	}
-	return false
+	var out struct {
+		OK        bool   `json:"ok"`
+		Connected bool   `json:"connected"`
+		Build     string `json:"build"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return healthInfo{ok: true}, nil
+	}
+	return healthInfo{ok: out.OK, connected: out.Connected, build: out.Build}, nil
 }
 
-func ensureBackend(ctx context.Context, c *http.Client, base, dir, apiToken string) tea.Cmd {
+func health(ctx context.Context, c *http.Client, base string) error {
+	_, err := checkHealth(ctx, c, base)
+	return err
+}
+
+var spawnBackendProcess = func() (*exec.Cmd, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve executable: %w", err)
+	}
+	cmd := exec.Command(exe, "backend")
+	cmd.Dir = filepath.Dir(exe)
+	return cmd, nil
+}
+
+func requestShutdown(c *http.Client, base, apiToken string) error {
+	if c == nil || strings.TrimSpace(base) == "" {
+		return nil
+	}
+	call := *c
+	call.Timeout = 2 * time.Second
+	body, _ := json.Marshal(map[string]string{})
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+"/shutdown", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("content-type", "application/json")
+	attachAuthHeader(req, apiToken)
+	res, err := call.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusUnauthorized {
+		return errors.New("unauthorized (different session token)")
+	}
+	if res.StatusCode == http.StatusNotFound {
+		return errors.New("legacy backend without shutdown support")
+	}
+	if res.StatusCode/100 != 2 {
+		return fmt.Errorf("unexpected status %s", res.Status)
+	}
+	return nil
+}
+
+func ensureBackend(ctx context.Context, c *http.Client, base, apiToken string) tea.Cmd {
 	return func() tea.Msg {
-		if health(ctx, c, base) == nil {
-			if err := probeAuth(ctx, c, base, apiToken); err != nil {
-				return initMsg{err: err}
-			}
-			return initMsg{}
-		}
-		var cmd *exec.Cmd
-		binPath := backendBinPath(dir)
-		if backendBinStale(dir) && (isProjectRoot(dir) || hasGoSources(dir)) {
-			goBin := "go"
-			if runtime.GOOS == "windows" {
-				goBin = "go.exe"
-			}
-			args := []string{"build", "-o", binPath, "."}
-			if isProjectRoot(dir) {
-				if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
-					return initMsg{err: formatBackendStartupError("backend build failed", err.Error())}
+		currentBuild := buildid.Current()
+
+		info, err := checkHealth(ctx, c, base)
+		if err == nil {
+			// A backend is already responding on base.
+			if currentBuild != "" && info.build == currentBuild {
+				if err := probeAuth(ctx, c, base, apiToken); err != nil {
+					return initMsg{err: err}
 				}
-				args = []string{"build", "-o", binPath, "./cmd/backend"}
+				return initMsg{}
 			}
-			build := exec.Command(goBin, args...)
-			build.Dir = dir
-			if out, err := build.CombinedOutput(); err != nil {
-				msg := strings.TrimSpace(string(out))
-				if msg == "" {
-					msg = err.Error()
-				}
-				return initMsg{err: formatBackendStartupError("backend build failed", msg)}
+			// Stale or legacy backend (different build or no build reported).
+			if err := requestShutdown(c, base, apiToken); err != nil {
+				return initMsg{err: fmt.Errorf("cannot stop outdated backend on %s: %w\nPlease stop it manually and restart WhatZap", base, err)}
 			}
-		}
-		if !exists(binPath) {
-			if exe, err := os.Executable(); err == nil {
-				cand := filepath.Join(filepath.Dir(exe), filepath.Base(binPath))
-				if exists(cand) {
-					binPath = cand
+			waitDeadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(waitDeadline) {
+				time.Sleep(100 * time.Millisecond)
+				if _, err := checkHealth(ctx, c, base); err != nil {
+					break
 				}
 			}
 		}
-		cmd = exec.Command(binPath)
-		cmd.Dir = dir
-		if !exists(dir) {
-			if exe, err := os.Executable(); err == nil {
-				cmd.Dir = filepath.Dir(exe)
-			}
+
+		cmd, err := spawnBackendProcess()
+		if err != nil {
+			return initMsg{err: formatBackendStartupError("backend spawn failed", err.Error())}
 		}
-		// <data-root>/backend/session.token (written by resolveSessionToken
-		// before ensureBackend is called), so the child just inherits the
-		// normal environment.
+
 		logBuf := &limitedBuffer{limit: backendStartupLogLimit}
 		cmd.Stdout = logBuf
 		cmd.Stderr = logBuf
@@ -204,7 +211,7 @@ func ensureBackend(ctx context.Context, c *http.Client, base, dir, apiToken stri
 		}()
 		deadline := time.Now().Add(35 * time.Second)
 		for time.Now().Before(deadline) {
-			if health(ctx, c, base) == nil {
+			if _, err := checkHealth(ctx, c, base); err == nil {
 				if err := probeAuth(ctx, c, base, apiToken); err != nil {
 					return initMsg{err: err}
 				}
@@ -222,24 +229,6 @@ func ensureBackend(ctx context.Context, c *http.Client, base, dir, apiToken stri
 		}
 		return initMsg{err: formatBackendStartupError("backend did not become ready", logBuf.String())}
 	}
-}
-
-func hasGoSources(dir string) bool {
-	srcs, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-	return len(srcs) > 0
-}
-
-func health(ctx context.Context, c *http.Client, base string) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/health", nil)
-	res, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode/100 != 2 {
-		return fmt.Errorf("health status %s", res.Status)
-	}
-	return nil
 }
 
 func probeAuth(ctx context.Context, c *http.Client, base, apiToken string) error {
@@ -731,24 +720,7 @@ func (x m) cleanup() {
 // failures (backend already gone, network closed) are ignored so quit never
 // blocks on a dead server.
 func shutdownBackend(c *http.Client, base, apiToken string) {
-	if c == nil || strings.TrimSpace(base) == "" {
-		return
-	}
-	call := *c
-	call.Timeout = 2 * time.Second
-	body, _ := json.Marshal(map[string]string{})
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+"/shutdown", bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("content-type", "application/json")
-	attachAuthHeader(req, apiToken)
-	res, err := call.Do(req)
-	if err != nil {
-		return
-	}
-	defer res.Body.Close()
-	_, _ = io.Copy(io.Discard, res.Body)
+	_ = requestShutdown(c, base, apiToken)
 }
 
 func getWhitelist(ctx context.Context, c *http.Client, base string) tea.Cmd {
@@ -929,7 +901,7 @@ func setWhitelistDefault(ctx context.Context, c *http.Client, base string, allow
 		if res.StatusCode/100 != 2 {
 			raw, _ := io.ReadAll(res.Body)
 			if res.StatusCode == http.StatusNotFound {
-				return whitelistSetMsg{err: fmt.Errorf("%s on /whitelist/default: backend is out of date - stop backend.exe and restart WhatZap to pick up /whitelistall and /blacklistall", res.Status)}
+				return whitelistSetMsg{err: fmt.Errorf("%s on /whitelist/default: backend is out of date - restart WhatZap to pick up /whitelistall and /blacklistall", res.Status)}
 			}
 			return whitelistSetMsg{err: fmt.Errorf("%s %s", res.Status, strings.TrimSpace(string(raw)))}
 		}

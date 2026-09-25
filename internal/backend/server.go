@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"whatzap/internal/buildid"
 	"whatzap/internal/tokenlock"
 )
 
@@ -390,7 +391,11 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	connected := a.connected
 	a.mu.RUnlock()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "connected": connected})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"connected": connected,
+		"build":     buildid.Current(),
+	})
 }
 
 var upgrader = websocket.Upgrader{
