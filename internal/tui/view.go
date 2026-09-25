@@ -1251,8 +1251,8 @@ func (x m) renderSide(w, h int) string {
 		Bold(true)
 
 	labelStyle := lipgloss.NewStyle().Bold(true)
-	shortcutStyle := lipgloss.NewStyle().Foreground(muted)
-	activeShortcutStyle := lipgloss.NewStyle().Foreground(shortcutActive)
+	shortcutStyle := lipgloss.NewStyle().Foreground(accent).Italic(true)
+	activeShortcutStyle := lipgloss.NewStyle().Foreground(shortcutActive).Italic(true)
 
 	var chatsTab, contactsTab string
 	if x.sidebarTab == "chats" {
@@ -1713,10 +1713,9 @@ func (x m) renderWelcomePane(w, h int) string {
 	}
 
 	// header centered
-	star := lipgloss.NewStyle().Foreground(brand).Bold(true).Render(spinnerFrames[x.spinnerFrame])
 	title := lipgloss.NewStyle().Foreground(text).Bold(true).Render("WhatZap")
 	tagline := mutedStyle.Render("Terminal WhatsApp client")
-	header := lipgloss.JoinVertical(lipgloss.Center, star, title, tagline)
+	header := lipgloss.JoinVertical(lipgloss.Center, title, tagline)
 	header = lipgloss.PlaceHorizontal(col, lipgloss.Center, header)
 
 	div := divColor.Render(strings.Repeat("─", col))

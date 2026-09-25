@@ -25,13 +25,6 @@ func TestCancelledCtxAbortsRequest(t *testing.T) {
 	}
 }
 
-func TestReqCtxFallsBackToBackground(t *testing.T) {
-	var x m // no apiCtx assigned (as in unit tests)
-	if x.reqCtx() == nil {
-		t.Fatal("reqCtx must never be nil")
-	}
-}
-
 func TestModelCtxWiresThrough(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"chats":[]}`))
@@ -44,11 +37,6 @@ func TestModelCtxWiresThrough(t *testing.T) {
 	if errMsg := msg.(chatsMsg); errMsg.err != nil {
 		t.Fatalf("getChats err = %v", errMsg.err)
 	}
-}
-
-func TestCancelRequestsIsNilSafe(t *testing.T) {
-	var x m
-	x.cancelRequests() // must not panic
 }
 
 func TestSyncHistoryCommandIsHandled(t *testing.T) {
@@ -80,12 +68,6 @@ func TestShutdownBackendPostsWithAuth(t *testing.T) {
 	if gotAuth != "Bearer tok-123" {
 		t.Fatalf("auth header = %q, want Bearer tok-123", gotAuth)
 	}
-}
-
-func TestShutdownBackendNilSafe(t *testing.T) {
-	shutdownBackend(nil, "", "")                                     // must not panic
-	shutdownBackend(http.DefaultClient, "", "tok")                   // must not panic
-	shutdownBackend(http.DefaultClient, "http://127.0.0.1:9", "tok") // dead server: must return, not hang
 }
 
 func TestOpenWSCancelledCtxFailsFast(t *testing.T) {

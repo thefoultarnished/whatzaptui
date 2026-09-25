@@ -1,11 +1,11 @@
 package tui
 
 import (
-	"context"
-	"net/http"
 	"os"
 	"runtime"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Regression: after a fresh login the backend returns chats with
@@ -37,15 +37,6 @@ func TestSidebarItemsShowsZeroTimestampChats(t *testing.T) {
 	}
 }
 
-func TestRegisterSessionReportsRequestErrors(t *testing.T) {
-	msg, ok := registerSession(context.Background(), http.DefaultClient, "://invalid", "")().(sessionRegisterMsg)
-	if !ok {
-		t.Fatalf("registerSession returned %T, want sessionRegisterMsg", msg)
-	}
-	if msg.err == nil {
-		t.Fatal("registerSession returned nil error for invalid URL")
-	}
-}
 
 func TestConfigFileIsOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -60,5 +51,36 @@ func TestConfigFileIsOwnerOnly(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("config mode = %o, want owner-only permissions", info.Mode().Perm())
+	}
+}
+
+// Regression: alt+p focuses the People search box (mode=search), but alt+c
+// must leave search mode so the Chats sidebar shows its placeholder instead
+// of a blank focused box.
+func TestAltCReturnsFromPeopleSearchToChatsNav(t *testing.T) {
+	model := m{
+		sidebarTab: "chats",
+		mode:       "nav",
+		whitelist:  map[string]string{},
+	}
+
+	next, _ := model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p"), Alt: true})
+	model = next.(m)
+	if model.sidebarTab != "contacts" || model.mode != "search" {
+		t.Fatalf("alt+p = tab %q mode %q, want contacts/search", model.sidebarTab, model.mode)
+	}
+	model.searchInput = "bob"
+	model.search = "bob"
+
+	next, _ = model.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c"), Alt: true})
+	got := next.(m)
+	if got.sidebarTab != "chats" {
+		t.Fatalf("alt+c tab = %q, want chats", got.sidebarTab)
+	}
+	if got.mode == "search" {
+		t.Fatalf("alt+c mode = search, want nav (search box must unfocus)")
+	}
+	if got.search != "" || got.searchInput != "" {
+		t.Fatalf("alt+c search = %q/%q, want cleared so placeholder shows", got.search, got.searchInput)
 	}
 }

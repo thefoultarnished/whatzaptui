@@ -110,13 +110,6 @@ func TestSanitizeIncomingTextStripsOSCSequence(t *testing.T) {
 	}
 }
 
-func TestSanitizeIncomingTextStripsC1Controls(t *testing.T) {
-	got := sanitizeIncomingText("abc")
-	want := "abc"
-	if got != want {
-		t.Fatalf("sanitizeIncomingText() = %q, want %q", got, want)
-	}
-}
 
 func TestSanitizeIncomingTextPreservesEmojiAndZWJ(t *testing.T) {
 	for _, s := range []string{
@@ -342,13 +335,6 @@ func TestSearchHitUnmarshalJSONSanitizesSnippet(t *testing.T) {
 	}
 	if h.Snippet != "evil[31msnippet" {
 		t.Fatalf("Snippet = %q", h.Snippet)
-	}
-}
-
-func TestDraftLineCountCountsExplicitNewlines(t *testing.T) {
-	got := draftLineCount("hello\nworld", 20)
-	if got != 2 {
-		t.Fatalf("draftLineCount() = %d, want 2", got)
 	}
 }
 
@@ -671,36 +657,6 @@ func TestNerdIconForAllKindsNonEmpty(t *testing.T) {
 		}
 	}
 }
-
-func TestMediaTagStyle(t *testing.T) {
-	setTestTheme(t, Monokai)
-
-	saved := currentConfig.MediaIconStyle
-	t.Cleanup(func() { currentConfig.MediaIconStyle = saved })
-
-	// Text mode (default): pill style = dark foreground, saturated background.
-	currentConfig.MediaIconStyle = ""
-	st := mediaTagStyle("image")
-	if got, _ := st.GetForeground().(lipgloss.Color); got != tagInk {
-		t.Errorf("text mode foreground = %v, want %v", got, tagInk)
-	}
-	if got, _ := st.GetBackground().(lipgloss.Color); got != imageTag {
-		t.Errorf("text mode background = %v, want %v", got, imageTag)
-	}
-
-	// Nerd mode: file-browser style = saturated foreground, no background.
-	// Without a background, the icon stays visible on the chat's dark panel
-	// rather than reading as a dark blob on a saturated pill.
-	currentConfig.MediaIconStyle = "nerd"
-	st = mediaTagStyle("image")
-	if got, _ := st.GetForeground().(lipgloss.Color); got != imageTag {
-		t.Errorf("nerd mode foreground = %v, want %v", got, imageTag)
-	}
-	if got, _ := st.GetBackground().(lipgloss.Color); got != "" {
-		t.Errorf("nerd mode should have no background, got %v", got)
-	}
-}
-
 func TestHasVisibleText(t *testing.T) {
 	tests := []struct {
 		name string

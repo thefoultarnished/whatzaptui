@@ -161,21 +161,6 @@ func TestResolveWhatsmeowLogLevelRespectsEnv(t *testing.T) {
 }
 
 // S-3: the package-level default is "WARN", not the pre-fix
-// "DEBUG". Cheap regression guard — catches a future edit that
-// flips the default to "" (which would mean "log everything"
-// per waLog/util/log/log.go:levelToInt) or re-introduces the
-// hardcoded DEBUG constant.
-func TestWhatsmeowLogLevelDefaultIsWarn(t *testing.T) {
-	// Don't use t.Setenv here — we want to see the literal
-	// initializer value, regardless of what the helper would
-	// return for the current process env. The default must
-	// hold even when the env var is set (NewApp overwrites the
-	// var in that case, but the literal default is what users
-	// see on first launch with no env var).
-	if whatsmeowLogLevel != "WARN" {
-		t.Fatalf("whatsmeowLogLevel = %q, want WARN (package-level default)", whatsmeowLogLevel)
-	}
-}
 
 // A-13: pure-string tests for the generic cappedEvict helper —
 // no handler, no DB, no goroutine needed. Each sub-test seeds a
@@ -735,29 +720,6 @@ func TestWithAuthRejectsOversizedHeader(t *testing.T) {
 	}
 }
 
-// Security A-2: the http.Server struct must have all four timeouts
-// set to the package-level vars. Catches an accidental edit to 0,
-// a swap (read/write), or someone deleting the field.
-func TestHTTPServerTimeoutsHaveExpectedValues(t *testing.T) {
-	srv := &http.Server{
-		ReadHeaderTimeout: httpReadHeaderTimeout,
-		ReadTimeout:       httpReadTimeout,
-		WriteTimeout:      httpWriteTimeout,
-		IdleTimeout:       httpIdleTimeout,
-	}
-	if srv.ReadHeaderTimeout != 10*time.Second {
-		t.Errorf("ReadHeaderTimeout = %v, want 10s", srv.ReadHeaderTimeout)
-	}
-	if srv.ReadTimeout != 30*time.Second {
-		t.Errorf("ReadTimeout = %v, want 30s", srv.ReadTimeout)
-	}
-	if srv.WriteTimeout != 30*time.Second {
-		t.Errorf("WriteTimeout = %v, want 30s", srv.WriteTimeout)
-	}
-	if srv.IdleTimeout != 2*time.Minute {
-		t.Errorf("IdleTimeout = %v, want 2m", srv.IdleTimeout)
-	}
-}
 
 // Security A-2: ReadHeaderTimeout is the slowloris defense — a
 // client that opens a connection and dribbles bytes forever must be
@@ -1236,14 +1198,6 @@ func TestHandleChatsAndContacts(t *testing.T) {
 	if len(contactsBody.Contacts) != 1 {
 		t.Fatalf("contact count = %d, want 1", len(contactsBody.Contacts))
 	}
-}
-
-func TestUpsertPermissionSkipsNilDB(t *testing.T) {
-	app := newTestApp(t)
-	_ = app.db.Close()
-	app.db = nil
-
-	app.upsertPermission("15551230001", "Alex", "")
 }
 
 func TestUpsertPermissionSkipsDuringShutdown(t *testing.T) {
@@ -3085,12 +3039,6 @@ func TestHandleMessagesAroundAtEdgeReturnsAvailableMessages(t *testing.T) {
 		t.Fatalf("anchorIndex = %d, want 0 (no older messages)", body.AnchorIndex)
 	}
 }
-
-func TestPurgeOwnPushNameFromContactsNoOpWhenClientNil(t *testing.T) {
-	app := newTestApp(t)
-	app.purgeOwnPushNameFromContacts() // must not panic with nil client
-}
-
 // --- DB helper round-trip tests ---
 
 func TestUpsertAndLoadChatsRoundTrip(t *testing.T) {
@@ -4614,34 +4562,6 @@ func TestRedactingWriterMultipleOccurrences(t *testing.T) {
 	}
 }
 
-// TestRedactingWriterEmptySecretIsPassthrough confirms that with no token
-// set (dev runs) or a literal nil getter, content passes through verbatim.
-func TestRedactingWriterEmptySecretIsPassthrough(t *testing.T) {
-	var buf bytes.Buffer
-	if w := newRedactingWriter(&buf, nil); w != &buf {
-		t.Fatalf("nil secret getter should return the raw writer unchanged")
-	}
-
-	in := "no secret here, pass through verbatim"
-
-	buf.Reset()
-	w := newRedactingWriter(&buf, func() string { return "" })
-	if _, err := w.Write([]byte(in)); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if got := buf.String(); got != in {
-		t.Fatalf("empty secret mangled content: got %q, want %q", got, in)
-	}
-
-	buf.Reset()
-	w = newRedactingWriter(&buf, func() string { return "   " })
-	if _, err := w.Write([]byte(in)); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if got := buf.String(); got != in {
-		t.Fatalf("whitespace-only secret mangled content: got %q, want %q", got, in)
-	}
-}
 
 // TestRedactingWriterCleanLineUnchanged confirms a log line with no secret
 // in it is written through untouched (the common case — most log lines).

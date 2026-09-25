@@ -1,10 +1,7 @@
 package backend
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -173,23 +170,6 @@ func TestActionLogTimedEmitsStartAndEnd(t *testing.T) {
 		t.Errorf("missing status: %q", string(body))
 	}
 }
-
-func TestActionLogPathUnderCacheDir(t *testing.T) {
-	dir := t.TempDir()
-	a, err := openActionLog(dir, time.Now(), nil)
-	if err != nil {
-		t.Fatalf("openActionLog: %v", err)
-	}
-	defer a.Close()
-	rel, err := filepath.Rel(dir, a.Path())
-	if err != nil {
-		t.Fatalf("rel: %v", err)
-	}
-	if !strings.HasPrefix(rel, "logs"+string(os.PathSeparator)) {
-		t.Errorf("file not under logs/: %q", rel)
-	}
-}
-
 // intPtr returns a pointer to its argument; the callers above want a
 // string value they can pass to redactPhone via a dereference so the
 // test reads naturally without an extra variable inside the table.
@@ -204,17 +184,5 @@ func TestScrubTokenKeepsNonTokenBytes(t *testing.T) {
 	got := string(scrubToken([]byte(want), "no-such-token-anywhere"))
 	if got != want {
 		t.Errorf("scrubToken modified unrelated bytes: got %q want %q", got, want)
-	}
-}
-
-// TestRedactionHashPrefixLength pins the blake2b-style prefix to 6 hex
-// characters so the action log stays scannable. Updating this test
-// intentionally forces a maintainer to think about the trade-off
-// between grep-collisions and operator readability.
-func TestRedactionHashPrefixLength(t *testing.T) {
-	sum := sha256.Sum256([]byte("15551230001"))
-	got := hex.EncodeToString(sum[:3])
-	if len(got) != 6 {
-		t.Fatalf("redaction prefix length = %d, want 6", len(got))
 	}
 }

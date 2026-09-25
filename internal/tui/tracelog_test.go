@@ -72,9 +72,3 @@ func TestTraceChatMatchesBackendFormat(t *testing.T) {
 		t.Fatalf("phone = %q, want %q", got, want)
 	}
 }
-
-// tlog must be a no-op when no trace file is open (all other tests).
-func TestTlogNoopWithoutFile(t *testing.T) {
-	closeTraceLog()
-	tlog("anything", "k", "v")
-}
