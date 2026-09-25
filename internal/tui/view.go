@@ -877,13 +877,8 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	statusPart := ""
 	if totalUnread > 0 {
 		statusPart = amberStyle.Render(strconv.Itoa(totalUnread)+" unread") + " "
-	} else {
-		wifi := lipgloss.NewStyle().Foreground(brand).Render("●")
-		connText := lipgloss.NewStyle().Foreground(brand).Render(" connected")
-		if x.demoMode {
-			connText = lipgloss.NewStyle().Foreground(brand).Render(" demo")
-		}
-		statusPart = " " + wifi + connText + " "
+	} else if x.demoMode {
+		statusPart = " " + lipgloss.NewStyle().Foreground(brand).Render("demo") + " "
 	}
 
 	statusW := lipgloss.Width(statusPart)
@@ -1252,7 +1247,7 @@ func (x m) renderSide(w, h int) string {
 
 	labelStyle := lipgloss.NewStyle().Bold(true)
 	shortcutStyle := lipgloss.NewStyle().Foreground(accent).Italic(true)
-	activeShortcutStyle := lipgloss.NewStyle().Foreground(shortcutActive).Italic(true)
+	activeShortcutStyle := lipgloss.NewStyle().Foreground(shadeColor(buttonInk, 0.8)).Italic(true)
 
 	var chatsTab, contactsTab string
 	if x.sidebarTab == "chats" {
