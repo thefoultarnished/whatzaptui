@@ -19,6 +19,17 @@ func spreadLine(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+// qrExpired reports whether the displayed QR code is past its usable life
+// (qrTTL plus a small grace for in-flight refreshes). A new "qr" event
+// resets x.qrReceivedAt to time.Now(), so this flips back to false on its
+// own when WhatsApp delivers a fresh code.
+func (x m) qrExpired() bool {
+	if x.qrReceivedAt.IsZero() {
+		return false
+	}
+	return time.Since(x.qrReceivedAt) >= qrTTL+5*time.Second
+}
+
 // renderLinkPanel is the left column of the QR login screen, laid out to be
 // exactly height rows tall (when it fits) so it lines up with the QR box.
 func (x m) renderLinkPanel(height int) string {
@@ -118,6 +129,10 @@ func (x m) renderLinkPanel(height int) string {
 		countdown = subSt.Render("refreshing…")
 	}
 	timer := []string{bar.String(), spreadLine(spinner+" "+waiting, countdown, linkPanelW)}
+	if x.qrExpired() {
+		amberSt := lipgloss.NewStyle().Foreground(amber).Bold(true)
+		timer = []string{bar.String(), spreadLine(amberSt.Render("⚠ QR expired"), amberSt.Render("[R] Restart session"), linkPanelW)}
+	}
 
 	footer := []string{
 		railSt.Render(strings.Repeat("─", linkPanelW)),
