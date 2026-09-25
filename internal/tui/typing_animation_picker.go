@@ -30,12 +30,18 @@ func buildTypingAnimationPickerItems() []pickerItem {
 }
 
 func getTypingIcons(style string) []string {
-	for _, a := range typingAnimationList {
+	return typingAnimationList[typingAnimationIndex(style)].icons
+}
+
+// typingAnimationIndex returns the typingAnimationList index for style,
+// falling back to Sparkle when style is unset or unknown.
+func typingAnimationIndex(style string) int {
+	for i, a := range typingAnimationList {
 		if a.key == style {
-			return a.icons
+			return i
 		}
 	}
-	return typingAnimationList[2].icons
+	return 2
 }
 
 // userlistIconPrefix returns the static icon glyph (plus trailing space) used

@@ -202,6 +202,9 @@ func (x m) renderRightMain(rightW, mainH int) string {
 	if x.userlistIconPicker.open {
 		return x.userlistIconPicker.Render(rightW, mainH)
 	}
+	if x.splashSpeedPicker.open {
+		return x.splashSpeedPicker.Render(rightW, mainH)
+	}
 	if x.helpPicker.open {
 		return x.helpPicker.RenderHelp(rightW, mainH)
 	}
@@ -451,7 +454,11 @@ func (x m) stageTimeAllow() int {
 	if x.bootAt.IsZero() {
 		return 1 << 30
 	}
-	n := int(time.Since(x.bootAt) / bootStageHold)
+	hold := splashStageHoldDuration()
+	if hold <= 0 {
+		return 1 << 30
+	}
+	n := int(time.Since(x.bootAt) / hold)
 	if n < 0 {
 		n = 0
 	}
@@ -500,8 +507,8 @@ func fitText(s string, w int) string {
 func (x m) loadingStages() []bootStage {
 	backendDone := x.status != "" && x.status != "Starting backend..." && x.status != "Starting demo..."
 	sessionDone := x.status == "ready" || x.sessionReady
-	chatsDone := len(x.chats) > 0
-	contactsDone := len(x.contacts) > 0
+	chatsDone := len(x.chats) > 0 || x.chatsLoaded
+	contactsDone := len(x.contacts) > 0 || x.contactsLoaded
 
 	sessionState := "pending"
 	if sessionDone {
@@ -525,7 +532,7 @@ func (x m) loadingStages() []bootStage {
 	if backendDone {
 		backend.state = "done"
 	}
-	stages := []bootStage{backend, {label: "Handshake", state: sessionState}, chats, contacts}
+	stages := []bootStage{backend, {label: "Authentication", state: sessionState}, chats, contacts}
 	// Hold each stage ~1s so fast loads stay readable. Stage i can show
 	// at most level (allow - i + 1): pending, then active, then done.
 	allow := x.stageTimeAllow()
@@ -728,11 +735,11 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	leaderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#1e293b"))
 
 	gated := x.loadingStages()
-	labels := []string{"backend", "handshake", "chats", "contacts"}
+	labels := []string{"backend", "authentication", "chats", "contacts"}
 	chatDoneTxt := fmt.Sprintf("%d loaded", len(x.chats))
 	contactDoneTxt := fmt.Sprintf("%d synced", len(x.contacts))
-	activeStatuses := []string{"starting...", "initiating...", "loading...", "loading..."}
-	doneStatuses := []string{"running", "done", chatDoneTxt, contactDoneTxt}
+	activeStatuses := []string{"starting...", "authenticating...", "loading...", "loading..."}
+	doneStatuses := []string{"running", "authenticated", chatDoneTxt, contactDoneTxt}
 
 	stageInnerW := cardW - 2
 	var stageRows []string
@@ -748,7 +755,7 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 			branch = "├──○  "
 		}
 
-		lblText := fmt.Sprintf("%-9s", labels[i])
+		lblText := fmt.Sprintf("%-14s", labels[i])
 
 		var branchStr, labelStr, badgeStr string
 		switch s.state {

@@ -16,7 +16,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.userlistIconPicker.open || x.fontTestOpen {
+	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.userlistIconPicker.open || x.splashSpeedPicker.open || x.fontTestOpen {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -381,7 +381,7 @@ func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
 		x.invalidate()
 		return nil, true
 	case txt == "/typinganimation":
-		x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
+		x.typingAnimationPicker = picker{title: "Typing Style", items: buildTypingAnimationPickerItems()}
 		x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 		x.leftInput = ""
 		x.leftInputFocused = false
@@ -396,6 +396,17 @@ func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
 	case txt == "/settings":
 		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
 		x.settingsPicker.Open("")
+		x.leftInput = ""
+		x.leftInputFocused = false
+		x.invalidate()
+		return nil, true
+	case txt == "/splashspeed":
+		x.splashSpeedPicker = picker{title: "Startup Speed", items: buildSplashSpeedPickerItems()}
+		speed := currentConfig.SplashStageSpeed
+		if speed == "" {
+			speed = "normal"
+		}
+		x.splashSpeedPicker.Open(speed)
 		x.leftInput = ""
 		x.leftInputFocused = false
 		x.invalidate()

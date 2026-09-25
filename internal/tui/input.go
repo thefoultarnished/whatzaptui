@@ -298,7 +298,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				// Handle mouse enable/disable command for the toggle
 				var cmd tea.Cmd
-				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) && settingsDefs[x.settingsPicker.idx].name == "Mouse" {
+				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) && settingsDefs[x.settingsPicker.idx].name == "Mouse support" {
 					x.mouseEnabled = currentConfig.MouseEnabled
 					cmd = mouseModeCmd(x.mouseEnabled)
 					return x, tea.Batch(x.setTopBar(msg), cmd)
@@ -311,21 +311,28 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				x.settingsPicker.Close(false)
 				switch selName {
-				case "Media icons":
-					x.mediaIconPicker = picker{title: "Media Icons", items: buildMediaIconPickerItems()}
+				case "Media icon style":
+					x.mediaIconPicker = picker{title: "Media Icon Style", items: buildMediaIconPickerItems()}
 					x.mediaIconPicker.Open(currentConfig.MediaIconStyle)
-				case "Media view":
-					x.mediaViewPicker = picker{title: "Media View", items: buildMediaViewPickerItems()}
+				case "Media preview":
+					x.mediaViewPicker = picker{title: "Media Preview", items: buildMediaViewPickerItems()}
 					x.mediaViewPicker.Open(currentConfig.MediaViewStyle)
-				case "Userlist icons":
-					x.userlistIconPicker = picker{title: "Userlist Icons", items: buildUserlistIconPickerItems()}
+				case "Chat list icons":
+					x.userlistIconPicker = picker{title: "Chat List Icons", items: buildUserlistIconPickerItems()}
 					style := currentConfig.UserlistIconStyle
 					if style == "" {
 						style = "numbers"
 					}
 					x.userlistIconPicker.Open(style)
+				case "Startup speed":
+					x.splashSpeedPicker = picker{title: "Startup Speed", items: buildSplashSpeedPickerItems()}
+					speed := currentConfig.SplashStageSpeed
+					if speed == "" {
+						speed = "normal"
+					}
+					x.splashSpeedPicker.Open(speed)
 				default:
-					x.typingAnimationPicker = picker{title: "Typing Animation", items: buildTypingAnimationPickerItems()}
+					x.typingAnimationPicker = picker{title: "Typing Style", items: buildTypingAnimationPickerItems()}
 					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 				}
 				x.invalidate()
@@ -347,6 +354,9 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if x.userlistIconPicker.open {
 		return x.handleSettingsSubPicker(&x.userlistIconPicker, &currentConfig.UserlistIconStyle, k)
+	}
+	if x.splashSpeedPicker.open {
+		return x.handleSettingsSubPicker(&x.splashSpeedPicker, &currentConfig.SplashStageSpeed, k)
 	}
 	if x.emojiPickerOpen {
 		return x.handleEmojiPicker(k)

@@ -107,6 +107,13 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, openWS(x.reqCtx(), x.wsURL, x.apiToken)
 	case splashDoneMsg:
 		if x.sessionReady && x.status != "ready" && !strings.HasPrefix(x.status, "Error:") && !strings.HasPrefix(strings.ToLower(x.status), "logged out") {
+			hold := splashStageHoldDuration()
+			if !x.bootAt.IsZero() && hold > 0 && x.stageTimeAllow() < 4 {
+				remaining := 4*hold - time.Since(x.bootAt)
+				if remaining > 0 {
+					return x, tea.Tick(remaining, func(time.Time) tea.Msg { return splashDoneMsg{} })
+				}
+			}
 			x.status = "ready"
 			x.invalidate()
 			if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
@@ -195,6 +202,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
+		x.chatsLoaded = true
 		selectedID := x.selectedChatID()
 		x.chats = v.chats
 		x.resortChats(selectedID)
@@ -204,6 +212,9 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// user explicitly opens a chat.
 		if titleCmd := x.refreshWindowTitleCmd(); titleCmd != nil {
 			cmds = append(cmds, titleCmd)
+		}
+		if cmd := x.maybeFinishSplash(); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 		if len(cmds) > 0 {
 			return x, tea.Batch(cmds...)
@@ -217,12 +228,16 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
+		x.contactsLoaded = true
 		x.contacts = map[string]contact{}
 		for _, c := range v.contacts {
 			x.contacts[c.ID] = c
 		}
 		x.rebuildContactIndex()
 		x.markIdentityChanged()
+		if cmd := x.maybeFinishSplash(); cmd != nil {
+			return x, cmd
+		}
 	case groupPreviewMsg:
 		if v.err == nil {
 			x.groupPreviews[v.jid] = v.preview
@@ -728,4 +743,20 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 // whatever is cached (possibly empty) without requiring a session.
 func (x m) prefetchOnWSOpen() tea.Cmd {
 	return tea.Batch(getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL))
+}
+
+// maybeFinishSplash checks whether all startup stages (authentication, chats, contacts)
+// have completed, and if so schedules a transition to ready after stages have held their time.
+func (x m) maybeFinishSplash() tea.Cmd {
+	if x.status != "ready" && x.sessionReady && x.chatsLoaded && x.contactsLoaded {
+		delay := 300 * time.Millisecond
+		hold := splashStageHoldDuration()
+		if !x.bootAt.IsZero() && hold > 0 {
+			if remaining := 4*hold - time.Since(x.bootAt); remaining > delay {
+				delay = remaining
+			}
+		}
+		return tea.Tick(delay, func(time.Time) tea.Msg { return splashDoneMsg{} })
+	}
+	return nil
 }

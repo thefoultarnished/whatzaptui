@@ -42,7 +42,7 @@ func TestLoadingStages(t *testing.T) {
 
 	ready := m{status: "ready"}
 	for _, s := range ready.loadingStages() {
-		if s.label == "Handshake" && s.state != "done" {
+		if s.label == "Authentication" && s.state != "done" {
 			t.Fatalf("session stage at ready = %q, want done", s.state)
 		}
 	}
@@ -76,12 +76,12 @@ func TestSignedInSplashVisualElements(t *testing.T) {
 		t.Errorf("loading screen missing stage header title or version tag")
 	}
 	// Vertical branch stages keep only the live/done detail text, not stage-name labels.
-	for _, item := range []string{"initiating...", "loading..."} {
+	for _, item := range []string{"authenticating...", "loading..."} {
 		if !strings.Contains(view, item) {
 			t.Errorf("loading screen missing pipeline stage %q", item)
 		}
 	}
-	for _, removed := range []string{" Backend ", " Handshake ", " Chats ", " Contacts "} {
+	for _, removed := range []string{" Backend ", " Authentication ", " Chats ", " Contacts "} {
 		if strings.Contains(plainView, removed) {
 			t.Errorf("loading screen should not show stage-name label %q", removed)
 		}
@@ -166,7 +166,7 @@ func TestSignedInSplashActiveStageSpinnerAnimation(t *testing.T) {
 		spinnerFrame: 0,
 	}
 	view0 := model0.View()
-	expected0 := nodeFrames[0] + " initiating..."
+	expected0 := nodeFrames[0] + " authenticating..."
 	if !strings.Contains(view0, expected0) {
 		t.Errorf("expected view to contain active stage spinner %q", expected0)
 	}
@@ -178,7 +178,7 @@ func TestSignedInSplashActiveStageSpinnerAnimation(t *testing.T) {
 		spinnerFrame: 1,
 	}
 	view1 := model1.View()
-	expected1 := nodeFrames[1] + " initiating..."
+	expected1 := nodeFrames[1] + " authenticating..."
 	if !strings.Contains(view1, expected1) {
 		t.Errorf("expected view to contain active stage spinner %q", expected1)
 	}
@@ -325,7 +325,7 @@ func TestSplashStageTexts(t *testing.T) {
 		bootAt:       time.Now().Add(-10 * time.Second),
 	}
 	out := done.View()
-	for _, want := range []string{"backend", "handshake", "chats", "contacts", "running", "done", "2 loaded", "1 synced"} {
+	for _, want := range []string{"backend", "authentication", "chats", "contacts", "running", "authenticated", "2 loaded", "1 synced"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("finished splash missing %q", want)
 		}
@@ -368,8 +368,8 @@ func TestSplashVerticalBranchStages(t *testing.T) {
 	if !strings.Contains(branchLines[0], "backend") {
 		t.Fatalf("first branch should show backend status, got %q", branchLines[0])
 	}
-	if !strings.Contains(branchLines[1], "handshake") || !strings.Contains(branchLines[1], "initiating...") {
-		t.Fatalf("second branch should show active handshake status, got %q", branchLines[1])
+	if !strings.Contains(branchLines[1], "authentication") || !strings.Contains(branchLines[1], "authenticating...") {
+		t.Fatalf("second branch should show active authentication status, got %q", branchLines[1])
 	}
 	if !strings.Contains(branchLines[3], "└─") {
 		t.Fatalf("last branch should use terminator, got %q", branchLines[3])
@@ -390,7 +390,7 @@ func TestRenderBootStagesPipelineTree(t *testing.T) {
 		t.Errorf("last line should start with └─, got %q", lines[3])
 	}
 	plain := ansiStripRe.ReplaceAllString(tree, "")
-	for _, banned := range []string{"backend", "handshake", "chats", "contacts", "ready", "waiting", "syncing", "connecting", "starting"} {
+	for _, banned := range []string{"backend", "authentication", "chats", "contacts", "ready", "waiting", "syncing", "connecting", "starting"} {
 		if strings.Contains(strings.ToLower(plain), banned) {
 			t.Errorf("boot stages should not show stage/detail text %q, got %q", banned, plain)
 		}
@@ -427,6 +427,76 @@ func TestSplashHoldSkipsOnKeypress(t *testing.T) {
 	}
 }
 
+func TestQRScanRedirectsToSplashAndCompletes(t *testing.T) {
+	qrModel := m{
+		w:            100,
+		h:            30,
+		status:       "qr",
+		qrRaw:        "1@test-qr-data",
+		qrReceivedAt: time.Now(),
+		msgs:         map[string][]wireMsg{},
+		whitelist:    map[string]string{},
+	}
+
+	// 1. WebSocket emits "ready" after QR scan.
+	readyMsg := wsEvtMsg{
+		ok:  true,
+		evt: env{Type: "ready"},
+	}
+	next, cmd := qrModel.Update(readyMsg)
+	splashing := next.(m)
+
+	// Status must have switched away from "qr" back to connecting splash
+	if splashing.status != "Connecting..." {
+		t.Fatalf("expected status 'Connecting...' after QR scan ready, got %q", splashing.status)
+	}
+	if splashing.qrRaw != "" {
+		t.Fatalf("expected qrRaw to be cleared after QR scan ready, got %q", splashing.qrRaw)
+	}
+	if !splashing.sessionReady {
+		t.Fatalf("expected sessionReady to be true after QR scan ready")
+	}
+	if cmd == nil {
+		t.Fatalf("expected batch command for fetching chats/contacts/whitelist")
+	}
+
+	// Right after QR scan: Backend stage is active (held by bootStageHold).
+	stages := splashing.loadingStages()
+	if stages[0].label != "Backend" || stages[0].state != "active" {
+		t.Fatalf("expected Backend stage active at fresh boot, got %+v", stages[0])
+	}
+
+	// 2. chatsMsg arrives
+	next, _ = splashing.Update(chatsMsg{chats: []chat{{ID: "c1@s.whatsapp.net"}}})
+	withChats := next.(m)
+	if !withChats.chatsLoaded {
+		t.Fatalf("expected chatsLoaded to be true")
+	}
+
+	// 3. contactsMsg arrives
+	next, finishCmd := withChats.Update(contactsMsg{contacts: []contact{{ID: "c1@s.whatsapp.net"}}})
+	withContacts := next.(m)
+	if !withContacts.contactsLoaded {
+		t.Fatalf("expected contactsLoaded to be true")
+	}
+	if finishCmd == nil {
+		t.Fatalf("expected finishCmd tick once all stages are done")
+	}
+
+	// 4. splashDoneMsg arrives while boot timer hasn't elapsed: should defer
+	deferred, deferCmd := withContacts.Update(splashDoneMsg{})
+	if deferred.(m).status != "Connecting..." || deferCmd == nil {
+		t.Fatalf("expected splashDoneMsg to defer when bootStageHold is active")
+	}
+
+	// 5. splashDoneMsg arrives after boot time elapsed: should transition to ready
+	withContacts.bootAt = time.Now().Add(-5 * time.Second)
+	next, _ = withContacts.Update(splashDoneMsg{})
+	readyUI := next.(m)
+	if readyUI.status != "ready" {
+		t.Fatalf("expected status 'ready' after splash completion, got %q", readyUI.status)
+	}
+}
 // The pixel wordmark is Cyber neon: indigo "What", cyan "Zap", with the
 // accent bridging the two. Structure must stay identical to the old
 // single-colour-per-word render.

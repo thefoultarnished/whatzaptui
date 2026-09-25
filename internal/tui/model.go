@@ -86,6 +86,7 @@ type Config struct {
 	Borderless           bool   `json:"borderless,omitempty"`
 	UserlistIconStyle    string `json:"userlist_icon_style,omitempty"`
 	HidePhoneNumber      bool   `json:"hide_phone_number,omitempty"`
+	SplashStageSpeed     string `json:"splash_stage_speed,omitempty"`
 	// ShowAllContacts disables the stored-only People filter. Default
 	// false: the People tab shows address-book contacts plus renamed
 	// and whitelisted chats, hiding push-name-only strangers.
@@ -244,7 +245,9 @@ type m struct {
 
 	// WhatsApp Entities
 	chats                                          []chat
+	chatsLoaded                                    bool
 	contacts                                       map[string]contact
+	contactsLoaded                                 bool
 	contactsByNumber                               map[string]contact
 	msgs                                           map[string][]wireMsg
 	groupPreviews                                  map[string]groupPreview
@@ -272,6 +275,7 @@ type m struct {
 	mediaIconPicker       picker
 	mediaViewPicker       picker
 	userlistIconPicker    picker
+	splashSpeedPicker     picker
 	confirmDialog         confirmDialog
 	fontTestOpen          bool
 	emojiPickerOpen       bool
