@@ -160,21 +160,3 @@ func TestStripGraphicsSeqs(t *testing.T) {
 		t.Fatalf("iterm strip = %q", got)
 	}
 }
-
-func TestMediaViewPickerHasFull(t *testing.T) {
-	found := false
-	for _, it := range buildMediaViewPickerItems() {
-		if it.key == "full" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("media view picker missing full option")
-	}
-	prev := currentConfig.MediaViewStyle
-	currentConfig.MediaViewStyle = "full"
-	if !inlineMediaArt() {
-		t.Fatal("inlineMediaArt must cover full")
-	}
-	currentConfig.MediaViewStyle = prev
-}

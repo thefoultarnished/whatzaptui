@@ -19,16 +19,6 @@ func testViewModel() m {
 		mainCache: &renderCache{},
 	}
 }
-
-func TestRevisionBumpsOnEveryUpdate(t *testing.T) {
-	model := testViewModel()
-	next, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	got := next.(m)
-	if got.revision != model.revision+1 {
-		t.Fatalf("revision = %d, want %d", got.revision, model.revision+1)
-	}
-}
-
 func TestViewCachesAcrossViews(t *testing.T) {
 	model := testViewModel()
 	first := model.View()

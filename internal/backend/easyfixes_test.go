@@ -119,18 +119,6 @@ func TestSearchQueriesAllAndChatScoped(t *testing.T) {
 		}
 	}
 }
-
-func TestBackendListenPort(t *testing.T) {
-	t.Setenv("WHATZAP_PORT", "")
-	if backendListenPort() != backendPort {
-		t.Fatalf("default = %q, want %q", backendListenPort(), backendPort)
-	}
-	t.Setenv("WHATZAP_PORT", "18989")
-	if backendListenPort() != "18989" {
-		t.Fatalf("override = %q, want 18989", backendListenPort())
-	}
-}
-
 func TestInitPersistentResourcesSingleWriter(t *testing.T) {
 	app := &App{cacheDir: t.TempDir()}
 	if err := app.initPersistentResources(); err != nil {

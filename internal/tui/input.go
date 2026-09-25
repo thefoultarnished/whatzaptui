@@ -63,9 +63,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.scroll = 0
 		x.sidebarTab = "chats"
 		x.sidebarFocused = true
-		if x.mode == "chat" {
+		x.leftInputFocused = false
+		if x.mode == "chat" || x.mode == "search" {
 			x.mode = "nav"
 		}
+		x.search = ""
+		x.searchInput = ""
 		x.sel = 0
 		x.sideScroll = 0
 		x.invalidate()
@@ -78,6 +81,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.sidebarTab = "contacts"
 		x.sidebarFocused = true
 		x.mode = "search"
+		x.search = ""
 		x.searchInput = ""
 		x.sel = 0
 		x.sideScroll = 0

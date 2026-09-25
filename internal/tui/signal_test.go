@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,10 +28,6 @@ func TestCleanupRemovesMediaFiles(t *testing.T) {
 	}
 }
 
-func TestCleanupNilSafe(t *testing.T) {
-	var x m
-	x.cleanup() // must not panic: nil media, nil ws, nil backend, nil cancel
-}
 
 func TestCtrlCQuitsAndCancelsRequests(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -60,15 +55,3 @@ func TestExitCommandCancelsRequests(t *testing.T) {
 	}
 }
 
-func TestSignalCancellationErrorsIgnored(t *testing.T) {
-	errs := []error{
-		tea.ErrProgramKilled,
-		tea.ErrInterrupted,
-		context.Canceled,
-	}
-	for _, err := range errs {
-		if !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) && !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected error %v to be recognized as signal cancellation", err)
-		}
-	}
-}

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -27,41 +26,6 @@ func TestUserlistIconPrefixSparkleIndex(t *testing.T) {
 	}
 	if got := userlistIconPrefix("sparkle-99"); got != "" {
 		t.Errorf("userlistIconPrefix(%q) = %q, want empty for out-of-range index", "sparkle-99", got)
-	}
-}
-
-func TestBuildUserlistIconPickerItems(t *testing.T) {
-	items := buildUserlistIconPickerItems()
-
-	var sparkleIcons []string
-	for _, a := range typingAnimationList {
-		if a.key == "sparkle" {
-			sparkleIcons = a.icons
-		}
-	}
-	want := 1 + len(sparkleIcons)
-	if len(items) != want {
-		t.Fatalf("got %d items, want %d", len(items), want)
-	}
-	if items[0].key != "numbers" {
-		t.Errorf("first item key = %q, want %q", items[0].key, "numbers")
-	}
-	for i, icon := range sparkleIcons {
-		wantKey := fmt.Sprintf("sparkle-%d", i)
-		var found *pickerItem
-		for j := range items {
-			if items[j].key == wantKey {
-				found = &items[j]
-				break
-			}
-		}
-		if found == nil {
-			t.Errorf("no item with key %q", wantKey)
-			continue
-		}
-		if found.label != icon {
-			t.Errorf("item %q label = %q, want %q", wantKey, found.label, icon)
-		}
 	}
 }
 

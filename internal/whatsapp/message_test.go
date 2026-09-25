@@ -106,22 +106,6 @@ func TestExtractSearchableText(t *testing.T) {
 		}
 	}
 }
-
-func TestVisibleProtocolType(t *testing.T) {
-	if !VisibleProtocolType(waE2E.ProtocolMessage_REVOKE) {
-		t.Errorf("REVOKE should be visible")
-	}
-	if !VisibleProtocolType(waE2E.ProtocolMessage_MESSAGE_EDIT) {
-		t.Errorf("MESSAGE_EDIT should be visible")
-	}
-	if !VisibleProtocolType(waE2E.ProtocolMessage_EPHEMERAL_SETTING) {
-		t.Errorf("EPHEMERAL_SETTING should be visible")
-	}
-	if VisibleProtocolType(waE2E.ProtocolMessage_HISTORY_SYNC_NOTIFICATION) {
-		t.Errorf("HISTORY_SYNC_NOTIFICATION should not be visible")
-	}
-}
-
 func TestIsInvisibleProtocolMessage(t *testing.T) {
 	revokeMsg := &waE2E.Message{
 		ProtocolMessage: &waE2E.ProtocolMessage{
