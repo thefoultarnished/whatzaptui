@@ -61,6 +61,17 @@ var settingsDefs = []struct {
 			return "Normal"
 		}
 	}},
+	{"Theme", true, nil, nil, func() string {
+		for _, t := range themeList {
+			if t.name == currentConfig.ThemeName {
+				return t.displayName
+			}
+		}
+		if len(themeList) > 0 {
+			return themeList[0].displayName
+		}
+		return ""
+	}},
 }
 
 var mediaIconList = []struct {
@@ -278,6 +289,7 @@ func (p *picker) RenderSettings(w, h int) string {
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
 	divSt := bg(lipgloss.NewStyle().Foreground(muted))
 	headSt := bg(lipgloss.NewStyle().Foreground(muted).Bold(true))
+	headBarSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
 
 	fill := bg(lipgloss.NewStyle().Width(innerW))
 	ln := func(s string) string { return fill.Render(s) }
@@ -306,16 +318,25 @@ func (p *picker) RenderSettings(w, h int) string {
 	for _, item := range p.items {
 		nameW = max(nameW, lipgloss.Width(item.key))
 	}
-	stateW := colW - lipgloss.Width(indent) - lipgloss.Width("● ") - nameW - 2
 
-	togRows := settingsSectionRows(settingsToggleCount())
-	rows := togRows + settingsSectionRows(len(settingsDefs)-settingsToggleCount())
+	nT := settingsToggleCount()
+	numDigits := len(fmt.Sprintf("%d", max(nT, len(settingsDefs)-nT)))
+	numW := numDigits + 2 // digits + "." + " "
+
+	stateW := colW - lipgloss.Width(indent) - numW - lipgloss.Width("● ") - nameW - 2
+
+	sectionHeader := func(label string) string {
+		return indent + headBarSt.Render("│ ") + headSt.Render(label)
+	}
+
+	togRows := settingsSectionRows(nT)
+	rows := togRows + settingsSectionRows(len(settingsDefs)-nT)
 	for r := range rows {
 		switch r {
 		case 0:
-			lines = append(lines, ln(indent+headSt.Render("TOGGLES")))
+			lines = append(lines, ln(sectionHeader("TOGGLES")))
 		case togRows:
-			lines = append(lines, ln(""), ln(indent+headSt.Render("OPTIONS")))
+			lines = append(lines, ln(""), ln(sectionHeader("OPTIONS")))
 		}
 		var row strings.Builder
 		rowHasActive := false
@@ -330,6 +351,7 @@ func (p *picker) RenderSettings(w, h int) string {
 
 			var state string
 			var dotColor lipgloss.Color
+			var dot string
 
 			if isSelector {
 				state = settingsDefs[localIdx].getStr()
@@ -339,30 +361,37 @@ func (p *picker) RenderSettings(w, h int) string {
 				state = "OFF"
 				if isOn {
 					state = "ON"
-					dotColor = accent
+					dotColor = lipgloss.Color("#22c55e")
 				} else {
-					dotColor = muted
+					dotColor = lipgloss.Color("#ef4444")
 				}
+				dot = "● "
 			}
 
 			state = truncate(state, stateW)
 			pad := strings.Repeat(" ", nameW-lipgloss.Width(item.key))
-			var cell string
-			dot := "● "
+
+			num := localIdx + 1
 			if isSelector {
-				dot = "→ "
+				num = localIdx - nT + 1
 			}
+			numLabel := fmt.Sprintf("%d.", num)
+			numStr := numLabel + strings.Repeat(" ", numW-lipgloss.Width(numLabel))
+
+			var cell string
 			if localIdx == p.idx {
 				rowHasActive = true
-				dotSt := activeBg.Foreground(dotColor).Bold(true)
+				numSt := activeBg.Foreground(muted).Bold(true)
 				nameSt := activeBg.Foreground(accent).Bold(true).Underline(true)
+				dotSt := activeBg.Foreground(dotColor).Bold(true)
 				stateSt := activeBg.Foreground(dotColor).Bold(true)
-				cell = colFill.Render(activeIndent + dotSt.Render(dot) + nameSt.Render(item.key) + activeBg.Render(pad) + stateSt.Render("  "+state))
+				cell = colFill.Render(activeIndent + numSt.Render(numStr) + nameSt.Render(item.key) + activeBg.Render(pad) + stateSt.Render("  ") + dotSt.Render(dot) + stateSt.Render(state))
 			} else {
-				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
+				numSt := bg(lipgloss.NewStyle().Foreground(muted))
 				nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
+				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
 				stateSt := bg(lipgloss.NewStyle().Foreground(dotColor))
-				cell = colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(item.key) + bg(lipgloss.NewStyle()).Render(pad) + stateSt.Render("  "+state))
+				cell = colFill.Render(indent + numSt.Render(numStr) + nameSt.Render(item.key) + bg(lipgloss.NewStyle()).Render(pad) + stateSt.Render("  ") + dotSt.Render(dot) + stateSt.Render(state))
 			}
 			row.WriteString(cell)
 		}
@@ -376,7 +405,7 @@ func (p *picker) RenderSettings(w, h int) string {
 	lines = append(lines, ln(""))
 	lines = append(lines, ln(divLine))
 
-	hint := ln(keySt.Render("↑→↓←") + hintSt.Render(" navigate  ") +
+	hint := ln(keySt.Render("↑↓") + hintSt.Render(" navigate  ") +
 		keySt.Render("Enter") + hintSt.Render(" toggle/open  ") +
 		keySt.Render("Esc") + hintSt.Render(" close"))
 	lines = append(lines, hint)
