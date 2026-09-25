@@ -210,7 +210,7 @@ type m struct {
 	audioCancel       context.CancelFunc // kills the player process
 	audioFallbackPath string             // audio file for default-player fallback from popup
 	// API & Connection
-	baseURL, wsURL, backendDir, apiToken string
+	baseURL, wsURL, apiToken             string
 	client                               *http.Client
 	apiCtx                               context.Context
 	apiCancel                            context.CancelFunc
@@ -484,7 +484,7 @@ func (x m) Init() tea.Cmd {
 	if x.demoMode {
 		return tea.Batch(initDemo(), nextCursorBlink(), nextSpinnerTick(), setTerminalTitleCmd("WhatZap"), bgCmd)
 	}
-	return tea.Batch(ensureBackend(x.reqCtx(), x.client, x.baseURL, x.backendDir, x.apiToken), nextCursorBlink(), nextSpinnerTick(), setTerminalTitleCmd("WhatZap"), bgCmd)
+	return tea.Batch(ensureBackend(x.reqCtx(), x.client, x.baseURL, x.apiToken), nextCursorBlink(), nextSpinnerTick(), setTerminalTitleCmd("WhatZap"), bgCmd)
 }
 
 // reqCtx returns the model's request context, falling back to

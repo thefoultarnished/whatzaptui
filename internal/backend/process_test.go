@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"whatzap/internal/buildid"
 )
 
 // Startup check.
@@ -39,7 +42,7 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 	}
 	exePath := filepath.Join(tmpDir, exeName)
 
-	buildCmd := exec.Command("go", "build", "-o", exePath, "../../cmd/backend")
+	buildCmd := exec.Command("go", "build", "-o", exePath, "../../cmd/whatzap")
 	buildCmd.Dir = wd
 	buildOut, err := buildCmd.CombinedOutput()
 	if err != nil {
@@ -61,7 +64,7 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 		t.Fatalf("write session token: %v", err)
 	}
 
-	runCmd := exec.CommandContext(ctx, exePath)
+	runCmd := exec.CommandContext(ctx, exePath, "backend")
 	runCmd.Dir = tmpDir
 	runCmd.Env = append(os.Environ(),
 		"WHATZAP_DATA_DIR="+dataDir,
@@ -121,6 +124,31 @@ func TestBackendProcessStartsAndServesHealth(t *testing.T) {
 		t.Fatalf("backend health did not become ready: %v: %s", lastErr, strings.TrimSpace(string(rawLog)))
 	}
 
+	// Verify that /health reports the expected build ID matching exePath.
+	expectedBuild, err := buildid.OfFile(exePath)
+	if err != nil {
+		t.Fatalf("compute expected build id of %s: %v", exePath, err)
+	}
+	hReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	hRes, err := client.Do(hReq)
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	defer hRes.Body.Close()
+	var hPayload struct {
+		OK        bool   `json:"ok"`
+		Connected bool   `json:"connected"`
+		Build     string `json:"build"`
+	}
+	if err := json.NewDecoder(hRes.Body).Decode(&hPayload); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if hPayload.Build == "" {
+		t.Fatal("/health returned empty build ID")
+	}
+	if hPayload.Build != expectedBuild {
+		t.Fatalf("/health build ID = %q, want %q", hPayload.Build, expectedBuild)
+	}
 	unauthReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
 	unauthRes, err := client.Do(unauthReq)
 	if err != nil {

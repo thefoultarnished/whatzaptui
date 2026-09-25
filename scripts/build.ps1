@@ -12,7 +12,10 @@ try {
     switch ($Command) {
         "build" {
             New-Item -ItemType Directory -Force -Path $Dist | Out-Null
-            go build -o (Join-Path $Dist "backend.exe") ./cmd/backend
+            $oldBackend = Join-Path $Dist "backend.exe"
+            if (Test-Path $oldBackend) {
+                Remove-Item -LiteralPath $oldBackend -Force
+            }
             go build -o (Join-Path $Dist "whatzap.exe") ./cmd/whatzap
         }
         "test" {
