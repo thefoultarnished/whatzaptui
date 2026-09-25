@@ -46,6 +46,7 @@ func TestSettingsSelectorsOpenTheirOwnPicker(t *testing.T) {
 		{"Media preview", func(x m) bool { return x.mediaViewPicker.open }},
 		{"Chat list icons", func(x m) bool { return x.userlistIconPicker.open }},
 		{"Startup speed", func(x m) bool { return x.splashSpeedPicker.open }},
+		{"Theme", func(x m) bool { return x.themePicker.open }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,22 +130,58 @@ func TestSettingsNavigationAcrossSections(t *testing.T) {
 	if got := settingsDefs[p.idx].name; got != "Media icon style" {
 		t.Fatalf("Down from last toggle row = %q, want Media icon style", got)
 	}
-	// Down into the half-empty last row lands on its only cell.
+	// Down into the last row lands in the same column.
 	p.idx = settingsIndex(t, "Chat list icons")
 	press(tea.KeyDown)
-	if got := settingsDefs[p.idx].name; got != "Startup speed" {
-		t.Fatalf("Down into short row = %q, want Startup speed", got)
+	if got := settingsDefs[p.idx].name; got != "Theme" {
+		t.Fatalf("Down into last row = %q, want Theme", got)
 	}
-	// Right from a lone cell stays put.
-	press(tea.KeyRight)
+	p.idx = settingsIndex(t, "Media preview")
+	press(tea.KeyDown)
 	if got := settingsDefs[p.idx].name; got != "Startup speed" {
-		t.Fatalf("Right from lone cell moved to %q", got)
+		t.Fatalf("Down into last row = %q, want Startup speed", got)
+	}
+	// Right from the last cell stays put.
+	p.idx = settingsIndex(t, "Theme")
+	press(tea.KeyRight)
+	if got := settingsDefs[p.idx].name; got != "Theme" {
+		t.Fatalf("Right from last cell moved to %q", got)
 	}
 	// Up from OPTIONS returns to the last toggle row.
 	p.idx = settingsIndex(t, "Typing style")
 	press(tea.KeyUp)
 	if got := settingsDefs[p.idx].name; got != "Hide borders" {
 		t.Fatalf("Up from first option = %q, want Hide borders", got)
+	}
+}
+
+// Every ON/OFF toggle must show a status dot in front of its name so the
+// state is visible at a glance alongside the ON/OFF text.
+func TestSettingsTogglesShowStatusDot(t *testing.T) {
+	p := picker{title: "Settings", items: buildSettingsPickerItems()}
+	p.Open("")
+	out := ansiStripRe.ReplaceAllString(p.RenderSettings(120, 40), "")
+	lines := strings.Split(out, "\n")
+	for i, s := range settingsDefs {
+		if s.isSelector {
+			continue
+		}
+		var line string
+		for _, l := range lines {
+			if strings.Contains(l, p.items[i].key) {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Fatalf("toggle %q not rendered", s.name)
+		}
+		if !strings.Contains(line, "●") {
+			t.Fatalf("toggle %q line missing status dot: %q", s.name, strings.TrimSpace(line))
+		}
+		if !strings.Contains(line, "ON") && !strings.Contains(line, "OFF") {
+			t.Fatalf("toggle %q line missing ON/OFF text: %q", s.name, strings.TrimSpace(line))
+		}
 	}
 }
 

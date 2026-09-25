@@ -335,6 +335,9 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 						speed = "normal"
 					}
 					x.splashSpeedPicker.Open(speed)
+				case "Theme":
+					x.themePicker = picker{title: "Select Theme", items: buildThemePickerItems()}
+					x.themePicker.Open(currentConfig.ThemeName)
 				default:
 					x.typingAnimationPicker = picker{title: "Typing Style", items: buildTypingAnimationPickerItems()}
 					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
