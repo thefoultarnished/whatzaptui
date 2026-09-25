@@ -213,6 +213,19 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "Q":
 			return x, tea.Quit
 		case "r", "R":
+			// Expired QR while waiting for a scan: re-open the socket and
+			// ask the backend for a fresh QR handshake (/start is a no-op
+			// if a connect is already in flight). A new "qr" event resets
+			// qrReceivedAt and the panel flips back to the countdown.
+			if x.status == "qr" && x.qrExpired() {
+				x.status = "Connecting..."
+				x.sessionReady = false
+				x.invalidate()
+				return x, tea.Batch(
+					openWS(x.reqCtx(), x.wsURL, x.apiToken),
+					postEmpty(x.reqCtx(), x.client, x.baseURL+"/start", nil),
+				)
+			}
 			x.status = "Connecting..."
 			x.sessionReady = false
 			x.invalidate()

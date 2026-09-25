@@ -87,8 +87,26 @@ func TestRenderLinkPanelCountdown(t *testing.T) {
 	if !strings.Contains(fresh, "new code in 45s") {
 		t.Fatalf("expected 45s remaining: %q", fresh)
 	}
-	expired := stripAnsi((m{qrReceivedAt: time.Now().Add(-2 * time.Minute)}).renderLinkPanel(0))
+	expired := stripAnsi((m{qrReceivedAt: time.Now().Add(-62 * time.Second)}).renderLinkPanel(0))
 	if !strings.Contains(expired, "refreshing…") {
 		t.Fatalf("expected refreshing state: %q", expired)
+	}
+}
+
+func TestRenderLinkPanelExpiredQRShowsRestart(t *testing.T) {
+	out := stripAnsi((m{qrReceivedAt: time.Now().Add(-70 * time.Second)}).renderLinkPanel(31))
+	if !strings.Contains(out, "QR expired") {
+		t.Fatalf("expected expired QR prompt: %q", out)
+	}
+	if !strings.Contains(out, "[R] Restart session") {
+		t.Fatalf("expected restart hint: %q", out)
+	}
+	if strings.Contains(out, "refreshing…") {
+		t.Fatalf("expired QR must not show refreshing state: %q", out)
+	}
+	for i, l := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(l); w != linkPanelW {
+			t.Fatalf("line %d: width %d, want %d: %q", i, w, linkPanelW, l)
+		}
 	}
 }
