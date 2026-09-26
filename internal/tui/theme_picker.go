@@ -186,19 +186,22 @@ func (p *picker) RenderTheme(w, h int) string {
 
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	sectionSt := bg(lipgloss.NewStyle().Foreground(purple).Bold(true))
 	sectionDivSt := bg(lipgloss.NewStyle().Foreground(purple))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
 
 	fill := bg(lipgloss.NewStyle().Width(innerW))
 	ln := func(s string) string { return fill.Render(s) }
 
 	colFill := bg(lipgloss.NewStyle().Width(colW))
 
-	activeBg := lipgloss.NewStyle().Background(accent).Width(innerW)
+	// V2: the selected cell uses the shared selection surface, not an
+	// Action fill.
+	selBg := v2Color(bgSelected, accent)
+	activeBg := lipgloss.NewStyle().Background(selBg).Width(innerW)
 	activeLn := func(s string) string { return activeBg.Render(s) }
 
 	divLine := ln(divSt.Render(strings.Repeat("─", innerW)))
@@ -212,7 +215,10 @@ func (p *picker) RenderTheme(w, h int) string {
 	lines := []string{titleRow, divLine, ln("")}
 
 	indent := bg(lipgloss.NewStyle()).Render("  ")
-	activeIndent := lipgloss.NewStyle().Background(accent).Render("  ")
+	activeIndent := lipgloss.NewStyle().Background(selBg).Render("  ")
+	if themeV2 {
+		activeIndent = selectionMarker(selBg) + lipgloss.NewStyle().Background(selBg).Render(" ")
+	}
 
 	itemOffset := 0
 	for gi, g := range themeGroupDefs {
@@ -236,13 +242,21 @@ func (p *picker) RenderTheme(w, h int) string {
 				item := p.items[fi]
 				anomalyColor := lipgloss.Color(themeGroupOrder[fi].theme.AnomalyTag)
 				accentColor := lipgloss.Color(themeGroupOrder[fi].theme.Accent)
+				if themeV2 {
+					// Swatch + name preview each theme's identity pair.
+					anomalyColor = lipgloss.Color(themeGroupOrder[fi].theme.Brand)
+					accentColor = lipgloss.Color(themeGroupOrder[fi].theme.Purple)
+				}
 
 				var cell string
 				if fi == p.idx {
 					rowHasActive = true
-					activeRowSt := lipgloss.NewStyle().Background(accent)
+					activeRowSt := lipgloss.NewStyle().Background(selBg)
 					activeSwatchSt := activeRowSt.Foreground(anomalyColor)
 					themeItemSt := activeRowSt.Foreground(badgeInk).Bold(true).Underline(true)
+					if themeV2 {
+						themeItemSt = activeRowSt.Foreground(text).Bold(true)
+					}
 					cell = activeRowSt.Width(colW).Render(activeIndent + activeSwatchSt.Render("■ ") + themeItemSt.Render(item.label))
 				} else {
 					swatchSt := bg(lipgloss.NewStyle().Foreground(anomalyColor).Background(anomalyColor))
@@ -274,6 +288,7 @@ func (p *picker) RenderTheme(w, h int) string {
 		Padding(1, padH).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
+	box = withPanelOutline(box, w, h)
 
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).

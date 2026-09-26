@@ -23,6 +23,7 @@ var settingsDefs = []struct {
 	{"Tab Alerts", false, func() bool { return currentConfig.NotificationsEnabled }, func(v bool) { currentConfig.NotificationsEnabled = v }, nil},
 	{"Time on new line", false, func() bool { return currentConfig.TimestampNewLine }, func(v bool) { currentConfig.TimestampNewLine = v }, nil},
 	{"Hide borders", false, func() bool { return currentConfig.Borderless }, func(v bool) { currentConfig.Borderless = v }, nil},
+	{"Menu borders", false, func() bool { return !currentConfig.HideMenuBorder }, func(v bool) { currentConfig.HideMenuBorder = !v }, nil},
 	{"Show phone number", false, func() bool { return !currentConfig.HidePhoneNumber }, func(v bool) { currentConfig.HidePhoneNumber = !v }, nil},
 	{"Typing style", true, nil, nil, func() string {
 		return typingAnimationList[typingAnimationIndex(currentConfig.TypingAnimationStyle)].displayName
@@ -270,6 +271,18 @@ func (p *picker) toggleSetting() string {
 	return s.name + ": " + state
 }
 
+// reopenSettings rebuilds the settings picker after a sub-picker closes,
+// restoring the selection that was active when the sub-picker was opened
+// instead of jumping back to the first item.
+func (x *m) reopenSettings() {
+	x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+	x.settingsPicker.Open("")
+	if x.settingsReturnIdx >= 0 && x.settingsReturnIdx < len(settingsDefs) {
+		x.settingsPicker.idx = x.settingsReturnIdx
+	}
+	x.invalidate()
+}
+
 func (p *picker) RenderSettings(w, h int) string {
 	const numCols = settingsCols
 	const padH = 3
@@ -284,12 +297,12 @@ func (p *picker) RenderSettings(w, h int) string {
 	panelBg := lipgloss.Color(currentTheme.SidebarActiveBg)
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
-	headSt := bg(lipgloss.NewStyle().Foreground(muted).Bold(true))
-	headBarSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
+	headSt := bg(lipgloss.NewStyle().Foreground(v2Color(purple, muted)).Bold(true))
+	headBarSt := bg(lipgloss.NewStyle().Foreground(v2Color(purple, accent)).Bold(true))
 
 	fill := bg(lipgloss.NewStyle().Width(innerW))
 	ln := func(s string) string { return fill.Render(s) }
@@ -311,6 +324,9 @@ func (p *picker) RenderSettings(w, h int) string {
 	activeBg := lipgloss.NewStyle().Background(activePanelBg)
 	activeLn := func(s string) string { return lipgloss.NewStyle().Background(activePanelBg).Width(innerW).Render(s) }
 	activeIndent := activeBg.Render("  ")
+	if themeV2 {
+		activeIndent = selectionMarker(activePanelBg) + activeBg.Render(" ")
+	}
 
 	// Pad every name to the longest one so the ON/OFF and value text start
 	// at the same column in every cell.
@@ -351,7 +367,8 @@ func (p *picker) RenderSettings(w, h int) string {
 
 			var state string
 			var dotColor lipgloss.Color
-			var dot string
+			dot := "  " // reserve the same width as "● " so selector rows
+			// still fill the full column when highlighted.
 
 			if isSelector {
 				state = settingsDefs[localIdx].getStr()
@@ -361,14 +378,19 @@ func (p *picker) RenderSettings(w, h int) string {
 				state = "OFF"
 				if isOn {
 					state = "ON"
-					dotColor = lipgloss.Color("#22c55e")
+					dotColor = statusSuccess
 				} else {
-					dotColor = lipgloss.Color("#ef4444")
+					// OFF is a normal state, not an error (V2: TextMuted).
+					dotColor = v2Color(muted, lipgloss.Color("#ef4444"))
 				}
 				dot = "● "
 			}
 
 			state = truncate(state, stateW)
+			// Pad the value to the column's fixed width so the selected
+			// row's highlight always spans the full column, regardless of
+			// how short or long this option's value text is.
+			statePad := strings.Repeat(" ", max(0, stateW-lipgloss.Width(state)))
 			pad := strings.Repeat(" ", nameW-lipgloss.Width(item.key))
 
 			num := localIdx + 1
@@ -383,15 +405,21 @@ func (p *picker) RenderSettings(w, h int) string {
 				rowHasActive = true
 				numSt := activeBg.Foreground(muted).Bold(true)
 				nameSt := activeBg.Foreground(accent).Bold(true).Underline(true)
+				if themeV2 {
+					nameSt = activeBg.Foreground(text).Bold(true)
+				}
 				dotSt := activeBg.Foreground(dotColor).Bold(true)
 				stateSt := activeBg.Foreground(dotColor).Bold(true)
-				cell = colFill.Render(activeIndent + numSt.Render(numStr) + nameSt.Render(item.key) + activeBg.Render(pad) + stateSt.Render("  ") + dotSt.Render(dot) + stateSt.Render(state))
+				cell = colFill.Render(activeIndent + numSt.Render(numStr) + nameSt.Render(item.key) + activeBg.Render(pad) + stateSt.Render("  ") + dotSt.Render(dot) + stateSt.Render(state+statePad))
 			} else {
 				numSt := bg(lipgloss.NewStyle().Foreground(muted))
 				nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
+				if themeV2 {
+					nameSt = bg(lipgloss.NewStyle().Foreground(textSecondary))
+				}
 				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
 				stateSt := bg(lipgloss.NewStyle().Foreground(dotColor))
-				cell = colFill.Render(indent + numSt.Render(numStr) + nameSt.Render(item.key) + bg(lipgloss.NewStyle()).Render(pad) + stateSt.Render("  ") + dotSt.Render(dot) + stateSt.Render(state))
+				cell = colFill.Render(indent + numSt.Render(numStr) + nameSt.Render(item.key) + bg(lipgloss.NewStyle()).Render(pad) + stateSt.Render("  ") + dotSt.Render(dot) + stateSt.Render(state+statePad))
 			}
 			row.WriteString(cell)
 		}
@@ -415,6 +443,7 @@ func (p *picker) RenderSettings(w, h int) string {
 		Padding(1, padH).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
+	box = withPanelOutline(box, w, h)
 
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).

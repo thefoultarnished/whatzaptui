@@ -264,9 +264,18 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if action == "confirm" {
 			applyThemeByName(x.themePicker.Close(true))
 			saveConfig()
+			if x.themeFromSettings {
+				x.themeFromSettings = false
+				x.reopenSettings()
+			}
 		} else {
 			applyThemeByName(x.themePicker.Close(false))
-			x.invalidate()
+			if x.themeFromSettings {
+				x.themeFromSettings = false
+				x.reopenSettings()
+			} else {
+				x.invalidate()
+			}
 		}
 		return x, nil
 	}
@@ -313,6 +322,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) {
 					selName = settingsDefs[x.settingsPicker.idx].name
 				}
+				x.settingsReturnIdx = x.settingsPicker.idx
 				x.settingsPicker.Close(false)
 				switch selName {
 				case "Media icon style":
@@ -336,6 +346,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					x.splashSpeedPicker.Open(speed)
 				case "Theme":
+					x.themeFromSettings = true
 					x.themePicker = picker{title: "Select Theme", items: buildThemePickerItems()}
 					x.themePicker.Open(currentConfig.ThemeName)
 				default:
@@ -411,14 +422,10 @@ func (x *m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (
 	} else if action == "confirm" {
 		*cfgField = p.Close(true)
 		saveConfig()
-		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-		x.settingsPicker.Open("")
-		x.invalidate()
+		x.reopenSettings()
 	} else {
 		*cfgField = p.Close(false)
-		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
-		x.settingsPicker.Open("")
-		x.invalidate()
+		x.reopenSettings()
 	}
 	return *x, nil
 }

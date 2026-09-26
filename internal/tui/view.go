@@ -85,6 +85,9 @@ func (x m) viewInner() string {
 	side := x.renderSide(leftW, sideH)
 	cmdBox := x.renderCommandBox(leftW)
 	leftCol := lipgloss.JoinVertical(lipgloss.Left, side, cmdBox)
+	if themeV2 && bgSidebar != background {
+		leftCol = paintLines(leftCol, bgSidebar)
+	}
 
 	// Right column: main pane shrinks to accommodate multiline input.
 	mainH := max(1, outerH-4-replyBarH-attachmentBarH-extraInputH)
@@ -247,15 +250,15 @@ func renderOuterAppFrame(inner string, outerW, outerH, leftW int) string {
 		Width(outerW).
 		Height(outerH).
 		Border(lipgloss.RoundedBorder(), false, true, false, true).
-		BorderForeground(muted).
+		BorderForeground(borderSubtle).
 		Render(inner)
 	framedBody = connectFrameJunctions(framedBody)
 	// Use a "┬" junction in the top border and a "┴" junction in the
 	// bottom border where the vertical divider meets them, so the divider
 	// reads as continuous from the very top to the very bottom of the frame.
-	topRow := lipgloss.NewStyle().Foreground(muted).Render(
+	topRow := lipgloss.NewStyle().Foreground(borderSubtle).Render(
 		"╭" + strings.Repeat("─", leftW) + "┬" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╮")
-	botRow := lipgloss.NewStyle().Foreground(muted).Render(
+	botRow := lipgloss.NewStyle().Foreground(borderSubtle).Render(
 		"╰" + strings.Repeat("─", leftW) + "┴" + strings.Repeat("─", max(0, outerW-leftW-1)) + "╯")
 	return lipgloss.JoinVertical(lipgloss.Left, topRow, framedBody, botRow)
 }
@@ -376,13 +379,13 @@ func (x m) renderSearchOverlay(frame string, outerW, outerH int) string {
 
 	var lines []string
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(inputLine))
-	lines = append(lines, mutedStyle.Render(strings.Repeat("─", popupW-4)))
+	lines = append(lines, lipgloss.NewStyle().Foreground(borderSubtle).Render(strings.Repeat("─", popupW-4)))
 
 	switch {
 	case x.msgSearchLoading:
 		lines = append(lines, mutedStyle.Render("Searching..."))
 	case x.msgSearchErr != "":
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(x.msgSearchErr))
+		lines = append(lines, lipgloss.NewStyle().Foreground(v2Color(red, lipgloss.Color("9"))).Render(x.msgSearchErr))
 	case len(x.msgSearchResults) == 0 && strings.TrimSpace(x.msgSearchInput) != "":
 		// User has typed but not pressed Enter yet (or got 0 results after pressing Enter).
 		lines = append(lines, mutedStyle.Render("Press Enter to search."))
@@ -407,7 +410,11 @@ func (x m) renderSearchOverlay(frame string, outerW, outerH int) string {
 			rendered := renderSnippet(r.Snippet, snippetW)
 			line := prefix + rendered
 			if i == x.msgSearchSel {
-				line = lipgloss.NewStyle().Reverse(true).Render(prefix + stripSnippetTags(r.Snippet, snippetW))
+				if themeV2 {
+					line = selectionMarker(bgSelected) + lipgloss.NewStyle().Background(bgSelected).Foreground(text).Bold(true).Render(prefix+stripSnippetTags(r.Snippet, snippetW))
+				} else {
+					line = lipgloss.NewStyle().Reverse(true).Render(prefix + stripSnippetTags(r.Snippet, snippetW))
+				}
 			}
 			lines = append(lines, line)
 		}
@@ -421,7 +428,7 @@ func (x m) renderSearchOverlay(frame string, outerW, outerH int) string {
 		Height(popupH).
 		Padding(1, 2).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(muted).
+		BorderForeground(v2Color(borderFocus, muted)).
 		Background(lipgloss.Color(currentTheme.Background)).
 		Render(body)
 	return lipgloss.Place(outerW+2, outerH+2, lipgloss.Center, lipgloss.Center, popup, lipgloss.WithWhitespaceChars(" "))
@@ -561,24 +568,69 @@ func (x m) renderBootStages() string {
 		if isLast {
 			branch = "└─ "
 		}
-		branchStr := mutedStyle.Render(branch)
+		branchStr := lipgloss.NewStyle().Foreground(v2Color(textFaint, muted)).Render(branch)
 
 		var icon string
 		switch s.state {
 		case "done":
-			icon = accentStyle.Render("✓")
+			icon = lipgloss.NewStyle().Foreground(v2Color(statusSuccess, accent)).Bold(true).Render("✓")
 		case "active":
-			icon = logoStyle.Render(spinnerFrames[x.spinnerFrame])
+			icon = lipgloss.NewStyle().Foreground(v2Color(statusInfo, brand)).Bold(true).Render(spinnerFrames[x.spinnerFrame])
 		default:
-			icon = mutedStyle.Render("·")
+			icon = lipgloss.NewStyle().Foreground(v2Color(textFaint, muted)).Render("·")
 		}
 		rows = append(rows, branchStr+icon)
 	}
 	return strings.Join(rows, "\n")
 }
 
+// splashPalette holds every colour the signed-in splash draws. Legacy
+// themes keep the splash's original fixed palette; V2 themes map each
+// slot to a role token (docs/themes.md §5 Splash).
+type splashPalette struct {
+	tilde, name, ver, sep, pipe, footer, link          lipgloss.Color
+	border, dot1, dot2, dot3, title                    lipgloss.Color
+	railDone, railActive, railDim                      lipgloss.Color
+	lblDone, lblActive, lblDim                         lipgloss.Color
+	badgeDoneBg, badgeDoneFg, badgeActiveBg            lipgloss.Color
+	badgeActiveFg, badgeDimBg, badgeDimFg, leader      lipgloss.Color
+	keyEnterBg, keyEnterFg, keyBg, keyFg, keyLbl, hint lipgloss.Color
+	keyEnterLbl                                        lipgloss.Color
+}
+
+func currentSplashPalette() splashPalette {
+	if !themeV2 {
+		return splashPalette{
+			tilde: "#38bdf8", name: "#25D366", ver: "#64748b", sep: "#1e293b",
+			pipe: "#475569", footer: "#64748b", link: "#475569",
+			border: "#1e3a5f", dot1: "#f472b6", dot2: "#c084fc", dot3: "#38bdf8", title: "#38bdf8",
+			railDone: "#10b981", railActive: "#f59e0b", railDim: "#334155",
+			lblDone: "#f8fafc", lblActive: "#fef08a", lblDim: "#64748b",
+			badgeDoneBg: "#064e3b", badgeDoneFg: "#34d399", badgeActiveBg: "#78350f",
+			badgeActiveFg: "#fbbf24", badgeDimBg: "#1e293b", badgeDimFg: "#64748b", leader: "#1e293b",
+			keyEnterBg: "#065f46", keyEnterFg: "#34d399", keyBg: "#1e293b", keyFg: "#38bdf8",
+			keyLbl: "#94a3b8", hint: "#475569", keyEnterLbl: "#f1f5f9",
+		}
+	}
+	tint := func(c lipgloss.Color) lipgloss.Color {
+		return lipgloss.Color(blendHex(string(c), string(background), 0.75))
+	}
+	return splashPalette{
+		tilde: accent, name: brand, ver: muted, sep: borderSubtle,
+		pipe: borderSubtle, footer: muted, link: textFaint,
+		border: borderSubtle, dot1: brand, dot2: purple, dot3: accent, title: accent,
+		railDone: statusSuccess, railActive: statusInfo, railDim: textFaint,
+		lblDone: text, lblActive: statusInfo, lblDim: muted,
+		badgeDoneBg: tint(statusSuccess), badgeDoneFg: statusSuccess, badgeActiveBg: tint(statusInfo),
+		badgeActiveFg: statusInfo, badgeDimBg: bgPanel, badgeDimFg: muted, leader: textFaint,
+		keyEnterBg: tint(statusSuccess), keyEnterFg: statusSuccess, keyBg: bgPanel, keyFg: accent,
+		keyLbl: textSecondary, hint: muted, keyEnterLbl: text,
+	}
+}
+
 func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	stages := x.loadingStages()
+	sp := currentSplashPalette()
 
 	doneCount := 0
 	activeIdx := -1
@@ -599,17 +651,17 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 
 	// 1. Top and Bottom Screen Bars & Height Budget
 	barW := innerW
-	topTilde := lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("~")
-	topName := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#25D366")).Render("WhatZap")
-	topVer := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("v0.1.0")
+	topTilde := lipgloss.NewStyle().Foreground(sp.tilde).Render("~")
+	topName := lipgloss.NewStyle().Bold(true).Foreground(sp.name).Render("WhatZap")
+	topVer := lipgloss.NewStyle().Foreground(sp.ver).Render("v0.1.0")
 	leftTopPlain := "~ WhatZap v0.1.0"
 	leftTopStyled := topTilde + " " + topName + " " + topVer
 
 	rightTopText := "A private WhatsApp client for your terminal"
-	rightTopStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render(rightTopText)
+	rightTopStyled := lipgloss.NewStyle().Foreground(sp.footer).Render(rightTopText)
 
 	var topBarBlock string
-	sepCol := lipgloss.Color("#1e293b")
+	sepCol := sp.sep
 	sepLine := lipgloss.NewStyle().Foreground(sepCol).Render(strings.Repeat("─", barW))
 
 	if barW >= len(leftTopPlain)+len(rightTopText)+4 {
@@ -629,14 +681,14 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		}
 	}
 
-	botName := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#25D366")).Render("WhatZap")
-	botPipe := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("│")
-	botTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("Terminal. Private. Yours.")
+	botName := lipgloss.NewStyle().Bold(true).Foreground(sp.name).Render("WhatZap")
+	botPipe := lipgloss.NewStyle().Foreground(sp.pipe).Render("│")
+	botTag := lipgloss.NewStyle().Foreground(sp.footer).Render("Terminal. Private. Yours.")
 	leftBotPlain := "WhatZap │ Terminal. Private. Yours."
 	leftBotStyled := botName + "  " + botPipe + "  " + botTag
 
 	rightBotText := "https://github.com/whatzap"
-	rightBotStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(rightBotText)
+	rightBotStyled := lipgloss.NewStyle().Foreground(sp.link).Render(rightBotText)
 
 	var botBarBlock string
 	if barW >= len(leftBotPlain)+len(rightBotText)+4 {
@@ -691,7 +743,7 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 		cardW = max(24, innerW-2)
 	}
 	innerBoxW := cardW
-	borderCol := lipgloss.Color("#1e3a5f")
+	borderCol := sp.border
 	borderSt := lipgloss.NewStyle().Foreground(borderCol)
 
 	cardRow := func(content string) string {
@@ -701,12 +753,12 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	}
 
 	// 3. Telemetry card header and footer
-	dotPink := lipgloss.NewStyle().Foreground(lipgloss.Color("#f472b6")).Render("●")
-	dotPurple := lipgloss.NewStyle().Foreground(lipgloss.Color("#c084fc")).Render("●")
-	dotCyan := lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Render("●")
+	dotPink := lipgloss.NewStyle().Foreground(sp.dot1).Render("●")
+	dotPurple := lipgloss.NewStyle().Foreground(sp.dot2).Render("●")
+	dotCyan := lipgloss.NewStyle().Foreground(sp.dot3).Render("●")
 	dots := dotPink + " " + dotPurple + " " + dotCyan
-	headerTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#38bdf8")).Render("CONNECTING TO WHATSAPP")
-	verTag := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b")).Render("v0.1.0")
+	headerTitle := lipgloss.NewStyle().Bold(true).Foreground(sp.title).Render("CONNECTING TO WHATSAPP")
+	verTag := lipgloss.NewStyle().Foreground(sp.ver).Render("v0.1.0")
 	fixedW := 45
 	availDashes := max(2, cardW-fixedW)
 	leftDashes := availDashes / 2
@@ -720,19 +772,19 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	botBorder := borderSt.Render("╰" + strings.Repeat("─", cardW-2) + "╯")
 
 	// 4. Vertical branched telemetry rows
-	railDone := lipgloss.NewStyle().Foreground(lipgloss.Color("#10b981"))
-	railActive := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
-	railDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#334155"))
+	railDone := lipgloss.NewStyle().Foreground(sp.railDone)
+	railActive := lipgloss.NewStyle().Foreground(sp.railActive)
+	railDim := lipgloss.NewStyle().Foreground(sp.railDim)
 
-	lblDone := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f8fafc"))
-	lblActive := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#fef08a"))
-	lblDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748b"))
+	lblDone := lipgloss.NewStyle().Bold(true).Foreground(sp.lblDone)
+	lblActive := lipgloss.NewStyle().Bold(true).Foreground(sp.lblActive)
+	lblDim := lipgloss.NewStyle().Foreground(sp.lblDim)
 
-	badgeDone := lipgloss.NewStyle().Background(lipgloss.Color("#064e3b")).Foreground(lipgloss.Color("#34d399")).Bold(true)
-	badgeActive := lipgloss.NewStyle().Background(lipgloss.Color("#78350f")).Foreground(lipgloss.Color("#fbbf24")).Bold(true)
-	badgeDim := lipgloss.NewStyle().Background(lipgloss.Color("#1e293b")).Foreground(lipgloss.Color("#64748b"))
+	badgeDone := lipgloss.NewStyle().Background(sp.badgeDoneBg).Foreground(sp.badgeDoneFg).Bold(true)
+	badgeActive := lipgloss.NewStyle().Background(sp.badgeActiveBg).Foreground(sp.badgeActiveFg).Bold(true)
+	badgeDim := lipgloss.NewStyle().Background(sp.badgeDimBg).Foreground(sp.badgeDimFg)
 
-	leaderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#1e293b"))
+	leaderStyle := lipgloss.NewStyle().Foreground(sp.leader)
 
 	gated := x.loadingStages()
 	labels := []string{"backend", "authentication", "chats", "contacts"}
@@ -803,16 +855,16 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	cardBox := strings.Join(cardRows, "\n")
 
 	// 8. Command Action Bar - Physical Keycap Styling
-	keycapEnter := lipgloss.NewStyle().Background(lipgloss.Color("#065f46")).Foreground(lipgloss.Color("#34d399")).Bold(true).Render(" [ENTER] ")
-	lblEnter := lipgloss.NewStyle().Foreground(lipgloss.Color("#f1f5f9")).Render(" Open client")
+	keycapEnter := lipgloss.NewStyle().Background(sp.keyEnterBg).Foreground(sp.keyEnterFg).Bold(true).Render(" [ENTER] ")
+	lblEnter := lipgloss.NewStyle().Foreground(sp.keyEnterLbl).Render(" Open client")
 	btnEnter := keycapEnter + lblEnter
 
-	keycapQ := lipgloss.NewStyle().Background(lipgloss.Color("#1e293b")).Foreground(lipgloss.Color("#38bdf8")).Bold(true).Render(" [Q] ")
-	lblQ := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Render(" Quit")
+	keycapQ := lipgloss.NewStyle().Background(sp.keyBg).Foreground(sp.keyFg).Bold(true).Render(" [Q] ")
+	lblQ := lipgloss.NewStyle().Foreground(sp.keyLbl).Render(" Quit")
 	btnQ := keycapQ + lblQ
 
-	keycapR := lipgloss.NewStyle().Background(lipgloss.Color("#1e293b")).Foreground(lipgloss.Color("#38bdf8")).Bold(true).Render(" [R] ")
-	lblR := lipgloss.NewStyle().Foreground(lipgloss.Color("#94a3b8")).Render(" Reconnect")
+	keycapR := lipgloss.NewStyle().Background(sp.keyBg).Foreground(sp.keyFg).Bold(true).Render(" [R] ")
+	lblR := lipgloss.NewStyle().Foreground(sp.keyLbl).Render(" Reconnect")
 	btnR := keycapR + lblR
 	sep := borderSt.Render("│")
 
@@ -820,7 +872,7 @@ func (x m) renderSignedInSplash(innerW, innerH, outerW, outerH int) string {
 	cmdBox := cmdContent
 
 	// 9. Hint at Bottom
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render("Press any key to continue")
+	hint := lipgloss.NewStyle().Foreground(sp.hint).Render("Press any key to continue")
 
 	// 11. Assemble Center Content
 	var allSections []string
@@ -876,9 +928,9 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	logo := " " + logoStyle.Render("WhatZap")
 	statusPart := ""
 	if totalUnread > 0 {
-		statusPart = amberStyle.Render(strconv.Itoa(totalUnread)+" unread") + " "
+		statusPart = lipgloss.NewStyle().Foreground(v2Color(accent, amber)).Bold(true).Render(strconv.Itoa(totalUnread)+" unread") + " "
 	} else if x.demoMode {
-		statusPart = " " + lipgloss.NewStyle().Foreground(brand).Render("demo") + " "
+		statusPart = " " + lipgloss.NewStyle().Foreground(v2Color(muted, brand)).Render("demo") + " "
 	}
 
 	statusW := lipgloss.Width(statusPart)
@@ -888,34 +940,35 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	}
 	logoBlock := lipgloss.NewStyle().Width(padW).Render(logo)
 	leftContent := logoBlock + statusPart
-	leftStr := leftContent + lipgloss.NewStyle().Foreground(muted).Render("│")
+	leftStr := leftContent + lipgloss.NewStyle().Foreground(borderSubtle).Render("│")
 
+	// V2: the two badges show the theme's identity pair, Brand + Emphasis.
 	themeMood := lipgloss.NewStyle().
 		Foreground(badgeInk).
-		Background(anomalyTag).
+		Background(v2Color(brand, anomalyTag)).
 		Bold(true).
 		Render(" ◉ MOOD ")
 	themeName := lipgloss.NewStyle().
 		Foreground(badgeInk).
-		Background(accent).
+		Background(v2Color(purple, accent)).
 		Bold(true).
 		Render(" " + strings.ToUpper(currentConfig.ThemeName) + " ")
 	rightStr := themeMood + themeName + " "
 	rightVW := lipgloss.Width(rightStr)
 	centerW := max(0, contentW-(leftW+1)-rightVW)
 
+	// Notices and sync progress are StatusInfo (legacy themes: Amber).
+	infoStyle := lipgloss.NewStyle().Foreground(statusInfo).Bold(true)
+	shineStyle := lipgloss.NewStyle().Foreground(fxShine).Bold(true)
 	centerContent := " "
 	if x.topBarMsg != "" && x.topBarShown > 0 {
-		centerContent = " " + amberStyle.Render(graphemeSliceN(x.topBarMsg, x.topBarShown))
+		centerContent = " " + infoStyle.Render(graphemeSliceN(x.topBarMsg, x.topBarShown))
 	} else if x.syncingContacts {
-		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
-		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing contacts...", amberStyle, shineStyle, x.shineFrame)
+		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing contacts...", infoStyle, shineStyle, x.shineFrame)
 	} else if x.syncingGroups {
-		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
-		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing groups...", amberStyle, shineStyle, x.shineFrame)
+		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing groups...", infoStyle, shineStyle, x.shineFrame)
 	} else if x.syncingHistory {
-		shineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
-		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing history...", amberStyle, shineStyle, x.shineFrame)
+		centerContent = " " + renderShine(spinnerFrames[x.spinnerFrame]+" syncing history...", infoStyle, shineStyle, x.shineFrame)
 	} else if x.active != "" {
 		displayName := x.nameFor(x.active)
 		var avatarStr string
@@ -965,16 +1018,24 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 	headBlock := lipgloss.NewStyle().Width(contentW).Render(headLine)
 	// Use a 4-way cross junction "┼" where the vertical divider intersects
 	// the horizontal header separator so lines connect in all four directions.
-	borderRow := lipgloss.NewStyle().Foreground(muted).
+	borderRow := lipgloss.NewStyle().Foreground(borderSubtle).
 		Render(strings.Repeat("─", leftW) + "┼" + strings.Repeat("─", max(0, contentW-leftW-1)))
 	return lipgloss.JoinVertical(lipgloss.Left, headBlock, borderRow)
 }
 
 func renderHeaderAvatar(name, id string) string {
 	initials := headerAvatarInitials(name, id)
+	// V2: the avatar is "them" — Emphasis for 1:1, the group's own colour.
+	fill := brand
+	if themeV2 {
+		fill = purple
+		if strings.HasSuffix(id, "@g.us") {
+			fill = senderColor(id)
+		}
+	}
 	return lipgloss.NewStyle().
 		Foreground(buttonInk).
-		Background(brand).
+		Background(fill).
 		Bold(true).
 		Render(" " + initials + " ")
 }
@@ -1039,11 +1100,15 @@ func (x m) renderCommandBox(leftW int) string {
 	if !x.leftInputFocused && x.leftInput == "" {
 		cmdContent = cmdBadge + ghostStyle.Render(" Ctrl+K for commands")
 	}
-	topRow := lipgloss.NewStyle().Foreground(muted).
+	cmdBorder := borderSubtle
+	if themeV2 && x.leftInputFocused {
+		cmdBorder = borderFocus
+	}
+	topRow := lipgloss.NewStyle().Foreground(cmdBorder).
 		Render(strings.Repeat("─", leftW) + "┼")
 	contentRow := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, true, false, false).
-		BorderForeground(muted).
+		BorderForeground(borderSubtle).
 		Width(leftW).
 		Foreground(text).
 		Render(cmdContent)
@@ -1075,7 +1140,7 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	textAreaW := max(1, rightW-1-sendBadgeW-sendGap)
 	var inputDisplay string
 	if inputLocked {
-		inputDisplay = lipgloss.NewStyle().Foreground(red).Render(" blacklisted | Ctrl+K then /whitelist")
+		inputDisplay = lipgloss.NewStyle().Foreground(v2Color(amber, red)).Render(" blacklisted | Ctrl+K then /whitelist")
 	} else if x.inputAllSelected {
 		inputDisplay = lipgloss.NewStyle().Foreground(text).Render(" ") +
 			lipgloss.NewStyle().Foreground(buttonInk).Background(accent).Render(typedInput)
@@ -1135,7 +1200,7 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	} else if x.mode == "nav" || (x.mode == "chat" && x.sidebarFocused) {
 		inputDisplay = lipgloss.NewStyle().Foreground(muted).Render(" Press Enter/Tab to start chatting")
 	} else if inputLocked {
-		inputDisplay = lipgloss.NewStyle().Foreground(muted).Render(" blacklisted | Ctrl+K then /whitelist")
+		inputDisplay = lipgloss.NewStyle().Foreground(v2Color(amber, muted)).Render(" blacklisted | Ctrl+K then /whitelist")
 	} else if rightFocused && !x.emojiPickerOpen && typedInput == "" {
 		if x.cursorOn {
 			inputDisplay = lipgloss.NewStyle().Foreground(muted).Render(" ") +
@@ -1155,9 +1220,13 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	if showSend {
 		rightContent = lipgloss.JoinHorizontal(lipgloss.Top, textRendered, " "+sendBadge)
 	}
+	inputBorder := borderSubtle
+	if themeV2 && rightFocused {
+		inputBorder = borderFocus
+	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(muted).
+		BorderForeground(inputBorder).
 		Foreground(text).
 		Render(rightContent)
 }
@@ -1176,6 +1245,9 @@ func (x m) renderReplyBar(contentW, rightW int) string {
 	rText := stripAnsi(strings.ReplaceAll(renderMessageBody(displayReplyTo.Message), "\n", " "))
 	quoteTextColor := quotedReceivedText
 	nameColor := receivedName
+	if strings.HasSuffix(x.active, "@g.us") {
+		nameColor = senderColor(x.senderIDForMsg(*displayReplyTo))
+	}
 	if displayReplyTo.Key.FromMe {
 		quoteTextColor = quotedSentText
 		nameColor = sentName
@@ -1192,6 +1264,13 @@ func (x m) renderReplyBar(contentW, rightW int) string {
 		lipgloss.NewStyle().Foreground(nameColor).Bold(true).Render(senderText) +
 		lipgloss.NewStyle().Foreground(quoteTextColor).Render(rText) +
 		lipgloss.NewStyle().Foreground(muted).Render(suffixText)
+	if themeV2 {
+		// Reply bar sits on its own tinted surface (BgReply).
+		if pad := rightW - lipgloss.Width(bar); pad > 0 {
+			bar += strings.Repeat(" ", pad)
+		}
+		return applyBgToAnsiString(bar, bgReply)
+	}
 	return lipgloss.NewStyle().Width(rightW).Render(bar)
 }
 
@@ -1205,7 +1284,7 @@ func (x m) renderAttachmentBar(rightW int) string {
 		textWidth = 0
 	}
 	label = truncateDisplayWidth(label, textWidth)
-	bar := lipgloss.NewStyle().Foreground(brand).Bold(true).Render(" 📎 ") +
+	bar := lipgloss.NewStyle().Foreground(v2Color(accent, brand)).Bold(true).Render(" 📎 ") +
 		lipgloss.NewStyle().Foreground(text).Render(label) +
 		lipgloss.NewStyle().Foreground(muted).Render("  Esc cancel")
 	return lipgloss.NewStyle().Width(rightW).Render(bar)
@@ -1248,6 +1327,13 @@ func (x m) renderSide(w, h int) string {
 	labelStyle := lipgloss.NewStyle().Bold(true)
 	shortcutStyle := lipgloss.NewStyle().Foreground(accent).Italic(true)
 	activeShortcutStyle := lipgloss.NewStyle().Foreground(shadeColor(buttonInk, 0.8)).Italic(true)
+	if themeV2 {
+		// Calm tabs: the active tab uses the shared selection surface
+		// instead of a full Action fill.
+		chatsActiveStyle = chatsActiveStyle.Background(bgSelected).Foreground(text)
+		peopleActiveStyle = peopleActiveStyle.Background(bgSelected).Foreground(text)
+		activeShortcutStyle = lipgloss.NewStyle().Foreground(textSecondary).Background(bgSelected).Italic(true)
+	}
 
 	var chatsTab, contactsTab string
 	if x.sidebarTab == "chats" {
@@ -1258,23 +1344,23 @@ func (x m) renderSide(w, h int) string {
 		contactsTab = peopleActiveStyle.Render("People " + activeShortcutStyle.Render("alt+p"))
 	}
 	tabsLine := chatsTab + contactsTab
-	underlineColor := muted
+	underlineColor := borderSubtle
 	if x.mode == "search" {
-		underlineColor = accent
+		underlineColor = v2Color(borderFocus, accent)
 	}
 
 	sideStyle := lipgloss.NewStyle().
 		Width(w).
 		Padding(0, 0, 0, 0).
 		Border(lipgloss.NormalBorder(), false, true, false, false).
-		BorderForeground(muted)
+		BorderForeground(borderSubtle)
 
 	tabsRow := sideStyle.Height(1).Render(tabsLine)
 	searchRow := sideStyle.Height(1).Render(x.renderSearchBox())
 
 	// Divider rows span the full width (instead of the padded content area)
 	// so the "─" line reaches all the way to the left edge of the sidebar.
-	tabsDivider := lipgloss.NewStyle().Foreground(muted).Render(strings.Repeat("─", w) + "┤")
+	tabsDivider := lipgloss.NewStyle().Foreground(borderSubtle).Render(strings.Repeat("─", w) + "┤")
 	searchDivider := lipgloss.NewStyle().Foreground(underlineColor).Render(strings.Repeat("─", w) + "┤")
 
 	viewRows := max(1, h-4)
@@ -1342,7 +1428,17 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		rowBase := lipgloss.NewStyle()
 		bg := lipgloss.Color("")
 		fg := lipgloss.Color("")
-		if highlighted {
+		if themeV2 {
+			// One calm selection style; whitelist state moves to the
+			// coloured number/icon prefix instead of a red/green row fill.
+			if highlighted {
+				bg, fg = bgSelected, text
+				rowBase = rowBase.Background(bg).Foreground(fg).Bold(isSel && navActive)
+			} else if isActive {
+				bg, fg = bgActive, text
+				rowBase = rowBase.Background(bg).Foreground(fg)
+			}
+		} else if highlighted {
 			bg = sidebarWhitelistActiveBg
 			fg = buttonInk
 			if !whitelisted {
@@ -1402,6 +1498,14 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		}
 		var content string
 		switch {
+		case themeV2:
+			content = v2SidebarRowContent(nameText, numLabel, nameWidth-adjustW, sidebarRowState{
+				unread:      hasUnread,
+				selected:    highlighted,
+				active:      isActive,
+				bold:        isSel && navActive,
+				whitelisted: whitelisted,
+			}, bg, x.shineFrame+i*4)
 		case hasUnread:
 			// Shine plays for unread rows in every state (highlighted/active too).
 			// The wave travels only across the name, so it bounces at the last
@@ -1456,13 +1560,58 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			}
 		}
 		leftPad := " "
-		if highlighted || isActive {
+		if themeV2 && highlighted {
+			leftPad = selectionMarker(bg)
+		} else if highlighted || isActive {
 			leftPad = lipgloss.NewStyle().Background(bg).Render(" ")
 		}
 		line := rowBase.Width(rowWidth).Render(leftPad + content)
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+type sidebarRowState struct {
+	unread, selected, active, bold, whitelisted bool
+}
+
+// v2SidebarRowContent renders a chat row's label for V2 themes. The
+// number/icon prefix doubles as the whitelist marker (StatusSuccess when
+// allowed, TextMuted otherwise); read chats step back to TextSecondary and
+// unread ones are TextPrimary bold with the shine sweep.
+func v2SidebarRowContent(nameText, prefix string, width int, st sidebarRowState, bg lipgloss.Color, frame int) string {
+	base := lipgloss.NewStyle()
+	if st.selected || st.active {
+		base = base.Background(bg)
+	}
+	label := padRight(nameText, width)
+	head, rest := "", label
+	if prefix != "" && strings.HasPrefix(label, prefix) {
+		head, rest = prefix, label[len(prefix):]
+	}
+	var sb strings.Builder
+	if head != "" {
+		markFg := muted
+		if st.whitelisted {
+			markFg = statusSuccess
+		}
+		sb.WriteString(base.Foreground(markFg).Render(head))
+	}
+	nameFg := textSecondary
+	if st.unread || st.selected || st.active {
+		nameFg = text
+	}
+	nameSt := base.Foreground(nameFg).Bold(st.unread || (st.selected && st.bold))
+	if !st.unread {
+		sb.WriteString(nameSt.Render(rest))
+		return sb.String()
+	}
+	trimmed := strings.TrimRight(rest, " ")
+	sb.WriteString(renderShine(trimmed, nameSt, base.Foreground(fxShine).Bold(true), frame))
+	if pad := len(rest) - len(trimmed); pad > 0 {
+		sb.WriteString(base.Render(strings.Repeat(" ", pad)))
+	}
+	return sb.String()
 }
 
 func chatMessageWrapWidth(w int, msg string) int {
@@ -1610,7 +1759,7 @@ func renderTextWithLinks(s string, baseStyle lipgloss.Style, original ...string)
 		origURLs = urlRegex.FindAllString(original[0], -1)
 	}
 	linkStyle := baseStyle.Copy().
-		Foreground(lipgloss.Color("#89b4fa")).
+		Foreground(textLink).
 		Underline(true)
 	var sb strings.Builder
 	lastIdx := 0
@@ -1694,9 +1843,9 @@ func renderUploadProgress(pct, availableW int) string {
 
 func (x m) renderWelcomePane(w, h int) string {
 	keyStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-	descStyle := lipgloss.NewStyle().Foreground(text)
+	descStyle := lipgloss.NewStyle().Foreground(v2Color(textSecondary, text))
 	secStyle := lipgloss.NewStyle().Foreground(purple).Bold(true)
-	divColor := lipgloss.NewStyle().Foreground(muted)
+	divColor := lipgloss.NewStyle().Foreground(borderSubtle)
 
 	// content column width
 	col := 38
@@ -1925,7 +2074,7 @@ func (x m) renderMain(w, h int) string {
 				selectColor = lipgloss.Color(blendHex(string(accent), string(muted), 0.45))
 			}
 		} else if isClickedSelected {
-			selectColor = brand
+			selectColor = v2Color(accent, brand)
 		}
 		replySelected := isClickedSelected && (x.replyPickMode || x.editPickMode)
 		applySelectedBG := func(st lipgloss.Style) lipgloss.Style {
@@ -2071,10 +2220,14 @@ func (x m) renderMain(w, h int) string {
 					qText = string([]rune(qText)[:50]) + "..."
 				}
 				qSenderColor := receivedName
-				qTextColor := receivedText
+				if isGroup {
+					qSenderColor = senderColor(qParticipant)
+				}
+				// V2: quoted text steps back to the ChatQuoted… tints.
+				qTextColor := v2Color(quotedReceivedText, receivedText)
 				if qFromMe {
 					qSenderColor = sentName
-					qTextColor = sentText
+					qTextColor = v2Color(quotedSentText, sentText)
 				}
 				quotePrefix := "  ╭─ "
 				quoteSuffix := " ─╮ "
@@ -2186,7 +2339,7 @@ func (x m) renderMain(w, h int) string {
 			lineParts := []string{}
 			if !msg.Key.FromMe && i == 0 && isGroup {
 				lineParts = append(lineParts, applyBodyBG(lipgloss.NewStyle().
-					Foreground(receivedName).
+					Foreground(senderColor(x.senderIDForMsg(msg))).
 					Bold(true)).
 					Render(senderName+": "))
 			} else if !msg.Key.FromMe && i == 0 && !isGroup {
@@ -2510,9 +2663,16 @@ func (x m) assembleChatLines(w, h int, msgBlocks [][]string, msgTimestamps []int
 		typingIcons := getTypingIcons(currentConfig.TypingAnimationStyle)
 		icon := typingIcons[x.shineFrame%len(typingIcons)]
 		text := icon + " " + name + " is typing..."
-		baseSt := lipgloss.NewStyle().Foreground(anomalyTag)
-		shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true)
-		lines = append(lines, renderShine(text, shineSt, baseSt, x.shineFrame))
+		if themeV2 {
+			// Typing is "them": Emphasis with the shared shine sweep.
+			baseSt := lipgloss.NewStyle().Foreground(purple)
+			shineSt := lipgloss.NewStyle().Foreground(fxShine).Bold(true)
+			lines = append(lines, renderShine(text, baseSt, shineSt, x.shineFrame))
+		} else {
+			baseSt := lipgloss.NewStyle().Foreground(anomalyTag)
+			shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true)
+			lines = append(lines, renderShine(text, shineSt, baseSt, x.shineFrame))
+		}
 	}
 	return lipgloss.NewStyle().
 		Width(w).

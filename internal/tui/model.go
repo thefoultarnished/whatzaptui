@@ -66,6 +66,26 @@ type Theme struct {
 	ReplyPreviewBg, MessageSelectedBg                  string
 	MediaTokenBg, MediaTokenPulseBg                    string
 	Background                                         string
+
+	// V2 marks a theme built on the role tokens below (docs/themes.md).
+	// normalizeTheme back-fills the legacy fields above from them, and
+	// fills them from the legacy fields for themes that aren't migrated yet.
+	V2 bool
+
+	BgApp, BgSidebar, BgPanel, BgSelected, BgActive   string
+	BgReply, BgMessageSelected                        string
+	TextPrimary, TextSecondary, TextMuted, TextFaint  string
+	TextOnFill, TextLink, TextMatch                   string
+	BorderSubtle, BorderFocus                         string
+	Action, Emphasis                                  string
+	StatusSuccess, StatusWarning, StatusDanger        string
+	StatusInfo                                        string
+	ChatSentText, ChatReceivedText                    string
+	ChatSentName, ChatReceivedName                    string
+	ChatQuotedSent, ChatQuotedReceived                string
+	TagImage, TagVideo, TagAudio, TagFile, TagSticker string
+	TagContact, TagPoll, TagLocation, TagSystem       string
+	FxShine                                           string
 }
 
 var currentTheme Theme
@@ -87,6 +107,7 @@ type Config struct {
 	UserlistIconStyle    string `json:"userlist_icon_style,omitempty"`
 	HidePhoneNumber      bool   `json:"hide_phone_number,omitempty"`
 	SplashStageSpeed     string `json:"splash_stage_speed,omitempty"`
+	HideMenuBorder       bool   `json:"hide_menu_border,omitempty"`
 	// ShowAllContacts disables the stored-only People filter. Default
 	// false: the People tab shows address-book contacts plus renamed
 	// and whitelisted chats, hiding push-name-only strangers.
@@ -276,6 +297,8 @@ type m struct {
 	mediaViewPicker       picker
 	userlistIconPicker    picker
 	splashSpeedPicker     picker
+	settingsReturnIdx     int  // settings selection to restore when a sub-picker closes
+	themeFromSettings     bool // theme picker opened from settings; close returns there
 	confirmDialog         confirmDialog
 	fontTestOpen          bool
 	emojiPickerOpen       bool

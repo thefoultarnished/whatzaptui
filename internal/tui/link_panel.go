@@ -33,8 +33,8 @@ func (x m) qrExpired() bool {
 // renderLinkPanel is the left column of the QR login screen, laid out to be
 // exactly height rows tall (when it fits) so it lines up with the QR box.
 func (x m) renderLinkPanel(height int) string {
-	sub := lerpColor(muted, text, 0.55)
-	rail := lerpColor(muted, brand, 0.35)
+	sub := v2Color(textSecondary, lerpColor(muted, text, 0.55))
+	rail := v2Color(borderSubtle, lerpColor(muted, brand, 0.35))
 	subSt := lipgloss.NewStyle().Foreground(sub)
 	textSt := lipgloss.NewStyle().Foreground(text)
 	brandSt := lipgloss.NewStyle().Foreground(brand)
@@ -76,7 +76,7 @@ func (x m) renderLinkPanel(height int) string {
 		for i, s := range steps {
 			title := textSt.Bold(true).Render(s.title)
 			last := i == len(steps)-1
-			chip := lipgloss.NewStyle().Foreground(qrDark).Background(brand).Bold(true).Render(fmt.Sprintf(" %d ", i+1))
+			chip := lipgloss.NewStyle().Foreground(v2Color(textOnFill, qrDark)).Background(brand).Bold(true).Render(fmt.Sprintf(" %d ", i+1))
 			railGlyph := " │ "
 			if last {
 				railGlyph = "   "
@@ -111,7 +111,7 @@ func (x m) renderLinkPanel(height int) string {
 		fill = lerpColor(amber, brand, (frac-0.2)/0.3)
 	}
 	fillSt := lipgloss.NewStyle().Foreground(fill)
-	trackSt := lipgloss.NewStyle().Foreground(lerpColor(muted, qrDark, 0.3))
+	trackSt := lipgloss.NewStyle().Foreground(v2Color(textFaint, lerpColor(muted, qrDark, 0.3)))
 	filled := int(frac*float64(linkPanelW) + 0.5)
 	var bar strings.Builder
 	for i := range linkPanelW {
@@ -122,7 +122,7 @@ func (x m) renderLinkPanel(height int) string {
 		}
 	}
 	spinner := brandSt.Render(nodeFrames[x.spinnerFrame%len(nodeFrames)])
-	waiting := renderShine("Waiting for scan", brandSt, lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true), x.shineFrame)
+	waiting := renderShine("Waiting for scan", brandSt, lipgloss.NewStyle().Foreground(fxShine).Bold(true), x.shineFrame)
 	secs := int((left + time.Second - 1) / time.Second)
 	countdown := subSt.Render("new code in ") + textSt.Bold(true).Render(fmt.Sprintf("%ds", secs))
 	if secs == 0 {

@@ -26,10 +26,10 @@ func renderFontTest(w, h int) string {
 	panelBg := lipgloss.Color(currentTheme.SidebarActiveBg)
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
 	kindSt := bg(lipgloss.NewStyle().Foreground(brand).Bold(true))
 	textSt := bg(lipgloss.NewStyle().Foreground(muted))
 	nerdSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
@@ -102,6 +102,7 @@ func renderFontTest(w, h int) string {
 		Padding(1, padH).
 		Width(panelW).
 		Render(strings.Join(lines, "\n"))
+	box = withPanelOutline(box, w, h)
 
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).

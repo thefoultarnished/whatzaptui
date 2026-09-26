@@ -79,7 +79,7 @@ func (d *confirmDialog) Render(w, h int) string {
 	titleSt := bg(lipgloss.NewStyle().Foreground(red).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
 	msgSt := bg(lipgloss.NewStyle().Foreground(text))
 
 	fill := bg(lipgloss.NewStyle().Width(innerW))
@@ -116,6 +116,22 @@ func (d *confirmDialog) Render(w, h int) string {
 		}
 		return bg(lipgloss.NewStyle().Foreground(text)).Padding(0, 2).Render(label)
 	}
+	if themeV2 {
+		// Focused button is a full-strength fill with TextOnFill (the 55%
+		// blends above fail contrast); unfocused is text only.
+		yesActiveBg = lipgloss.NewStyle().Background(red)
+		noActiveBg = lipgloss.NewStyle().Background(accent)
+		renderButton = func(label string, activeBg lipgloss.Style, active bool) string {
+			if active {
+				return activeBg.Foreground(textOnFill).Bold(true).Padding(0, 2).Render(label)
+			}
+			fg := textSecondary
+			if label == "Yes" {
+				fg = red
+			}
+			return bg(lipgloss.NewStyle().Foreground(fg)).Padding(0, 2).Render(label)
+		}
+	}
 
 	yesBtn := renderButton("Yes", yesActiveBg, d.idx == 0)
 	noBtn := renderButton("No", noActiveBg, d.idx == 1)
@@ -136,6 +152,7 @@ func (d *confirmDialog) Render(w, h int) string {
 		Padding(1, padH).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
+	box = withPanelOutline(box, w, h)
 
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).

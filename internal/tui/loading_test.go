@@ -550,14 +550,18 @@ func TestRenderPixelWordmarkThemeDriven(t *testing.T) {
 				t.Errorf("%s: wordmark missing theme Text colour %s", tt.name, tt.theme.Text)
 			}
 
-			// "Zap" starts at Brand and ends at Accent
+			// "Zap" starts at Brand and ends at Accent (V2 themes: at
+			// Emphasis, the other half of the identity pair).
 			brandColor := lipgloss.Color(tt.theme.Brand)
-			accentColor := lipgloss.Color(tt.theme.Accent)
+			endHex := tt.theme.Accent
+			if tt.theme.V2 {
+				endHex = tt.theme.Emphasis
+			}
 			if !strings.Contains(mark, prefix(brandColor)) {
 				t.Errorf("%s: wordmark missing theme Brand colour %s", tt.name, tt.theme.Brand)
 			}
-			if !strings.Contains(mark, prefix(accentColor)) {
-				t.Errorf("%s: wordmark missing theme Accent colour %s", tt.name, tt.theme.Accent)
+			if !strings.Contains(mark, prefix(lipgloss.Color(endHex))) {
+				t.Errorf("%s: wordmark missing gradient end colour %s", tt.name, endHex)
 			}
 		})
 	}

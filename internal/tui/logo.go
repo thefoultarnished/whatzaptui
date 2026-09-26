@@ -13,6 +13,29 @@ import (
 // This is the app's one bolt logo: the splash screen, the QR login panel,
 // and the plain status screens all call this function, so a change here
 // shows up everywhere it's used.
+// boltPalette returns the bolt gradient: the fixed yellow→red palette for
+// legacy themes, or the same number of steps along Brand → Action →
+// Emphasis for V2 themes. Going through Action keeps the ramp saturated;
+// a straight blend between two near-complementary colours turns grey.
+func boltPalette(legacy []lipgloss.Color) []lipgloss.Color {
+	if !themeV2 {
+		return legacy
+	}
+	out := make([]lipgloss.Color, len(legacy))
+	for i := range out {
+		out[i] = identityRamp(float64(i) / float64(max(1, len(out)-1)))
+	}
+	return out
+}
+
+// identityRamp maps t∈[0,1] onto Brand → Action → Emphasis.
+func identityRamp(t float64) lipgloss.Color {
+	if t <= 0.5 {
+		return lerpColor(brand, accent, t*2)
+	}
+	return lerpColor(accent, purple, t*2-1)
+}
+
 func renderZapBolt(frame int) string {
 	palette := []lipgloss.Color{
 		"#fef08a", // spark yellow
@@ -27,6 +50,7 @@ func renderZapBolt(frame int) string {
 		"#dc2626", // crimson red
 		"#b91c1c", // deep ruby red
 	}
+	palette = boltPalette(palette)
 	pixels := []string{
 		"        #####",
 		"   ##  ######",
@@ -175,6 +199,12 @@ func renderPixelWordmark() string {
 	zSt := lipgloss.NewStyle().Foreground(lerpColor(brand, accent, 0.0))
 	aSt := lipgloss.NewStyle().Foreground(lerpColor(brand, accent, 0.5))
 	pSt := lipgloss.NewStyle().Foreground(lerpColor(brand, accent, 1.0))
+	if themeV2 {
+		// "Zap" runs Brand → Action → Emphasis, ending on the identity pair.
+		zSt = lipgloss.NewStyle().Foreground(identityRamp(0))
+		aSt = lipgloss.NewStyle().Foreground(identityRamp(0.5))
+		pSt = lipgloss.NewStyle().Foreground(identityRamp(1))
+	}
 	var rows []string
 	for r := range 4 {
 		segs := []string{

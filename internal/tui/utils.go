@@ -758,9 +758,9 @@ func renderMessageBody(m map[string]any) string {
 			cardWidth = 38
 		}
 		accentCol := lipgloss.Color(currentTheme.Accent)
-		mutedCol := lipgloss.Color(currentTheme.Muted)
+		questionCol := v2Color(text, accentCol)
 		tagStyle := mediaTagStyle("poll")
-		borderStyle := lipgloss.NewStyle().Foreground(mutedCol)
+		borderStyle := lipgloss.NewStyle().Foreground(borderSubtle)
 		accentBorderStyle := lipgloss.NewStyle().Foreground(accentCol)
 		var sb strings.Builder
 		badge := tagStyle.Render(" " + mediaIconLabel("poll") + " ")
@@ -775,7 +775,7 @@ func renderMessageBody(m map[string]any) string {
 		} else {
 			qText = qText + strings.Repeat(" ", cardWidth-4-len([]rune(qText)))
 		}
-		sb.WriteString(borderStyle.Render(" │ ") + lipgloss.NewStyle().Bold(true).Foreground(accentCol).Render(qText) + borderStyle.Render("│") + "\n")
+		sb.WriteString(borderStyle.Render(" │ ") + lipgloss.NewStyle().Bold(true).Foreground(questionCol).Render(qText) + borderStyle.Render("│") + "\n")
 		sb.WriteString(borderStyle.Render(" ├"+strings.Repeat("─", cardWidth-3)+"┤") + "\n")
 		for _, opt := range opts {
 			oText := opt
@@ -1447,7 +1447,7 @@ func renderSnippet(snippet string, maxW int) string {
 		}
 		t := string(runes)
 		if s.bold {
-			out.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(currentTheme.Accent)).Render(t))
+			out.WriteString(lipgloss.NewStyle().Bold(true).Foreground(textMatch).Render(t))
 		} else {
 			out.WriteString(t)
 		}

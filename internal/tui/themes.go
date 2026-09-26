@@ -379,47 +379,45 @@ var (
 		Background:               "#0B141A", // WhatsApp dark app background
 	}
 
-	// TokyoNight — deep navy #1a1b26 bg, cool blue-purple chrome, warm green/cyan accents
-	TokyoNight = Theme{
-		Brand:                    "#9ece6a", // official Tokyo Night green
-		Accent:                   "#7dcfff", // official Tokyo Night cyan
-		Purple:                   "#bb9af7", // official Tokyo Night purple
-		Amber:                    "#e0af68", // official Tokyo Night orange-gold
-		Red:                      "#f7768e", // official Tokyo Night red
-		Muted:                    "#565f89", // blue-gray comment color
-		Text:                     "#c0caf5", // blue-white foreground
-		ImageTag:                 "#f7768e", // red
-		VideoTag:                 "#7dcfff", // cyan
-		AudioTag:                 "#fbbf24", // warm yellow — distinct from amber
-		FileTag:                  "#9ece6a", // green
-		StickerTag:               "#bb9af7", // purple
-		ContactTag:               "#73daca", // teal
-		PollTag:                  "#e0af68", // amber-gold
-		LocationTag:              "#7aa2f7", // blue
-		AnomalyTag:               "#f7768e", // red
-		SentText:                 "#c3e88d", // soft lime-green — ties sent to brand
-		ReceivedText:             "#bab0f0", // soft periwinkle — incoming, purple family
-		SentName:                 "#9ece6a", // brand green — "me" in groups
-		ReceivedName:             "#bb9af7", // vivid purple — "them", bold hierarchy
-		QuotedSentText:           "#8ca38b", // 50% blend sentText+muted — ghost green for quoted own
-		QuotedReceivedText:       "#8887bc", // 50% blend receivedText+muted — ghost purple for quoted theirs
-		BadgeInk:                 "#1a1b26",
-		ButtonInk:                "#1a1b26",
-		TagInk:                   "#1a1b26",
-		Cursor:                   "#c0caf5", // text-color cursor — less harsh than white
-		QRLight:                  "#FFFFFF",
-		QRDark:                   "#000000",
-		ShortcutActive:           "#24283b", // Tokyo Night surface bg
-		SidebarActiveBg:          "#2e3566", // rich navy-blue tint — cool, on-theme
-		SidebarActiveUnreadBg:    "#252a40", // cool navy for unread — no amber bleed
-		SidebarWhitelistActiveBg: "#9ece6a", // brand green
-		SidebarBlacklistActiveBg: "#f7768e", // red
-		ReplyPreviewBg:           "#1d2545", // deep navy reply context
-		MessageSelectedBg:        "#383f60", // subtle navy highlight
-		MediaTokenBg:             "#f7768e", // theme's own red — more cohesive
-		MediaTokenPulseBg:        "#ff9eb5", // soft red-pink pulse
-		Background:               "#1a1b26", // Tokyo Night canonical bg
-	}
+	// Tokyo Night — neon city at night: indigo-navy canvas, soft neon glow.
+	// First theme on the V2 role tokens (docs/themes.md §15); every ratio
+	// in that section is measured against these values.
+	TokyoNight = normalizeTheme(Theme{
+		V2: true,
+
+		BgApp:      "#1a1b26", // TN bg
+		BgSidebar:  "#16161e", // TN bg_dark — keeps panes apart when borderless
+		BgPanel:    "#222436", // raised popup surface
+		BgSelected: "#283457", // TN visual selection
+
+		TextPrimary:   "#c0caf5", // TN fg
+		TextSecondary: "#a9b1d6", // TN fg_dark
+		TextMuted:     "#8089b4", // adjusted: TN comment #565f89 is only 2.76:1
+		TextFaint:     "#545c7e", // TN dark3 — decoration only
+
+		BorderSubtle: "#3b4261", // TN fg_gutter
+
+		Brand:    "#9ed365", // neon green — "me", MOOD badge
+		Action:   "#7dcfff", // cyan — keys, cursor, unread, read receipts
+		Emphasis: "#ba95fc", // violet — headings, "them", theme badge
+
+		StatusSuccess: "#9ed365",
+		StatusWarning: "#e6b062",
+		StatusDanger:  "#fd708a",
+
+		ChatSentText:     "#c2e2a5", // sage tint of Brand
+		ChatReceivedText: "#c2baf5", // lavender tint of Emphasis
+
+		TagImage:    "#ff79c6",
+		TagVideo:    "#ba95fc",
+		TagAudio:    "#ff9e64",
+		TagFile:     "#74a0fd",
+		TagSticker:  "#fcdb67",
+		TagContact:  "#6edfce",
+		TagPoll:     "#7dcfff",
+		TagLocation: "#9ed365",
+		TagSystem:   "#7c84ad", // neutral slate — deleted/edited/system events
+	})
 
 	// Catppuccin Mocha — official Catppuccin Mocha palette, #1e1e2e bg
 	Catppuccin = Theme{
@@ -673,6 +671,8 @@ var (
 		Background:               "#020810",
 	}
 
+	// Cyberpunk — neon on black: acid yellow and cyan, maximum punch.
+	// V2 role tokens (docs/themes.md §10 brief); hot pink-red is Danger.
 	Cyberpunk = Theme{
 		Brand:                    "#ff007f",
 		Accent:                   "#00f0ff",
