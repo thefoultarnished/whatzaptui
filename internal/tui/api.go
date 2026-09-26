@@ -378,12 +378,22 @@ func getContacts(ctx context.Context, c *http.Client, base string) tea.Cmd {
 			return contactsMsg{err: apiErrorFromResponse(res, "failed to load contacts")}
 		}
 		var out struct {
-			Contacts []contact `json:"contacts"`
+			Contacts  []contact         `json:"contacts"`
+			SelfPhone string            `json:"selfPhone"`
+			SelfLID   string            `json:"selfLid"`
+			SelfName  string            `json:"selfName"`
+			LIDMap    map[string]string `json:"lidMap"`
 		}
 		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 			return contactsMsg{err: err}
 		}
-		return contactsMsg{contacts: out.Contacts}
+		return contactsMsg{
+			contacts:  out.Contacts,
+			selfPhone: out.SelfPhone,
+			selfLID:   out.SelfLID,
+			selfName:  out.SelfName,
+			lidMap:    out.LIDMap,
+		}
 	}
 }
 
@@ -401,13 +411,14 @@ func fetchGroupPreview(ctx context.Context, c *http.Client, base, jid string) te
 			return groupPreviewMsg{jid: jid, err: apiErrorFromResponse(res, "failed to get group members")}
 		}
 		var out struct {
-			Members []string `json:"members"`
-			Total   int      `json:"total"`
+			Members      []string           `json:"members"`
+			Total        int                `json:"total"`
+			Participants []groupParticipant `json:"participants"`
 		}
 		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 			return groupPreviewMsg{jid: jid, err: err}
 		}
-		return groupPreviewMsg{jid: jid, preview: groupPreview{members: out.Members, total: out.Total}}
+		return groupPreviewMsg{jid: jid, preview: groupPreview{members: out.Members, total: out.Total, participants: out.Participants}}
 	}
 }
 func getMsgs(ctx context.Context, c *http.Client, base, chatID string, limit int) tea.Cmd {
@@ -513,9 +524,12 @@ func searchMsgs(ctx context.Context, c *http.Client, base, query string) tea.Cmd
 	}
 }
 
-func send(ctx context.Context, c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID string) tea.Cmd {
+func send(ctx context.Context, c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID string, mentionedJIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		payload := map[string]any{"chatId": chatID, "text": text}
+		if len(mentionedJIDs) > 0 {
+			payload["mentionedJids"] = mentionedJIDs
+		}
 		if replyTo != nil {
 			payload["replyToMsgId"] = replyTo.Key.ID
 			rawText := renderMessageBody(replyTo.Message)

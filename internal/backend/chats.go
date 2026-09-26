@@ -82,6 +82,9 @@ func (a *App) handleChats(w http.ResponseWriter, r *http.Request) {
 
 	chats := make([]Chat, 0, len(mergedByID))
 	for _, c := range mergedByID {
+		if c.ConversationTimestamp == 0 && c.UnreadCount == 0 {
+			continue
+		}
 		chats = append(chats, c)
 	}
 	sort.Slice(chats, func(i, j int) bool {
@@ -175,7 +178,13 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 		return phoneJID.User, false
 	}
 
+	type groupParticipantInfo struct {
+		JID   string `json:"jid"`
+		Phone string `json:"phone"`
+		Name  string `json:"name"`
+	}
 	var savedNames, unknownNames []string
+	participants := make([]groupParticipantInfo, 0, len(info.Participants))
 	for _, p := range info.Participants {
 		name, isSaved := resolveName(p)
 		if isSaved {
@@ -183,6 +192,15 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 		} else {
 			unknownNames = append(unknownNames, name)
 		}
+		phoneJID := p.PhoneNumber
+		if phoneJID.IsEmpty() {
+			phoneJID = p.JID
+		}
+		participants = append(participants, groupParticipantInfo{
+			JID:   p.JID.String(),
+			Phone: phoneJID.User,
+			Name:  name,
+		})
 	}
 
 	// Up to 4: saved contacts first, pad with unknown numbers if needed.
@@ -200,7 +218,8 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"members": members,
-		"total":   len(info.Participants),
+		"members":      members,
+		"total":        len(info.Participants),
+		"participants": participants,
 	})
 }

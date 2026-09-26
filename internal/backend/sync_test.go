@@ -75,14 +75,10 @@ func TestMarkChatAsReadEventHandler(t *testing.T) {
 		case *events.MarkChatAsRead:
 			cID := app.canonicalizeChatID(v.JID.String())
 			if cID != "" && v.Action != nil && v.Action.GetRead() {
-				app.mu.Lock()
-				chat := app.state.Chats[cID]
-				chat.ID = cID
-				chat.UnreadCount = 0
-				app.state.Chats[cID] = chat
-				app.mu.Unlock()
-				_ = app.persistStateWithErr()
-				app.broadcast(EventEnvelope{Type: "chats:loaded"})
+				if unread, exists := app.markChatReadInState(cID); exists && unread > 0 {
+					_ = app.persistStateWithErr()
+					app.broadcast(EventEnvelope{Type: "chats:loaded"})
+				}
 			}
 		}
 	}

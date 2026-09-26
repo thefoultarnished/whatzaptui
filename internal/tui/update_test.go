@@ -2177,6 +2177,61 @@ func TestUnreadCountNotIncreasedForOwnMessages(t *testing.T) {
 	}
 }
 
+func TestUnreadCountNotIncreasedForActiveChatOnIncomingMessage(t *testing.T) {
+	chatID := "c1"
+	model := m{
+		status:     "ready",
+		mode:       "chat",
+		active:     chatID,
+		whitelist:  map[string]string{},
+		chats:      []chat{{ID: chatID, UnreadCount: 0}},
+		msgs:       map[string][]wireMsg{},
+		flashUntil: map[string]time.Time{},
+		mainCache:  &renderCache{},
+	}
+	var wm wireMsg
+	wm.Key.ID = "newmsg"
+	wm.Key.RemoteJID = chatID
+	wm.Key.FromMe = false
+	wm.MessageTimestamp = 100
+
+	next, _ := model.Update(wsEvtMsg{ok: true, evt: env{
+		Type:    "message",
+		Payload: func() json.RawMessage { b, _ := json.Marshal(wm); return b }(),
+	}})
+	got := next.(m)
+
+	for _, ch := range got.chats {
+		if ch.ID == chatID && ch.UnreadCount != 0 {
+			t.Fatalf("UnreadCount = %d, want 0 when actively viewing chat", ch.UnreadCount)
+		}
+	}
+}
+
+func TestChatsMsgZeroesUnreadCountForActiveChat(t *testing.T) {
+	chatID := "c1"
+	model := m{
+		status: "ready",
+		mode:   "chat",
+		active: chatID,
+		chats:  []chat{{ID: chatID, UnreadCount: 0}},
+	}
+
+	next, _ := model.Update(chatsMsg{
+		chats: []chat{{ID: chatID, UnreadCount: 5}, {ID: "c2", UnreadCount: 3}},
+	})
+	got := next.(m)
+
+	for _, ch := range got.chats {
+		if ch.ID == chatID && ch.UnreadCount != 0 {
+			t.Fatalf("active chat UnreadCount = %d, want 0 after chatsMsg", ch.UnreadCount)
+		}
+		if ch.ID == "c2" && ch.UnreadCount != 3 {
+			t.Fatalf("inactive chat UnreadCount = %d, want 3 after chatsMsg", ch.UnreadCount)
+		}
+	}
+}
+
 func wsMsg(chatID, msgID string, fromMe bool, ts int64) wsEvtMsg {
 	wm := wireMsg{}
 	wm.Key.ID = msgID

@@ -10,7 +10,7 @@ import (
 
 func TestBuildTextMessage(t *testing.T) {
 	// Plain text
-	m1 := BuildTextMessage("hello world", "", "", "")
+	m1 := BuildTextMessage("hello world", "", "", "", nil)
 	if m1.GetConversation() != "hello world" {
 		t.Fatalf("expected conversation 'hello world', got %q", m1.GetConversation())
 	}
@@ -19,7 +19,7 @@ func TestBuildTextMessage(t *testing.T) {
 	}
 
 	// Quoted text
-	m2 := BuildTextMessage("my reply", "stanza123", "sender456", "quoted original")
+	m2 := BuildTextMessage("my reply", "stanza123", "sender456", "quoted original", nil)
 	ext := m2.GetExtendedTextMessage()
 	if ext == nil {
 		t.Fatalf("expected extendedTextMessage for reply")
@@ -39,6 +39,40 @@ func TestBuildTextMessage(t *testing.T) {
 	}
 	if ctx.GetQuotedMessage().GetConversation() != "quoted original" {
 		t.Fatalf("expected quoted conversation 'quoted original', got %q", ctx.GetQuotedMessage().GetConversation())
+	}
+	if len(ctx.GetMentionedJID()) != 0 {
+		t.Fatalf("expected no mentioned JIDs, got %v", ctx.GetMentionedJID())
+	}
+
+	// Text with mentions only
+	m3 := BuildTextMessage("hello @15551230001", "", "", "", []string{"15551230001@s.whatsapp.net"})
+	ext3 := m3.GetExtendedTextMessage()
+	if ext3 == nil {
+		t.Fatalf("expected extendedTextMessage for mention")
+	}
+	if ext3.GetText() != "hello @15551230001" {
+		t.Fatalf("expected text 'hello @15551230001', got %q", ext3.GetText())
+	}
+	ctx3 := ext3.GetContextInfo()
+	if ctx3 == nil {
+		t.Fatalf("expected contextInfo")
+	}
+	if len(ctx3.GetMentionedJID()) != 1 || ctx3.GetMentionedJID()[0] != "15551230001@s.whatsapp.net" {
+		t.Fatalf("expected mentioned JID '15551230001@s.whatsapp.net', got %v", ctx3.GetMentionedJID())
+	}
+	if ctx3.GetQuotedMessage() != nil {
+		t.Fatalf("expected no quotedMessage")
+	}
+
+	// Text with both quote and mentions
+	m4 := BuildTextMessage("replying @15551230001", "st1", "p1", "orig", []string{"15551230001@s.whatsapp.net"})
+	ext4 := m4.GetExtendedTextMessage()
+	if ext4 == nil {
+		t.Fatalf("expected extendedTextMessage")
+	}
+	ctx4 := ext4.GetContextInfo()
+	if ctx4 == nil || ctx4.GetStanzaID() != "st1" || len(ctx4.GetMentionedJID()) != 1 {
+		t.Fatalf("expected both quote and mention populated")
 	}
 }
 

@@ -235,6 +235,9 @@ func (a *App) loadChatsFromDB() (map[string]Chat, error) {
 		}
 		chats := make(map[string]Chat, len(records))
 		for k, r := range records {
+			if r.ConversationTimestamp == 0 && r.UnreadCount == 0 {
+				continue
+			}
 			chats[k] = Chat{
 				ID:                    r.ID,
 				Name:                  r.Name,
@@ -258,6 +261,9 @@ func (a *App) loadChatsFromDB() (map[string]Chat, error) {
 		var c Chat
 		if err := rows.Scan(&c.ID, &c.Name, &c.Subject, &c.ConversationTimestamp, &c.UnreadCount); err != nil {
 			return nil, err
+		}
+		if c.ConversationTimestamp == 0 && c.UnreadCount == 0 {
+			continue
 		}
 		chats[c.ID] = c
 	}
@@ -662,6 +668,24 @@ func (a *App) purgeInvisibleProtocolMessages() {
 	}
 }
 
+func (a *App) purgeEmptyPhantomChats() {
+	if a.db == nil {
+		return
+	}
+	res, err := a.db.Exec(`
+		DELETE FROM chats 
+		WHERE conv_ts = 0 AND unread_count = 0 
+		AND id NOT IN (SELECT DISTINCT chat_id FROM messages)
+	`)
+	if err != nil {
+		log.Printf("purgeEmptyPhantomChats: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("purgeEmptyPhantomChats: removed %d phantom chat(s)", n)
+	}
+}
+
 func (a *App) loadState() {
 	// Defensive: clear any chat_permissions rows that have the local user's own
 	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
@@ -676,6 +700,8 @@ func (a *App) loadState() {
 	a.purgeInvisibleProtocolMessages()
 	// Compact the DB in the background to reclaim space freed by message deletes.
 	a.vacuumDB()
+	// Remove any empty phantom chats created without messages or timestamps.
+	a.purgeEmptyPhantomChats()
 
 	// Primary source: SQLite chats + contacts tables.
 	if a.db == nil {
@@ -1147,8 +1173,8 @@ func canonicalChatID(chatID string) string {
 }
 
 func (a *App) getPNForLID(lid types.JID) (types.JID, error) {
-	if a == nil || a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
-		return types.JID{}, fmt.Errorf("store unavailable")
+	if a == nil {
+		return types.JID{}, fmt.Errorf("app unavailable")
 	}
 	key := lid.String()
 	a.lidCacheMu.RLock()
@@ -1161,6 +1187,9 @@ func (a *App) getPNForLID(lid types.JID) (types.JID, error) {
 		return types.ParseJID(cachedVal)
 	}
 
+	if a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
+		return types.JID{}, fmt.Errorf("store unavailable")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	pn, err := a.client.Store.LIDs.GetPNForLID(ctx, lid)
 	cancel()

@@ -205,6 +205,13 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.chatsLoaded = true
 		selectedID := x.selectedChatID()
 		x.chats = v.chats
+		if x.active != "" && x.mode == "chat" {
+			for i := range x.chats {
+				if x.chats[i].ID == x.active || num(x.chats[i].ID) == num(x.active) {
+					x.chats[i].UnreadCount = 0
+				}
+			}
+		}
 		x.resortChats(selectedID)
 		x.ensureSideVisible(x.sideViewRows())
 		cmds := []tea.Cmd{}
@@ -229,6 +236,10 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return x, x.setTopBar(v.err.Error())
 		}
 		x.contactsLoaded = true
+		x.selfPhone = v.selfPhone
+		x.selfLID = v.selfLID
+		x.selfName = v.selfName
+		x.lidMap = v.lidMap
 		x.contacts = map[string]contact{}
 		for _, c := range v.contacts {
 			x.contacts[c.ID] = c
@@ -600,6 +611,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.input += x.inputBuf
 		x.inputBuf = ""
 		x.inputFlushScheduled = false
+		x.updateMentionState()
 		return x, nil
 	case composerSendMsg:
 		if !x.pendingSendArmed || v.seq != x.pendingSendSeq {
@@ -695,12 +707,14 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		replyTo := x.replyTo
 		x.replyTo = nil
+		wireTxt, mentionedJIDs := x.prepareOutgoingMentions(txt)
+		x.composerMentions = nil
+		x.closeMentionPicker()
 		if x.demoMode {
-			return x, demoSend(x.active, txt, replyTo)
+			return x, demoSend(x.active, wireTxt, replyTo)
 		}
 		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
-		x.msgs[x.active] = append(x.msgs[x.active], optimisticOutgoingMessage(x.active, txt, pendingID, replyTo))
-		x.invalidate()
+		x.msgs[x.active] = append(x.msgs[x.active], optimisticOutgoingMessage(x.active, wireTxt, pendingID, replyTo))
 		now := time.Now()
 		selectedID := x.selectedChatID()
 		for i := range x.chats {
@@ -713,7 +727,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.scroll = 0
 		x.msgActivityUntil = time.Now().Add(3 * time.Second)
 		x.msgActivityType = "sent"
-		sendCmd := send(x.reqCtx(), x.client, x.baseURL, x.active, txt, replyTo, pendingID)
+		sendCmd := send(x.reqCtx(), x.client, x.baseURL, x.active, wireTxt, replyTo, pendingID, mentionedJIDs)
 		if x.lastComposingChat != "" && !x.demoMode {
 			pauseCmd := postJSON(x.reqCtx(), x.client, x.baseURL+"/typing", map[string]string{"chatId": x.lastComposingChat, "state": "paused"}, nil)
 			x.lastComposingChat = ""

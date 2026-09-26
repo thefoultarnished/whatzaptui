@@ -40,3 +40,30 @@ func TestUnreadRowKeepsName(t *testing.T) {
 		t.Fatalf("highlighted unread row dropped the name; visible text = %q", selected)
 	}
 }
+
+func TestActiveChatSuppressesUnreadDot(t *testing.T) {
+	x := m{
+		sel:    0,
+		mode:   "chat",
+		active: "111@g.us",
+	}
+	chats := []chat{
+		{ID: "111@g.us", Name: "Active Group", UnreadCount: 3},
+		{ID: "222@g.us", Name: "Other Group", UnreadCount: 5},
+	}
+
+	lines := x.renderUserList(chats, 0, len(chats), 40)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+
+	// Active chat should NOT contain unread dot
+	if strings.Contains(lines[0], "\u25cf") {
+		t.Fatalf("active chat should not display unread dot, got: %q", lines[0])
+	}
+
+	// Inactive chat with unread count SHOULD contain unread dot
+	if !strings.Contains(lines[1], "\u25cf") {
+		t.Fatalf("inactive chat should display unread dot, got: %q", lines[1])
+	}
+}

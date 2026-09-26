@@ -116,9 +116,22 @@ type Config struct {
 
 var currentConfig Config
 
+type groupParticipant struct {
+	JID   string `json:"jid"`
+	Phone string `json:"phone"`
+	Name  string `json:"name"`
+}
+
+type mentionTag struct {
+	TagText string `json:"tagText"`
+	JID     string `json:"jid"`
+	Phone   string `json:"phone"`
+}
+
 type groupPreview struct {
-	members []string
-	total   int
+	members      []string
+	total        int
+	participants []groupParticipant
 }
 type groupPreviewMsg struct {
 	jid     string
@@ -277,6 +290,10 @@ type m struct {
 	defaultAllowed                                 bool              // global default from backend
 	names                                          map[string]string // phone -> custom display name
 	syncingContacts, syncingGroups, syncingHistory bool
+	selfPhone                                      string
+	selfLID                                        string
+	selfName                                       string
+	lidMap                                         map[string]string
 
 	// In-Flight Tasks & Downloads
 	loadingOlder     map[string]bool                 // chatID → fetch in flight
@@ -310,6 +327,12 @@ type m struct {
 	reactPickMsgID        string // message ID to react to
 	reactPickChatID       string // chat ID for reaction
 	reactPickSender       string // sender JID for reaction target
+	// Mentions autocomplete
+	mentionPickerOpen bool
+	mentionMatches    []groupParticipant
+	mentionSel        int
+	mentionDismissed  bool
+	composerMentions  []mentionTag
 
 	// Message Operations (Reply/Edit/Attachment)
 	replyTo               *wireMsg // message being replied to
@@ -380,8 +403,12 @@ type chatsMsg struct {
 	err   error
 }
 type contactsMsg struct {
-	contacts []contact
-	err      error
+	contacts  []contact
+	selfPhone string
+	selfLID   string
+	selfName  string
+	lidMap    map[string]string
+	err       error
 }
 type msgsMsg struct {
 	chatID  string

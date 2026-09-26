@@ -269,6 +269,33 @@ func (x m) handleChatKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return x, x.toggleWhitelistForSelection()
 		}
 	}
+	if x.mentionPickerOpen && len(x.mentionMatches) > 0 && !x.sidebarFocused && !inputLocked {
+		switch k.Type {
+		case tea.KeyDown:
+			x.mentionSel = (x.mentionSel + 1) % len(x.mentionMatches)
+			x.invalidate()
+			return x, nil
+		case tea.KeyUp:
+			x.mentionSel = (x.mentionSel - 1 + len(x.mentionMatches)) % len(x.mentionMatches)
+			x.invalidate()
+			return x, nil
+		case tea.KeyTab:
+			x.applySelectedMention()
+			x.invalidate()
+			return x, nil
+		case tea.KeyEnter:
+			if !k.Paste && !k.Alt {
+				x.applySelectedMention()
+				x.invalidate()
+				return x, nil
+			}
+		case tea.KeyEsc:
+			x.mentionDismissed = true
+			x.closeMentionPicker()
+			x.invalidate()
+			return x, nil
+		}
+	}
 	switch k.Type {
 	case tea.KeyTab:
 		if !x.sidebarFocused && !inputLocked {
@@ -391,6 +418,9 @@ func (x m) handleChatKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if x.input != "" {
 			x.input = graphemeDeleteLast(x.input)
 		}
+		x.mentionDismissed = false
+		x.updateMentionState()
+		x.invalidate()
 	case tea.KeyEnter:
 		if k.Paste {
 			if x.sidebarFocused || inputLocked {
@@ -454,8 +484,14 @@ func (x m) handleChatKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				x.inputBuf = ""
 				x.inputFlushScheduled = false
 				x.inputAllSelected = false
+				x.mentionDismissed = false
+				x.updateMentionState()
+				x.invalidate()
 			} else {
 				x.inputBuf += sanitizeOutgoingText(string(k.Runes))
+				x.mentionDismissed = false
+				x.updateMentionState()
+				x.invalidate()
 				if !x.inputFlushScheduled {
 					x.inputFlushScheduled = true
 					return x, tea.Tick(2*time.Millisecond, func(time.Time) tea.Msg { return flushInputMsg{} })

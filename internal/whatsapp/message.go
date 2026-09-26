@@ -10,18 +10,33 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// BuildTextMessage constructs a standard or quoted waE2E.Message.
-func BuildTextMessage(text string, replyToMsgID, replyToParticipant, replyToText string) *waE2E.Message {
-	if replyToMsgID != "" {
-		quotedMsg := &waE2E.Message{Conversation: proto.String(replyToText)}
+// BuildTextMessage constructs a standard or quoted waE2E.Message, with optional mentioned JIDs.
+func BuildTextMessage(text string, replyToMsgID, replyToParticipant, replyToText string, mentionedJIDs []string) *waE2E.Message {
+	var cleanMentions []string
+	for _, m := range mentionedJIDs {
+		m = strings.TrimSpace(m)
+		if m != "" {
+			cleanMentions = append(cleanMentions, m)
+		}
+	}
+	if replyToMsgID != "" || len(cleanMentions) > 0 {
+		var quotedMsg *waE2E.Message
+		var stanzaID, participant *string
+		if replyToMsgID != "" {
+			quotedMsg = &waE2E.Message{Conversation: proto.String(replyToText)}
+			stanzaID = proto.String(replyToMsgID)
+			participant = proto.String(replyToParticipant)
+		}
+		ctxInfo := &waE2E.ContextInfo{
+			StanzaID:      stanzaID,
+			Participant:   participant,
+			QuotedMessage: quotedMsg,
+			MentionedJID:  cleanMentions,
+		}
 		return &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text: proto.String(text),
-				ContextInfo: &waE2E.ContextInfo{
-					StanzaID:      proto.String(replyToMsgID),
-					Participant:   proto.String(replyToParticipant),
-					QuotedMessage: quotedMsg,
-				},
+				Text:        proto.String(text),
+				ContextInfo: ctxInfo,
 			},
 		}
 	}
