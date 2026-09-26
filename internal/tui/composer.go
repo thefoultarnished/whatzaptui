@@ -176,4 +176,6 @@ func (x *m) clearChatComposer() {
 	x.replyPickIndex = 0
 	x.selectedMsgID = ""
 	x.closeEmojiPicker()
+	x.closeMentionPicker()
+	x.composerMentions = nil
 }

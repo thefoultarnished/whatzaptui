@@ -638,11 +638,12 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ChatID             string `json:"chatId"`
-		Text               string `json:"text"`
-		ReplyToMsgID       string `json:"replyToMsgId,omitempty"`
-		ReplyToText        string `json:"replyToText,omitempty"`
-		ReplyToParticipant string `json:"replyToParticipant,omitempty"`
+		ChatID             string   `json:"chatId"`
+		Text               string   `json:"text"`
+		ReplyToMsgID       string   `json:"replyToMsgId,omitempty"`
+		ReplyToText        string   `json:"replyToText,omitempty"`
+		ReplyToParticipant string   `json:"replyToParticipant,omitempty"`
+		MentionedJIDs      []string `json:"mentionedJids,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -676,7 +677,7 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if participant == "" {
 		participant = req.ChatID
 	}
-	msg := whatsapp.BuildTextMessage(req.Text, req.ReplyToMsgID, participant, req.ReplyToText)
+	msg := whatsapp.BuildTextMessage(req.Text, req.ReplyToMsgID, participant, req.ReplyToText, req.MentionedJIDs)
 
 	resp, err := a.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
@@ -686,13 +687,19 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().Unix()
 	wireMsg := map[string]any{"conversation": req.Text}
-	if req.ReplyToMsgID != "" {
+	if req.ReplyToMsgID != "" || len(req.MentionedJIDs) > 0 {
+		ext := map[string]any{
+			"text": req.Text,
+		}
+		if req.ReplyToMsgID != "" {
+			ext["quotedText"] = req.ReplyToText
+			ext["quotedParticipant"] = req.ReplyToParticipant
+		}
+		if len(req.MentionedJIDs) > 0 {
+			ext["mentionedJID"] = req.MentionedJIDs
+		}
 		wireMsg = map[string]any{
-			"extendedTextMessage": map[string]any{
-				"text":              req.Text,
-				"quotedText":        req.ReplyToText,
-				"quotedParticipant": req.ReplyToParticipant,
-			},
+			"extendedTextMessage": ext,
 		}
 	}
 	wire := WireMessage{
@@ -828,6 +835,23 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"message": wire})
 }
 
+// markChatReadInState clears the unread count for chatID if it exists in state.
+// Returns (unreadCount, exists). Does not create a phantom chat if the chat doesn't exist.
+func (a *App) markChatReadInState(chatID string) (int, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	chat, exists := a.state.Chats[chatID]
+	if !exists {
+		return 0, false
+	}
+	unread := chat.UnreadCount
+	if chat.UnreadCount > 0 {
+		chat.UnreadCount = 0
+		a.state.Chats[chatID] = chat
+	}
+	return unread, true
+}
+
 func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -850,13 +874,7 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.mu.Lock()
-	chat := a.state.Chats[req.ChatID]
-	chat.ID = req.ChatID
-	unreadToMark := chat.UnreadCount
-	chat.UnreadCount = 0
-	a.state.Chats[req.ChatID] = chat
-	a.mu.Unlock()
+	unreadToMark, exists := a.markChatReadInState(req.ChatID)
 
 	senderToIDs := make(map[string][]types.MessageID)
 	{
@@ -898,7 +916,9 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 			senderJID, _ := types.ParseJID(senderStr)
 			_ = a.client.MarkRead(context.Background(), ids, time.Now(), chatJID, senderJID)
 		}
-		a.persistState()
+		if exists && unreadToMark > 0 {
+			a.persistState()
+		}
 	}()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -1489,34 +1509,59 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 		msg["conversation"] = txt
 	}
 	if ext := effective.GetExtendedTextMessage(); ext != nil {
-		entry := map[string]any{"text": ext.GetText()}
-		if ctx := ext.GetContextInfo(); ctx != nil && ctx.GetQuotedMessage() != nil {
-			entry["quotedText"] = quotedText(ctx.GetQuotedMessage())
-			selfID := ""
-			if a != nil && a.client != nil && a.client.Store != nil && a.client.Store.ID != nil {
-				selfID = a.client.Store.ID.String()
-			}
-			rawParticipant := strings.TrimSpace(ctx.GetParticipant())
-			normalized := normalizeQuotedParticipant(rawParticipant, selfID, func(id string) string {
-				if a == nil {
-					return strings.TrimSpace(id)
+		text := ext.GetText()
+		entry := map[string]any{"text": text}
+		if ctx := ext.GetContextInfo(); ctx != nil {
+			if len(ctx.GetMentionedJID()) > 0 {
+				var resolvedMentions []string
+				for _, m := range ctx.GetMentionedJID() {
+					jid, err := types.ParseJID(m)
+					if err == nil && jid.Server == types.HiddenUserServer && a != nil {
+						pn, err := a.getPNForLID(jid)
+						if err == nil && pn.User != "" {
+							text = strings.ReplaceAll(text, "@"+jid.User, "@"+pn.User)
+							resolvedMentions = append(resolvedMentions, pn.User+"@s.whatsapp.net")
+							continue
+						}
+					}
+					resolvedMentions = append(resolvedMentions, m)
 				}
-				return a.canonicalizeChatID(id)
-			})
-			entry["quotedParticipant"] = normalized
-			// Prefer the authoritative signal: if the quoted message is in
-			// our own DB marked from_me=1, the quote is mine — regardless of
-			// whether WhatsApp populated the participant field (it often
-			// doesn't for 1-to-1 quotes). Fall back to the participant
-			// heuristic when the quoted message isn't in our store yet.
-			if fromMe, ok := a.quotedStanzaFromMe(chatID, ctx.GetStanzaID()); ok {
-				entry["quotedFromMe"] = fromMe
-			} else {
-				entry["quotedFromMe"] = quotedMessageFromMe(chatID, rawParticipant, normalized, isGroup)
+				entry["text"] = text
+				entry["mentionedJID"] = resolvedMentions
 			}
-		}
-		msg["extendedTextMessage"] = entry
+			if ctx.GetQuotedMessage() != nil {
+				qText := quotedText(ctx.GetQuotedMessage())
+				if a != nil {
+					for _, m := range ctx.GetMentionedJID() {
+						if jid, err := types.ParseJID(m); err == nil && jid.Server == types.HiddenUserServer {
+							if pn, err := a.getPNForLID(jid); err == nil && pn.User != "" {
+								qText = strings.ReplaceAll(qText, "@"+jid.User, "@"+pn.User)
+							}
+						}
+					}
+				}
+				entry["quotedText"] = qText
+				selfID := ""
+				if a != nil && a.client != nil && a.client.Store != nil && a.client.Store.ID != nil {
+					selfID = a.client.Store.ID.String()
+				}
+				rawParticipant := strings.TrimSpace(ctx.GetParticipant())
+				normalized := normalizeQuotedParticipant(rawParticipant, selfID, func(id string) string {
+					if a == nil {
+						return strings.TrimSpace(id)
+					}
+					return a.canonicalizeChatID(id)
+				})
+				entry["quotedParticipant"] = normalized
+				if fromMe, ok := a.quotedStanzaFromMe(chatID, ctx.GetStanzaID()); ok {
+					entry["quotedFromMe"] = fromMe
+				} else {
+					entry["quotedFromMe"] = quotedMessageFromMe(chatID, rawParticipant, normalized, isGroup)
+				}
+			}
 	}
+	msg["extendedTextMessage"] = entry
+}
 	if img := effective.GetImageMessage(); img != nil {
 		msg["imageMessage"] = map[string]any{"caption": img.GetCaption(), "mimetype": img.GetMimetype()}
 	}

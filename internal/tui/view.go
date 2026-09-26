@@ -59,6 +59,14 @@ func (x m) viewInner() string {
 	if x.pendingAttachmentPath != "" {
 		attachmentBarH = 1
 	}
+	mentionPopup := ""
+	mentionPopupH := 0
+	if x.mentionPickerOpen && len(x.mentionMatches) > 0 {
+		mentionPopup = x.renderMentionPopup(rightW)
+		if mentionPopup != "" {
+			mentionPopupH = strings.Count(mentionPopup, "\n") + 1
+		}
+	}
 	typedInput := x.input + x.inputBuf
 
 	// Calculate extra input lines from text width directly (stable, no render dependency).
@@ -90,7 +98,7 @@ func (x m) viewInner() string {
 	}
 
 	// Right column: main pane shrinks to accommodate multiline input.
-	mainH := max(1, outerH-4-replyBarH-attachmentBarH-extraInputH)
+	mainH := max(1, outerH-4-replyBarH-attachmentBarH-extraInputH-mentionPopupH)
 
 	main := x.renderRightMain(rightW, mainH)
 
@@ -101,6 +109,9 @@ func (x m) viewInner() string {
 	}
 	if attachmentBar != "" {
 		rightParts = append(rightParts, attachmentBar)
+	}
+	if mentionPopup != "" {
+		rightParts = append(rightParts, mentionPopup)
 	}
 	rightParts = append(rightParts, chatInput)
 	rightCol := lipgloss.JoinVertical(lipgloss.Left, rightParts...)
@@ -1418,10 +1429,10 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 	lines := []string{}
 	for i := start; i < end; i++ {
 		c := f[i]
-		hasUnread := c.UnreadCount > 0
+		isActive := x.active != "" && num(x.active) == num(c.ID)
+		hasUnread := c.UnreadCount > 0 && !(isActive && x.mode == "chat")
 		isSel := i == x.sel
 		navActive := x.mode != "chat" || x.sidebarFocused
-		isActive := x.active != "" && num(x.active) == num(c.ID)
 		highlighted := isSel && navActive
 		_, whitelisted := x.whitelist[num(c.ID)]
 
@@ -1747,12 +1758,54 @@ func splitAnsiStringAtWidth(s string, targetW int) (string, string) {
 	return prefix, suffix
 }
 
-var urlRegex = regexp.MustCompile(`https?://[^\s]+`)
+var (
+	urlRegex          = regexp.MustCompile(`https?://[^\s]+`)
+	mentionTokenRegex = regexp.MustCompile(`(^|\s)(@[a-zA-Z0-9_]+)`)
+)
+func mentionPattern(knownTags []string) *regexp.Regexp {
+	if len(knownTags) == 0 {
+		return mentionTokenRegex
+	}
+	parts := make([]string, 0, len(knownTags)+1)
+	for _, t := range knownTags {
+		parts = append(parts, regexp.QuoteMeta(t))
+	}
+	parts = append(parts, `@[a-zA-Z0-9_]+`)
+	return regexp.MustCompile(`(^|\s)(` + strings.Join(parts, "|") + `)`)
+}
 
-func renderTextWithLinks(s string, baseStyle lipgloss.Style, original ...string) string {
-	matches := urlRegex.FindAllStringIndex(s, -1)
+func renderSegmentWithMentions(s string, baseStyle lipgloss.Style, knownTags ...string) string {
+	re := mentionTokenRegex
+	if len(knownTags) > 0 {
+		re = mentionPattern(knownTags)
+	}
+	matches := re.FindAllStringSubmatchIndex(s, -1)
 	if len(matches) == 0 {
 		return baseStyle.Render(s)
+	}
+	mentionStyle := baseStyle.Copy().
+		Foreground(accent).
+		Bold(true)
+	var sb strings.Builder
+	lastIdx := 0
+	for _, match := range matches {
+		prefixEnd := match[4]
+		if prefixEnd > lastIdx {
+			sb.WriteString(baseStyle.Render(s[lastIdx:prefixEnd]))
+		}
+		sb.WriteString(mentionStyle.Render(s[match[4]:match[5]]))
+		lastIdx = match[5]
+	}
+	if lastIdx < len(s) {
+		sb.WriteString(baseStyle.Render(s[lastIdx:]))
+	}
+	return sb.String()
+}
+
+func renderTextWithLinks(s string, baseStyle lipgloss.Style, knownTags []string, original ...string) string {
+	matches := urlRegex.FindAllStringIndex(s, -1)
+	if len(matches) == 0 {
+		return renderSegmentWithMentions(s, baseStyle, knownTags...)
 	}
 	var origURLs []string
 	if len(original) > 0 && original[0] != "" {
@@ -1764,7 +1817,7 @@ func renderTextWithLinks(s string, baseStyle lipgloss.Style, original ...string)
 	var sb strings.Builder
 	lastIdx := 0
 	for _, match := range matches {
-		sb.WriteString(baseStyle.Render(s[lastIdx:match[0]]))
+		sb.WriteString(renderSegmentWithMentions(s[lastIdx:match[0]], baseStyle, knownTags...))
 		matchText := s[match[0]:match[1]]
 		targetURL := matchText
 		prefix := strings.TrimRight(matchText, ".")
@@ -1777,7 +1830,7 @@ func renderTextWithLinks(s string, baseStyle lipgloss.Style, original ...string)
 		sb.WriteString("\x1b]8;;" + targetURL + "\x1b\\" + linkStyle.Render(matchText) + "\x1b]8;;\x1b\\")
 		lastIdx = match[1]
 	}
-	sb.WriteString(baseStyle.Render(s[lastIdx:]))
+	sb.WriteString(renderSegmentWithMentions(s[lastIdx:], baseStyle, knownTags...))
 	return sb.String()
 }
 
@@ -1787,15 +1840,16 @@ func renderStyledMessageText(
 	tokenStyle lipgloss.Style,
 	isMediaMsg bool,
 	original string,
+	knownTags ...string,
 ) string {
 	if isMediaMsg && strings.HasPrefix(ln, "[") {
 		if end := strings.Index(ln, "]"); end > 0 {
 			token := ln[:end+1]
 			rest := ln[end+1:]
-			return tokenStyle.Render(token) + renderTextWithLinks(rest, bodyStyle, original)
+			return tokenStyle.Render(token) + renderTextWithLinks(rest, bodyStyle, knownTags, original)
 		}
 	}
-	return renderTextWithLinks(ln, bodyStyle, original)
+	return renderTextWithLinks(ln, bodyStyle, knownTags, original)
 }
 
 func outgoingMessageIndent(paneW int, blockW int, fromMe bool) string {
@@ -1932,6 +1986,8 @@ func (x m) renderMain(w, h int) string {
 		if msgBody == "" {
 			msgBody = "[media]"
 		}
+		var msgMentionTags []string
+		msgBody, msgMentionTags = x.formatMessageMentions(msgBody)
 		msgBody += x.audioProgressLine(msg)
 
 		timeStr := formatExactTime(msg.MessageTimestamp)
@@ -2216,6 +2272,8 @@ func (x m) renderMain(w, h int) string {
 				}
 				origQuote := stripAnsi(strings.ReplaceAll(qText, "\n", " "))
 				qText = origQuote
+				var qMentionTags []string
+				qText, qMentionTags = x.formatMessageMentions(qText)
 				if len([]rune(qText)) > 50 {
 					qText = string([]rune(qText)[:50]) + "..."
 				}
@@ -2233,9 +2291,9 @@ func (x m) renderMain(w, h int) string {
 				quoteSuffix := " ─╮ "
 				quoteStyled = applySelectedBG(lipgloss.NewStyle().Foreground(qSenderColor)).Render(quotePrefix) +
 					applySelectedBG(lipgloss.NewStyle().Foreground(qSenderColor).Bold(true)).Render(qSender+": ") +
-					renderTextWithLinks(qText, applySelectedBG(lipgloss.NewStyle().Foreground(qTextColor)), origQuote)
+					renderTextWithLinks(qText, applySelectedBG(lipgloss.NewStyle().Foreground(qTextColor)), qMentionTags, origQuote)
 				quoteStyledRight = applySelectedBG(lipgloss.NewStyle().Foreground(qSenderColor).Bold(true)).Render(qSender+": ") +
-					renderTextWithLinks(qText, applySelectedBG(lipgloss.NewStyle().Foreground(qTextColor)), origQuote) +
+					renderTextWithLinks(qText, applySelectedBG(lipgloss.NewStyle().Foreground(qTextColor)), qMentionTags, origQuote) +
 					applySelectedBG(lipgloss.NewStyle().Foreground(qSenderColor)).Render(quoteSuffix)
 				quotePlainRight = qSender + ": " + qText + quoteSuffix
 			}
@@ -2363,7 +2421,7 @@ func (x m) renderMain(w, h int) string {
 			if inlineMediaArt() && isImageMsg && i < numPixelLines {
 				lineParts = append(lineParts, ln)
 			} else {
-				lineParts = append(lineParts, renderStyledMessageText(ln, bodyStyle, tokenStyle, isMediaMsg, msgBody))
+				lineParts = append(lineParts, renderStyledMessageText(ln, bodyStyle, tokenStyle, isMediaMsg, msgBody, msgMentionTags...))
 			}
 			if msg.Key.FromMe && i == len(wrapped)-1 {
 				// Float timestamp to the right of the last line if it fits and
@@ -2770,6 +2828,7 @@ func (x m) msgIDAtLine(lineIdx, w, h int) string {
 		if mb == "" {
 			mb = "[media]"
 		}
+		mb, _ = x.formatMessageMentions(mb)
 		mb += x.audioProgressLine(msg)
 		availableW := chatMessageWrapWidth(w, mb)
 		senderName := "Me"

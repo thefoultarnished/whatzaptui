@@ -406,7 +406,7 @@ var (
 		StatusDanger:  "#fd708a",
 
 		ChatSentText:     "#c2e2a5", // sage tint of Brand
-		ChatReceivedText: "#c2baf5", // lavender tint of Emphasis
+		ChatReceivedText: "#c4bdf2", // lavender tint of Emphasis
 
 		TagImage:    "#ff79c6",
 		TagVideo:    "#ba95fc",

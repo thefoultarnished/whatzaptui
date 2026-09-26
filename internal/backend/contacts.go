@@ -16,6 +16,28 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+func (a *App) getLIDMap() map[string]string {
+	out := make(map[string]string)
+	if a.db != nil {
+		rows, err := a.db.Query(`SELECT lid, pn FROM whatsmeow_lid_map`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var lid, pn string
+				if err := rows.Scan(&lid, &pn); err == nil && lid != "" && pn != "" {
+					out[lid] = pn
+				}
+			}
+		}
+	}
+	if a.client != nil && a.client.Store != nil {
+		if a.client.Store.LID.User != "" && a.client.Store.ID != nil && a.client.Store.ID.User != "" {
+			out[a.client.Store.LID.User] = a.client.Store.ID.User
+		}
+	}
+	return out
+}
+
 func (a *App) handleContacts(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	contacts := make([]Contact, 0, len(a.state.Contacts))
@@ -23,7 +45,25 @@ func (a *App) handleContacts(w http.ResponseWriter, r *http.Request) {
 		contacts = append(contacts, c)
 	}
 	a.mu.RUnlock()
-	writeJSON(w, http.StatusOK, map[string]any{"contacts": contacts})
+
+	var selfPhone, selfLID, selfName string
+	if a.client != nil && a.client.Store != nil {
+		if a.client.Store.ID != nil {
+			selfPhone = a.client.Store.ID.User
+		}
+		if a.client.Store.LID.User != "" {
+			selfLID = a.client.Store.LID.User
+		}
+		selfName = a.client.Store.PushName
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"contacts":  contacts,
+		"selfPhone": selfPhone,
+		"selfLid":   selfLID,
+		"selfName":  selfName,
+		"lidMap":    a.getLIDMap(),
+	})
 }
 
 func (a *App) handleResolveLIDPN(w http.ResponseWriter, r *http.Request) {

@@ -787,7 +787,10 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	a.logoutMu.Lock()
 	defer a.logoutMu.Unlock()
 
-	if a.shuttingDown {
+	a.mu.RLock()
+	alreadyShuttingDown := a.shuttingDown
+	a.mu.RUnlock()
+	if alreadyShuttingDown {
 		writeErr(w, http.StatusConflict, "logout already in progress")
 		return
 	}
@@ -796,8 +799,13 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// shuttingDown. This unblocks active readers quickly so they finish and
 	// exit cleanly. Don't hold the lock during slow WhatsApp logout or file
 	// teardown — that causes deadlock if any reader was in flight.
+	// shuttingDown itself is guarded by a.mu (same as every other read site);
+	// dbLifecycleMu is held alongside it purely as the synchronization
+	// barrier against concurrent dbLifecycleMu.RLock() holders.
 	a.dbLifecycleMu.Lock()
+	a.mu.Lock()
 	a.shuttingDown = true
+	a.mu.Unlock()
 	a.dbLifecycleMu.Unlock()
 
 	dbPath := filepath.Join(a.cacheDir, "store.db")

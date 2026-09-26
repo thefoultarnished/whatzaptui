@@ -4666,3 +4666,168 @@ func TestPurgeGroupSenderNamesRunsOnce(t *testing.T) {
 		t.Fatalf("group name = %q, want My Group kept on second run", got)
 	}
 }
+
+func TestToWireMessageExtractsMentions(t *testing.T) {
+	app := newTestApp(t)
+	extMsg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("hello @15551230001"),
+			ContextInfo: &waE2E.ContextInfo{
+				MentionedJID: []string{"15551230001@s.whatsapp.net"},
+			},
+		},
+	}
+	msg, _ := app.wireMessagePayload(extMsg, extMsg, "120363399151277191@g.us", true)
+	ext, ok := msg["extendedTextMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extendedTextMessage in wire message")
+	}
+	jids, ok := ext["mentionedJID"].([]string)
+	if !ok || len(jids) != 1 || jids[0] != "15551230001@s.whatsapp.net" {
+		t.Fatalf("expected mentionedJID to contain 15551230001@s.whatsapp.net, got %v", ext["mentionedJID"])
+	}
+}
+
+func TestToWireMessageResolvesLIDMentions(t *testing.T) {
+	app := newTestApp(t)
+	app.lidCache = map[string]string{"57712197017667@lid": "37253984574@s.whatsapp.net"}
+
+	extMsg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("@57712197017667 hi"),
+			ContextInfo: &waE2E.ContextInfo{
+				MentionedJID: []string{"57712197017667@lid"},
+			},
+		},
+	}
+	msg, _ := app.wireMessagePayload(extMsg, extMsg, "120363399151277191@g.us", true)
+	ext, ok := msg["extendedTextMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extendedTextMessage in wire message")
+	}
+	text, ok := ext["text"].(string)
+	if !ok || text != "@37253984574 hi" {
+		t.Fatalf("expected text '@37253984574 hi', got %q", text)
+	}
+	jids, ok := ext["mentionedJID"].([]string)
+	if !ok || len(jids) != 1 || jids[0] != "37253984574@s.whatsapp.net" {
+		t.Fatalf("expected mentionedJID to contain 37253984574@s.whatsapp.net, got %v", ext["mentionedJID"])
+	}
+}
+
+func TestHandleContactsIncludesSelfAndLIDMap(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.db.Exec(`CREATE TABLE IF NOT EXISTS whatsmeow_lid_map (lid TEXT PRIMARY KEY, pn TEXT UNIQUE NOT NULL)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = app.db.Exec(`INSERT INTO whatsmeow_lid_map (lid, pn) VALUES ('57712197017667', '37253984574')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/contacts", nil)
+	app.handleContacts(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var out struct {
+		LIDMap map[string]string `json:"lidMap"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.LIDMap["57712197017667"] != "37253984574" {
+		t.Fatalf("expected lidMap to contain 57712197017667 -> 37253984574, got %v", out.LIDMap)
+	}
+}
+
+func TestMarkChatReadInStateDoesNotCreatePhantomChat(t *testing.T) {
+	app := newTestApp(t)
+
+	// 1. Non-existent chat: must return (0, false) and NOT insert into state
+	unread, exists := app.markChatReadInState("15559998888@s.whatsapp.net")
+	if exists || unread != 0 {
+		t.Fatalf("expected (0, false) for non-existent chat, got (%d, %t)", unread, exists)
+	}
+	app.mu.RLock()
+	_, inState := app.state.Chats["15559998888@s.whatsapp.net"]
+	app.mu.RUnlock()
+	if inState {
+		t.Fatalf("markChatReadInState on non-existent chat should not add it to app.state.Chats")
+	}
+
+	// 2. Existing chat with unread: must zero unread and return previous count
+	app.state.Chats["15551112222@s.whatsapp.net"] = Chat{
+		ID:          "15551112222@s.whatsapp.net",
+		UnreadCount: 5,
+	}
+	unread2, exists2 := app.markChatReadInState("15551112222@s.whatsapp.net")
+	if !exists2 || unread2 != 5 {
+		t.Fatalf("expected (5, true) for existing chat, got (%d, %t)", unread2, exists2)
+	}
+	if app.state.Chats["15551112222@s.whatsapp.net"].UnreadCount != 0 {
+		t.Fatalf("expected unread count 0, got %d", app.state.Chats["15551112222@s.whatsapp.net"].UnreadCount)
+	}
+}
+
+func TestHandleChatsSkipsPhantomChats(t *testing.T) {
+	app := newTestApp(t)
+	app.state.Chats["phantom@s.whatsapp.net"] = Chat{
+		ID:                    "phantom@s.whatsapp.net",
+		ConversationTimestamp: 0,
+		UnreadCount:           0,
+	}
+	app.state.Chats["valid@s.whatsapp.net"] = Chat{
+		ID:                    "valid@s.whatsapp.net",
+		ConversationTimestamp: 1000,
+		UnreadCount:           0,
+	}
+
+	rec := httptest.NewRecorder()
+	req := authorizedRequest(httptest.NewRequest(http.MethodGet, "/chats", nil), app)
+	app.handleChats(rec, req)
+
+	var out struct {
+		Chats []Chat `json:"chats"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range out.Chats {
+		if c.ID == "phantom@s.whatsapp.net" {
+			t.Fatalf("expected phantom chat to be filtered out from /chats")
+		}
+	}
+	if len(out.Chats) != 1 || out.Chats[0].ID != "valid@s.whatsapp.net" {
+		t.Fatalf("expected 1 valid chat, got %v", out.Chats)
+	}
+}
+
+func TestPurgeEmptyPhantomChats(t *testing.T) {
+	app := newTestApp(t)
+	// Insert a phantom chat (conv_ts = 0, unread = 0, no messages)
+	_, err := app.db.Exec(`INSERT INTO chats (id, conv_ts, unread_count) VALUES ('phantom@s.whatsapp.net', 0, 0)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Insert a valid chat with timestamp
+	_, err = app.db.Exec(`INSERT INTO chats (id, conv_ts, unread_count) VALUES ('valid@s.whatsapp.net', 1000, 0)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.purgeEmptyPhantomChats()
+
+	var phantomCount, validCount int
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM chats WHERE id = 'phantom@s.whatsapp.net'`).Scan(&phantomCount)
+	_ = app.db.QueryRow(`SELECT COUNT(*) FROM chats WHERE id = 'valid@s.whatsapp.net'`).Scan(&validCount)
+
+	if phantomCount != 0 {
+		t.Fatalf("expected phantom chat to be deleted, got %d", phantomCount)
+	}
+	if validCount != 1 {
+		t.Fatalf("expected valid chat to be preserved, got %d", validCount)
+	}
+}

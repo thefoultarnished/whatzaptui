@@ -148,14 +148,10 @@ func (a *App) bindEvents() {
 				}})
 			}
 			if v.Type == types.ReceiptTypeReadSelf {
-				a.mu.Lock()
-				chat := a.state.Chats[chatID]
-				chat.ID = chatID
-				chat.UnreadCount = 0
-				a.state.Chats[chatID] = chat
-				a.mu.Unlock()
-				a.persistState()
-				a.broadcast(EventEnvelope{Type: "chats:loaded"})
+				if unread, exists := a.markChatReadInState(chatID); exists && unread > 0 {
+					a.persistState()
+					a.broadcast(EventEnvelope{Type: "chats:loaded"})
+				}
 			}
 		case *events.MarkChatAsRead:
 			if v == nil {
@@ -166,14 +162,10 @@ func (a *App) bindEvents() {
 				return
 			}
 			if v.Action != nil && v.Action.GetRead() {
-				a.mu.Lock()
-				chat := a.state.Chats[chatID]
-				chat.ID = chatID
-				chat.UnreadCount = 0
-				a.state.Chats[chatID] = chat
-				a.mu.Unlock()
-				a.persistState()
-				a.broadcast(EventEnvelope{Type: "chats:loaded"})
+				if unread, exists := a.markChatReadInState(chatID); exists && unread > 0 {
+					a.persistState()
+					a.broadcast(EventEnvelope{Type: "chats:loaded"})
+				}
 			}
 		case *events.HistorySync:
 			a.applyHistorySync(v.Data)
