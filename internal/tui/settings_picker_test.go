@@ -104,8 +104,19 @@ func TestSettingsValuesStartAtSameColumn(t *testing.T) {
 		}
 		end := strings.Index(line, item.key) + len(item.key)
 		rest := line[end:]
-		trimmed := strings.TrimLeft(rest, " ")
-		col := lipgloss.Width(line[:end]) + len(rest) - len(trimmed)
+		// Skip the padding/separator spaces, and an optional status dot
+		// (toggles only) which is decoration, not the value itself.
+		skip := 0
+		for skip < len(rest) && rest[skip] == ' ' {
+			skip++
+		}
+		if strings.HasPrefix(rest[skip:], "●") {
+			skip += len("●")
+			for skip < len(rest) && rest[skip] == ' ' {
+				skip++
+			}
+		}
+		col := lipgloss.Width(line[:end]) + lipgloss.Width(rest[:skip])
 		_, gridCol := settingsVisualPos(i)
 		if valueCols[gridCol] == nil {
 			valueCols[gridCol] = map[int]string{}
@@ -124,11 +135,12 @@ func TestSettingsNavigationAcrossSections(t *testing.T) {
 	p.Open("")
 	press := func(k tea.KeyType) { p.HandleSettings(tea.KeyMsg{Type: k}) }
 
-	// Down from the right column of the last toggle row enters OPTIONS.
+	// Down from the lone last toggle (odd count leaves it alone in col 0)
+	// enters OPTIONS at col 0.
 	p.idx = settingsIndex(t, "Show phone number")
 	press(tea.KeyDown)
-	if got := settingsDefs[p.idx].name; got != "Media icon style" {
-		t.Fatalf("Down from last toggle row = %q, want Media icon style", got)
+	if got := settingsDefs[p.idx].name; got != "Typing style" {
+		t.Fatalf("Down from last toggle row = %q, want Typing style", got)
 	}
 	// Down into the last row lands in the same column.
 	p.idx = settingsIndex(t, "Chat list icons")
@@ -150,8 +162,8 @@ func TestSettingsNavigationAcrossSections(t *testing.T) {
 	// Up from OPTIONS returns to the last toggle row.
 	p.idx = settingsIndex(t, "Typing style")
 	press(tea.KeyUp)
-	if got := settingsDefs[p.idx].name; got != "Hide borders" {
-		t.Fatalf("Up from first option = %q, want Hide borders", got)
+	if got := settingsDefs[p.idx].name; got != "Show phone number" {
+		t.Fatalf("Up from first option = %q, want Show phone number", got)
 	}
 }
 
@@ -190,7 +202,7 @@ func TestSettingsTogglesShowStatusDot(t *testing.T) {
 func TestSettingsOptionsStartNewRowAfterOddToggles(t *testing.T) {
 	orig := settingsDefs
 	defer func() { settingsDefs = orig }()
-	settingsDefs = append(append(orig[:0:0], orig[:6]...), orig[7:]...) // drop one toggle → 7
+	settingsDefs = append(append(orig[:0:0], orig[:6]...), orig[8:]...) // drop two toggles → 7
 
 	firstOpt := settingsToggleCount()
 	lastTogRow, _ := settingsVisualPos(firstOpt - 1)
@@ -217,5 +229,75 @@ func TestSettingsOptionsStartNewRowAfterOddToggles(t *testing.T) {
 		if strings.Contains(l, "●") && strings.Contains(l, "→") {
 			t.Fatalf("toggle and option share a row: %q", strings.TrimSpace(l))
 		}
+	}
+}
+
+// Closing an option sub-picker must return to settings with the entered
+// option still selected instead of jumping back to the first item.
+func TestSettingsSubPickerReturnRestoresSelection(t *testing.T) {
+	t.Setenv("WHATZAP_DATA_DIR", t.TempDir())
+	origCfg := currentConfig
+	origTheme := currentTheme
+	defer func() { currentConfig = origCfg; currentTheme = origTheme; rehashStyles() }()
+
+	openSettingsAt := func(name string) m {
+		x := m{status: "ready"}
+		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker.Open("")
+		x.settingsPicker.idx = settingsIndex(t, name)
+		return x
+	}
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+
+	// Generic sub-picker, cancel path: Media preview -> Esc.
+	x := openSettingsAt("Media preview")
+	res, _ := x.key(enter)
+	x = res.(m)
+	if !x.mediaViewPicker.open {
+		t.Fatal("Enter on Media preview did not open its sub-picker")
+	}
+	res, _ = x.key(esc)
+	x = res.(m)
+	if !x.settingsPicker.open {
+		t.Fatal("Esc in sub-picker did not return to settings")
+	}
+	if got := settingsDefs[x.settingsPicker.idx].name; got != "Media preview" {
+		t.Fatalf("returned to %q, want Media preview", got)
+	}
+
+	// Generic sub-picker, confirm path: Startup speed -> Enter.
+	x = openSettingsAt("Startup speed")
+	res, _ = x.key(enter)
+	x = res.(m)
+	if !x.splashSpeedPicker.open {
+		t.Fatal("Enter on Startup speed did not open its sub-picker")
+	}
+	res, _ = x.key(enter)
+	x = res.(m)
+	if !x.settingsPicker.open {
+		t.Fatal("confirm in sub-picker did not return to settings")
+	}
+	if got := settingsDefs[x.settingsPicker.idx].name; got != "Startup speed" {
+		t.Fatalf("returned to %q, want Startup speed", got)
+	}
+
+	// Theme picker, cancel path: Theme -> Esc returns to settings on Theme.
+	x = openSettingsAt("Theme")
+	res, _ = x.key(enter)
+	x = res.(m)
+	if !x.themePicker.open {
+		t.Fatal("Enter on Theme did not open the theme picker")
+	}
+	res, _ = x.key(esc)
+	x = res.(m)
+	if x.themePicker.open {
+		t.Fatal("theme picker still open after Esc")
+	}
+	if !x.settingsPicker.open {
+		t.Fatal("Esc in theme picker did not return to settings")
+	}
+	if got := settingsDefs[x.settingsPicker.idx].name; got != "Theme" {
+		t.Fatalf("returned to %q, want Theme", got)
 	}
 }

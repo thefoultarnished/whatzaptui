@@ -146,12 +146,21 @@ func (p *picker) Handle(k tea.KeyMsg) (action string, done bool) {
 	return "", false
 }
 
+// pickerActiveCell draws the selected item; V2 themes colour the ▶ marker
+// with Action and keep the label in TextPrimary.
+func pickerActiveCell(st lipgloss.Style, label string) string {
+	if themeV2 {
+		return lipgloss.NewStyle().Foreground(accent).Bold(true).Render("▶ ") + st.Render(label)
+	}
+	return st.Render(fmt.Sprintf("▶ %s", label))
+}
+
 func (p *picker) Render(w, h int) string {
-	titleStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+	titleStyle := lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(muted)
-	activeStyle := lipgloss.NewStyle().Foreground(brand).Bold(true)
-	inactiveStyle := lipgloss.NewStyle().Foreground(text)
-	divStyle := lipgloss.NewStyle().Foreground(muted)
+	activeStyle := lipgloss.NewStyle().Foreground(v2Color(text, brand)).Bold(true)
+	inactiveStyle := lipgloss.NewStyle().Foreground(v2Color(textSecondary, text))
+	divStyle := lipgloss.NewStyle().Foreground(borderSubtle)
 	keyStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
 
 	if p.isSingleCol() {
@@ -176,7 +185,7 @@ func (p *picker) Render(w, h int) string {
 		for i, item := range p.items {
 			var cell string
 			if i == p.idx {
-				cell = activeStyle.Render(fmt.Sprintf("▶ %s", item.label))
+				cell = pickerActiveCell(activeStyle, item.label)
 			} else {
 				cell = inactiveStyle.Render(fmt.Sprintf("  %s", item.label))
 			}
@@ -188,7 +197,7 @@ func (p *picker) Render(w, h int) string {
 
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
+			BorderForeground(v2Color(borderFocus, accent)).
 			Width(pickerW).
 			Render(strings.Join(lines, "\n"))
 
@@ -219,7 +228,7 @@ func (p *picker) Render(w, h int) string {
 
 		item := p.items[leftIdx]
 		if leftIdx == p.idx {
-			leftCell = activeStyle.Render(fmt.Sprintf("▶ %s", item.label))
+			leftCell = pickerActiveCell(activeStyle, item.label)
 		} else {
 			leftCell = inactiveStyle.Render(fmt.Sprintf("  %s", item.label))
 		}
@@ -229,7 +238,7 @@ func (p *picker) Render(w, h int) string {
 			rightIdx := p.fromColRow(1, r)
 			item2 := p.items[rightIdx]
 			if rightIdx == p.idx {
-				rightCell = activeStyle.Render(fmt.Sprintf("▶ %s", item2.label))
+				rightCell = pickerActiveCell(activeStyle, item2.label)
 			} else {
 				rightCell = inactiveStyle.Render(fmt.Sprintf("  %s", item2.label))
 			}
@@ -243,7 +252,7 @@ func (p *picker) Render(w, h int) string {
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(accent).
+		BorderForeground(v2Color(borderFocus, accent)).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
 

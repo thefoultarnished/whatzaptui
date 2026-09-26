@@ -64,7 +64,7 @@ func fileTypeColor(name string) lipgloss.Color {
 	case ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv":
 		return fileTag
 	case ".zip", ".rar", ".7z", ".tar", ".gz":
-		return anomalyTag
+		return v2Color(fileTag, anomalyTag)
 	default:
 		return muted
 	}
@@ -321,12 +321,12 @@ func (x m) renderFileBrowser(w, h int) string {
 	panelBg := lipgloss.Color(currentTheme.SidebarActiveBg)
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
 	dirSt := bg(lipgloss.NewStyle().Foreground(brand).Bold(true))
-	fileSt := bg(lipgloss.NewStyle().Foreground(text))
+	fileSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, text)))
 
 	activePanelBg := lipgloss.Color(currentTheme.ShortcutActive)
 
@@ -399,6 +399,9 @@ func (x m) renderFileBrowser(w, h int) string {
 			content := cursor + label
 			if isActive {
 				abg := lipgloss.NewStyle().Background(activePanelBg)
+				if themeV2 {
+					return abg.Width(rowW).Render(selectionMarker(activePanelBg) + abg.Foreground(text).Bold(true).Render(" "+label))
+				}
 				return abg.Foreground(accent).Bold(true).Width(rowW).Render(content)
 			}
 			if isPlaceholder {
@@ -421,8 +424,14 @@ func (x m) renderFileBrowser(w, h int) string {
 			nameSt := abg.Foreground(accent).Bold(true).Underline(true)
 			extSt := abg.Foreground(muted)
 			sizeSt := abg.Foreground(accent)
+			lead := asp(" ")
+			if themeV2 {
+				nameSt = abg.Foreground(text).Bold(true)
+				sizeSt = abg.Foreground(textSecondary)
+				lead = selectionMarker(activePanelBg)
+			}
 
-			prefix := asp(" ") + iconSt.Render(icon) + asp(" ")
+			prefix := lead + iconSt.Render(icon) + asp(" ")
 			name := truncateDisplayWidth(entry.name, maxName)
 			left := prefix + nameSt.Render(name) + asp("  ") + extSt.Render(ext)
 			leftW := lipgloss.Width(left)

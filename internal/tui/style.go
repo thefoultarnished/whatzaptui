@@ -2,9 +2,43 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+// shadeColor mixes c toward white (if c is dark) or black (if c is light) by amt
+// (0..1), producing a visibly distinct shade that keeps roughly the same
+// contrast direction as the original color against its usual background.
+func shadeColor(c lipgloss.Color, amt float64) lipgloss.Color {
+	hex := strings.TrimPrefix(string(c), "#")
+	if len(hex) != 6 {
+		return c
+	}
+	r, err1 := strconv.ParseInt(hex[0:2], 16, 32)
+	g, err2 := strconv.ParseInt(hex[2:4], 16, 32)
+	b, err3 := strconv.ParseInt(hex[4:6], 16, 32)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return c
+	}
+	lum := (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)) / 255
+	target := 255.0
+	if lum >= 0.5 {
+		target = 0.0
+	}
+	mix := func(v int64) int64 {
+		n := int64(float64(v) + (target-float64(v))*amt)
+		if n < 0 {
+			n = 0
+		}
+		if n > 255 {
+			n = 255
+		}
+		return n
+	}
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", mix(r), mix(g), mix(b)))
+}
 
 func getBrand() lipgloss.Color        { return lipgloss.Color(currentTheme.Brand) }
 func getAccent() lipgloss.Color       { return lipgloss.Color(currentTheme.Accent) }
@@ -153,6 +187,7 @@ var (
 )
 
 func rehashStyles() {
+	currentTheme = normalizeTheme(currentTheme)
 	brand = lipgloss.Color(currentTheme.Brand)
 	accent = lipgloss.Color(currentTheme.Accent)
 	purple = lipgloss.Color(currentTheme.Purple)
@@ -191,10 +226,11 @@ func rehashStyles() {
 	mediaTokenBg = lipgloss.Color(currentTheme.MediaTokenBg)
 	mediaTokenPulseBg = lipgloss.Color(currentTheme.MediaTokenPulseBg)
 	background = lipgloss.Color(currentTheme.Background)
+	resolveTokens()
 
 	baseBoxStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(brand).
+		BorderForeground(v2Color(borderFocus, brand)).
 		Foreground(text).
 		Padding(1, 2).
 		Align(lipgloss.Center, lipgloss.Center)
@@ -214,7 +250,7 @@ func rehashStyles() {
 	sidebarStyle = lipgloss.NewStyle().
 		Padding(0, 1).
 		Border(lipgloss.NormalBorder(), false, true, false, false).
-		BorderForeground(muted)
+		BorderForeground(borderSubtle)
 
 	msgPaneStyle = lipgloss.NewStyle().Padding(0, 1)
 	dateSepStyle = lipgloss.NewStyle().Foreground(muted).Bold(true)

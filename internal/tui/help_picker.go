@@ -167,16 +167,16 @@ func (p *picker) RenderHelp(w, h int) string {
 	// bg adds panelBg to any style so every character cell is on the raised surface.
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	sectionSt := bg(lipgloss.NewStyle().Foreground(purple).Bold(true))
 	sectionDivSt := bg(lipgloss.NewStyle().Foreground(purple))
 	cmdSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
-	descSt := bg(lipgloss.NewStyle().Foreground(muted))
+	descSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, muted)))
 	activeCmdSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true).Underline(true))
 	activeDescSt := bg(lipgloss.NewStyle().Foreground(text))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
 
 	// fill pads a rendered string to full innerW on the panel surface.
 	fill := bg(lipgloss.NewStyle().Width(innerW))
@@ -234,7 +234,12 @@ func (p *picker) RenderHelp(w, h int) string {
 				}
 
 				var cell string
-				if fi == p.idx {
+				if fi == p.idx && themeV2 {
+					// Shared selection style: marker + BgSelected + TextPrimary.
+					selSt := lipgloss.NewStyle().Background(bgSelected)
+					cell = selSt.Width(colW).Render(selectionMarker(bgSelected) + selSt.Render(" ") +
+						selSt.Foreground(text).Bold(true).Render(item.key) + selSt.Render(" ") + selSt.Foreground(text).Render(desc))
+				} else if fi == p.idx {
 					cell = colFill.Render(indent + activeCmdSt.Render(item.key) + sp + activeDescSt.Render(desc))
 				} else {
 					cell = colFill.Render(indent + cmdSt.Render(item.key) + sp + descSt.Render(desc))
@@ -261,6 +266,7 @@ func (p *picker) RenderHelp(w, h int) string {
 		Padding(1, padH).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
+	box = withPanelOutline(box, w, h)
 
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).

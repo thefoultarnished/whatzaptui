@@ -210,9 +210,10 @@ func (x m) renderEmojiPicker() string {
 	x.ensureEmojiVisible(rows)
 
 	width := min(max(54, x.w-14), 76)
-	title := accentStyle.Render("Emoji Picker") + "  " + mutedStyle.Render("Esc close  Enter insert")
+	titleStyle := lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true)
+	title := titleStyle.Render("Emoji Picker") + "  " + mutedStyle.Render("Esc close  Enter insert")
 	if x.reactPickMode {
-		title = accentStyle.Render("React with Emoji") + "  " + mutedStyle.Render("Esc cancel  Enter react")
+		title = titleStyle.Render("React with Emoji") + "  " + mutedStyle.Render("Esc cancel  Enter react")
 	}
 	body := []string{
 		title,
@@ -220,19 +221,33 @@ func (x m) renderEmojiPicker() string {
 		"",
 	}
 	if len(results) == 0 {
-		body = append(body, redStyle.Copy().Bold(false).Render("No emojis match that search."))
+		// An empty search is not an error: V2 shows it muted.
+		body = append(body, lipgloss.NewStyle().Foreground(v2Color(muted, red)).Render("No emojis match that search."))
 	} else {
+		// Every selected row's highlight is padded to the longest option's
+		// width, so the background rectangle is the same size no matter
+		// which row is selected, capped to what the box can hold.
+		labelW := 0
+		for _, r := range results {
+			labelW = max(labelW, lipgloss.Width(r.Char+"  "+r.Name))
+		}
+		labelW = min(labelW, width-6)
+
 		end := min(len(results), x.emojiScroll+rows)
 		lastGroup := ""
 		for i := x.emojiScroll; i < end; i++ {
 			item := results[i]
 			if item.Group != lastGroup {
-				body = append(body, mutedStyle.Render(strings.ToUpper(item.Group)))
+				body = append(body, lipgloss.NewStyle().Foreground(v2Color(purple, muted)).Bold(themeV2).Render(strings.ToUpper(item.Group)))
 				lastGroup = item.Group
 			}
 			line := item.Char + "  " + item.Name
-			if i == x.emojiSel {
-				line = lipgloss.NewStyle().Foreground(buttonInk).Background(accent).Bold(true).Render(" " + line + " ")
+			if i == x.emojiSel && themeV2 {
+				pad := strings.Repeat(" ", max(0, labelW-lipgloss.Width(line)))
+				line = selectionMarker(bgSelected) + lipgloss.NewStyle().Foreground(text).Background(bgSelected).Bold(true).Render(line+pad+" ")
+			} else if i == x.emojiSel {
+				pad := strings.Repeat(" ", max(0, labelW-lipgloss.Width(line)))
+				line = lipgloss.NewStyle().Foreground(buttonInk).Background(accent).Bold(true).Render(" " + line + pad + " ")
 			} else {
 				line = lipgloss.NewStyle().Foreground(text).Render(line)
 			}

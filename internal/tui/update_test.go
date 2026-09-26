@@ -778,7 +778,8 @@ func TestRenderUserListHighlightedNameUsesMarqueeOffset(t *testing.T) {
 
 func TestUserListRowBackgroundExtendsToRightBoundary(t *testing.T) {
 	enableTrueColor(t)
-	setTestTheme(t, TokyoNight)
+	// Legacy full-row selection; V2 rows are covered in theme_v2_test.go.
+	setTestTheme(t, Catppuccin)
 
 	model := m{
 		mode:           "nav",
@@ -862,7 +863,8 @@ func TestUserListDefaultRowHasNoBg(t *testing.T) {
 
 func TestUserListHighlightedWhitelistedRowUsesBrandBg(t *testing.T) {
 	enableTrueColor(t)
-	setTestTheme(t, TokyoNight)
+	// Legacy full-row selection; V2 rows are covered in theme_v2_test.go.
+	setTestTheme(t, Catppuccin)
 
 	model := m{
 		mode:           "nav",
@@ -890,7 +892,8 @@ func TestUserListHighlightedWhitelistedRowUsesBrandBg(t *testing.T) {
 
 func TestUserListHighlightedBlacklistedRowUsesRedBg(t *testing.T) {
 	enableTrueColor(t)
-	setTestTheme(t, TokyoNight)
+	// Legacy full-row selection; V2 rows are covered in theme_v2_test.go.
+	setTestTheme(t, Catppuccin)
 
 	model := m{
 		mode:           "nav",
@@ -918,7 +921,8 @@ func TestUserListHighlightedBlacklistedRowUsesRedBg(t *testing.T) {
 
 func TestUserListActiveWhitelistedRowUsesWhitelistActiveBg(t *testing.T) {
 	enableTrueColor(t)
-	setTestTheme(t, TokyoNight)
+	// Legacy full-row selection; V2 rows are covered in theme_v2_test.go.
+	setTestTheme(t, Catppuccin)
 
 	model := m{
 		mode:           "chat",
@@ -950,7 +954,8 @@ func TestUserListActiveWhitelistedRowUsesWhitelistActiveBg(t *testing.T) {
 
 func TestUserListActiveBlacklistedRowUsesBlacklistActiveBg(t *testing.T) {
 	enableTrueColor(t)
-	setTestTheme(t, TokyoNight)
+	// Legacy full-row selection; V2 rows are covered in theme_v2_test.go.
+	setTestTheme(t, Catppuccin)
 
 	model := m{
 		mode:           "chat",

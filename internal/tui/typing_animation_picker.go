@@ -78,10 +78,10 @@ func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 	panelBg := lipgloss.Color(currentTheme.SidebarActiveBg)
 	bg := func(s lipgloss.Style) lipgloss.Style { return s.Background(panelBg) }
 
-	titleSt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
+	titleSt := bg(lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true))
 	hintSt := bg(lipgloss.NewStyle().Foreground(muted))
 	keySt := bg(lipgloss.NewStyle().Foreground(accent).Bold(true))
-	divSt := bg(lipgloss.NewStyle().Foreground(muted))
+	divSt := bg(lipgloss.NewStyle().Foreground(borderSubtle))
 
 	fill := bg(lipgloss.NewStyle().Width(innerW))
 	ln := func(s string) string { return fill.Render(s) }
@@ -103,6 +103,9 @@ func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 	activeBg := lipgloss.NewStyle().Background(activePanelBg)
 	activeLn := func(s string) string { return lipgloss.NewStyle().Background(activePanelBg).Width(innerW).Render(s) }
 	activeIndent := activeBg.Render("  ")
+	if themeV2 {
+		activeIndent = selectionMarker(activePanelBg) + activeBg.Render(" ")
+	}
 
 	rows := p.rows()
 	rightLen := p.rightColLen()
@@ -124,14 +127,14 @@ func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 			rowHasActive = true
 			dotColor = accent
 			dotSt := activeBg.Foreground(dotColor).Bold(true)
-			baseSt := activeBg.Foreground(muted).Bold(true).Underline(true)
-			shineSt := activeBg.Foreground(accent).Bold(true).Underline(true)
+			baseSt := activeBg.Foreground(v2Color(text, muted)).Bold(true).Underline(!themeV2)
+			shineSt := activeBg.Foreground(accent).Bold(true).Underline(!themeV2)
 			renderedLabel := renderShine(leftLabel, baseSt, shineSt, shineFrame)
 			leftCell = colFill.Render(activeIndent + dotSt.Render(dot) + renderedLabel)
 		} else {
 			leftLabel = fmt.Sprintf("%s  %s", leftDef.icons[0], leftDef.displayName)
 			dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
-			nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
+			nameSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, text)).Bold(!themeV2))
 			leftCell = colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(leftLabel))
 		}
 
@@ -149,14 +152,14 @@ func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 				rowHasActive = true
 				dotColor2 = accent
 				dotSt := activeBg.Foreground(dotColor2).Bold(true)
-				baseSt := activeBg.Foreground(muted).Bold(true).Underline(true)
-				shineSt := activeBg.Foreground(accent).Bold(true).Underline(true)
+				baseSt := activeBg.Foreground(v2Color(text, muted)).Bold(true).Underline(!themeV2)
+				shineSt := activeBg.Foreground(accent).Bold(true).Underline(!themeV2)
 				renderedLabel := renderShine(rightLabel, baseSt, shineSt, shineFrame)
 				rightCell = colFill.Render(activeIndent + dotSt.Render(dot2) + renderedLabel)
 			} else {
 				rightLabel = fmt.Sprintf("%s  %s", rightDef.icons[0], rightDef.displayName)
 				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor2).Bold(true))
-				nameSt := bg(lipgloss.NewStyle().Foreground(text).Bold(true))
+				nameSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, text)).Bold(!themeV2))
 				rightCell = colFill.Render(indent + dotSt.Render(dot2) + nameSt.Render(rightLabel))
 			}
 		}
@@ -184,6 +187,7 @@ func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 		Padding(1, padH).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
+	box = withPanelOutline(box, w, h)
 
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).
