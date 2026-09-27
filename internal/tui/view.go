@@ -72,7 +72,7 @@ func (x m) viewInner() string {
 	// Calculate extra input lines from text width directly (stable, no render dependency).
 	trimmedInput := strings.TrimSpace(typedInput)
 	isInputCmd := strings.HasPrefix(trimmedInput, "/")
-	inputRightFocused := x.mode == "chat" && !x.sidebarFocused && !x.leftInputFocused
+	inputRightFocused := x.mode == "chat" && !x.sidebarFocused && !x.leftInputFocused && x.active != ""
 	inputLocked := x.chatInputLocked()
 	inputSendVisible := inputRightFocused && !inputLocked && !isInputCmd
 	inputSendW := 0
@@ -1126,10 +1126,166 @@ func (x m) renderCommandBox(leftW int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, topRow, contentRow)
 }
 
+type composerShortcut struct {
+	icon  string
+	key   string
+	label string
+}
+
+func (x m) composerBorderShortcuts(inputLocked bool) ([]composerShortcut, string) {
+	nerd := currentConfig.MediaIconStyle == "nerd" || currentConfig.MediaViewStyle == "glyph"
+	var emojiIcon, fileIcon, replyIcon, editIcon string
+	if nerd {
+		emojiIcon = "\U000F0785" // nf-md-sticker_emoji
+		fileIcon = "\uF115"      // nf-fa-folder_open
+		replyIcon = "\U000F0311" // nf-md-reply
+		editIcon = "\U000F03EB"  // nf-md-pencil
+	}
+
+	if inputLocked {
+		return []composerShortcut{
+			{icon: "", label: "blacklisted", key: "[/whitelist]"},
+		}, "status"
+	}
+	if x.replyPickMode {
+		return []composerShortcut{
+			{icon: replyIcon, label: "quote reply", key: ""},
+			{icon: "", label: "select", key: "[enter]"},
+			{icon: "", label: "cancel", key: "[esc]"},
+		}, "mode"
+	}
+	if x.editPickMode {
+		return []composerShortcut{
+			{icon: editIcon, label: "edit message", key: ""},
+			{icon: "", label: "select", key: "[enter]"},
+			{icon: "", label: "cancel", key: "[esc]"},
+		}, "mode"
+	}
+	if x.pendingAttachmentPath != "" {
+		return []composerShortcut{
+			{icon: fileIcon, label: "attachment", key: ""},
+			{icon: "", label: "send", key: "[enter]"},
+			{icon: "", label: "cancel", key: "[esc]"},
+		}, "mode"
+	}
+
+	return []composerShortcut{
+		{icon: emojiIcon, label: "send emoji", key: "[alt+e]"},
+		{icon: fileIcon, label: "attach file", key: "[alt+f]"},
+		{icon: replyIcon, label: "reply", key: "[alt+r]"},
+		{icon: editIcon, label: "edit message", key: "[alt+a]"},
+	}, "normal"
+}
+
+func (x m) renderComposerTopBorder(borderW int, rightFocused, inputLocked bool) string {
+	if borderW <= 0 {
+		return ""
+	}
+
+	borderCol := borderSubtle
+	if themeV2 && rightFocused {
+		borderCol = borderFocus
+	} else if rightFocused {
+		borderCol = accent
+	}
+	ruleStyle := lipgloss.NewStyle().Foreground(borderCol)
+
+	// Only show shortcuts when the chat is opened and the composer is focused.
+	// When unfocused (e.g. sidebar navigation or no chat opened) or narrow (< 24),
+	// render a plain horizontal rule like before.
+	if !rightFocused || x.active == "" || borderW < 24 {
+		return ruleStyle.Render(strings.Repeat("─", borderW))
+	}
+
+	keyStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(v2Color(textSecondary, muted)).Italic(true)
+	iconStyle := lipgloss.NewStyle().Foreground(accent)
+	dotStyle := lipgloss.NewStyle().Foreground(borderCol)
+
+	shortcuts, modeType := x.composerBorderShortcuts(inputLocked)
+	prefix := "── "
+	curW := runeDisplayWidth(prefix)
+	var sb strings.Builder
+	sb.WriteString(ruleStyle.Render(prefix))
+
+	added := 0
+	for _, sc := range shortcuts {
+		sep := ""
+		if added > 0 {
+			sep = "  ·  "
+		}
+
+		iconText := sc.icon
+		labelText := sc.label
+		keyText := sc.key
+
+		chipW := runeDisplayWidth(sep)
+		if iconText != "" {
+			chipW += runeDisplayWidth(iconText) + 1
+		}
+		if labelText != "" {
+			chipW += runeDisplayWidth(labelText)
+			if keyText != "" {
+				chipW += 1
+			}
+		}
+		if keyText != "" {
+			chipW += runeDisplayWidth(keyText)
+		}
+
+		// Reserve at least 3 chars for trailing rule " ──"
+		if curW+chipW+3 > borderW {
+			break
+		}
+
+		if sep != "" {
+			sb.WriteString(dotStyle.Render(sep))
+		}
+		if iconText != "" {
+			sb.WriteString(iconStyle.Render(iconText))
+			sb.WriteString(" ")
+		}
+
+		if labelText != "" {
+			if sc.key == "" {
+				sb.WriteString(lipgloss.NewStyle().Foreground(accent).Bold(true).Italic(true).Render(labelText))
+			} else {
+				sb.WriteString(labelStyle.Render(labelText))
+			}
+			if keyText != "" {
+				sb.WriteString(" ")
+			}
+		}
+
+		if keyText != "" {
+			if modeType == "status" {
+				sb.WriteString(lipgloss.NewStyle().Foreground(v2Color(amber, red)).Bold(true).Render(keyText))
+			} else {
+				sb.WriteString(keyStyle.Render(keyText))
+			}
+		}
+		curW += chipW
+		added++
+	}
+
+	// Trailing rule must end with ─ to ensure right frame junction connects
+	rem := borderW - curW
+	if rem > 0 {
+		sb.WriteString(ruleStyle.Render(" " + strings.Repeat("─", rem-1)))
+	}
+
+	res := sb.String()
+	resW := runeDisplayWidth(stripGraphicsSeqs(res))
+	if resW < borderW {
+		res += ruleStyle.Render(strings.Repeat("─", borderW-resW))
+	}
+	return res
+}
+
 func (x m) renderChatInput(rightW int, typedInput string) string {
 	trimmedInput := strings.TrimSpace(typedInput)
 	isCmd := strings.HasPrefix(trimmedInput, "/")
-	rightFocused := x.mode == "chat" && !x.sidebarFocused && !x.leftInputFocused
+	rightFocused := x.mode == "chat" && !x.sidebarFocused && !x.leftInputFocused && x.active != ""
 	inputLocked := x.chatInputLocked()
 	inputGhost := ""
 	if rightFocused && !inputLocked && !x.inputAllSelected {
@@ -1231,17 +1387,11 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	if showSend {
 		rightContent = lipgloss.JoinHorizontal(lipgloss.Top, textRendered, " "+sendBadge)
 	}
-	inputBorder := borderSubtle
-	if themeV2 && rightFocused {
-		inputBorder = borderFocus
-	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(inputBorder).
-		Foreground(text).
-		Render(rightContent)
+	borderW := max(1, rightW-1)
+	topBorder := x.renderComposerTopBorder(borderW, rightFocused, inputLocked)
+	content := lipgloss.NewStyle().Foreground(text).Render(rightContent)
+	return topBorder + "\n" + content
 }
-
 func (x m) renderReplyBar(contentW, rightW int) string {
 	displayReplyTo := x.replyTo
 	if displayReplyTo == nil {
@@ -1303,9 +1453,9 @@ func (x m) renderAttachmentBar(rightW int) string {
 
 func (x m) emptyComposerHint() string {
 	if x.pendingAttachmentPath != "" {
-		return "Type a caption | Enter send file | Esc cancel"
+		return "Type a caption..."
 	}
-	return "Type a message | Alt+E emoji | Alt+F file"
+	return "Type a message..."
 }
 
 func (x m) renderSide(w, h int) string {
@@ -2718,18 +2868,34 @@ func (x m) assembleChatLines(w, h int, msgBlocks [][]string, msgTimestamps []int
 	}
 	if _, typing := x.typingChats[x.active]; typing {
 		name := x.nameFor(x.active)
-		typingIcons := getTypingIcons(currentConfig.TypingAnimationStyle)
-		icon := typingIcons[x.shineFrame%len(typingIcons)]
-		text := icon + " " + name + " is typing..."
-		if themeV2 {
-			// Typing is "them": Emphasis with the shared shine sweep.
-			baseSt := lipgloss.NewStyle().Foreground(purple)
-			shineSt := lipgloss.NewStyle().Foreground(fxShine).Bold(true)
-			lines = append(lines, renderShine(text, baseSt, shineSt, x.shineFrame))
+		typingText := name + " is typing..."
+		if currentConfig.TypingAnimationStyle == "squares" {
+			icon := renderSquaresIcon(x.shineFrame, lipgloss.Color(""))
+			var textWithShine string
+			if themeV2 {
+				baseSt := lipgloss.NewStyle().Foreground(purple)
+				shineSt := lipgloss.NewStyle().Foreground(fxShine).Bold(true)
+				textWithShine = renderShine(typingText, baseSt, shineSt, x.shineFrame)
+			} else {
+				baseSt := lipgloss.NewStyle().Foreground(anomalyTag)
+				shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true)
+				textWithShine = renderShine(typingText, shineSt, baseSt, x.shineFrame)
+			}
+			lines = append(lines, icon+" "+textWithShine)
 		} else {
-			baseSt := lipgloss.NewStyle().Foreground(anomalyTag)
-			shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true)
-			lines = append(lines, renderShine(text, shineSt, baseSt, x.shineFrame))
+			typingIcons := getTypingIcons(currentConfig.TypingAnimationStyle)
+			icon := typingIcons[x.shineFrame%len(typingIcons)]
+			text := icon + " " + typingText
+			if themeV2 {
+				// Typing is "them": Emphasis with the shared shine sweep.
+				baseSt := lipgloss.NewStyle().Foreground(purple)
+				shineSt := lipgloss.NewStyle().Foreground(fxShine).Bold(true)
+				lines = append(lines, renderShine(text, baseSt, shineSt, x.shineFrame))
+			} else {
+				baseSt := lipgloss.NewStyle().Foreground(anomalyTag)
+				shineSt := lipgloss.NewStyle().Foreground(accent).Bold(true)
+				lines = append(lines, renderShine(text, shineSt, baseSt, x.shineFrame))
+			}
 		}
 	}
 	return lipgloss.NewStyle().
