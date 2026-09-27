@@ -19,6 +19,106 @@ var typingAnimationList = []struct {
 	{"bars", "Loading bars", []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"}},
 	{"pulse", "Pulse", []string{"○", "◉", "○"}},
 	{"arrows", "Rotating arrows", []string{"←", "↖", "↑", "↗", "→", "↘", "↓", "↙"}},
+	{"squares", "Squares", []string{
+		"··◼◼◼◼◼◼",
+		"·◼◼◼◼◼◼·",
+		"◼◼◼◼◼◼··",
+		"◼◼◼◼◼◼··",
+		"·◼◼◼◼◼◼·",
+		"··◼◼◼◼◼◼",
+	}},
+}
+
+var squaresShadesDark = []lipgloss.Color{
+	"#58A6FF", // 0: Front face (brightest electric blue)
+	"#3B82F6", // 1: Vivid cobalt
+	"#2563EB", // 2: Royal blue
+	"#1D4ED8", // 3: Deep blue
+	"#1E3A8A", // 4: Dark navy
+	"#101E3C", // 5: Deep shadow navy (darkest)
+}
+
+const squaresDotDark = lipgloss.Color("#283042")
+
+var squaresShadesLight = []lipgloss.Color{
+	"#0F172A", // 0: Front face (darkest / most contrast on light bg)
+	"#1E3A8A", // 1
+	"#1D4ED8", // 2
+	"#2563EB", // 3
+	"#60A5FA", // 4
+	"#93C5FD", // 5: Back tail (faint)
+}
+
+const squaresDotLight = lipgloss.Color("#CBD5E1")
+
+// renderSquaresIcon renders an 8-slot scanner animation of 6 squares that bounce
+// left and right, with the leading square brightest and fading to dark towards the back,
+// with dim dots for empty slots (matching Claude CLI / progress animation).
+func renderSquaresIcon(frame int, bg lipgloss.Color) string {
+	f := (frame%6 + 6) % 6
+	slotsTable := [6][8]int{
+		{-1, -1, 0, 1, 2, 3, 4, 5}, // f=0: moving left,  front=slot 2 (brightest), back=slot 7 (darkest)
+		{-1, 0, 1, 2, 3, 4, 5, -1}, // f=1: moving left,  front=slot 1 (brightest), back=slot 6 (darkest)
+		{0, 1, 2, 3, 4, 5, -1, -1}, // f=2: moving left,  front=slot 0 (brightest), back=slot 5 (darkest)
+		{5, 4, 3, 2, 1, 0, -1, -1}, // f=3: moving right, front=slot 5 (brightest), back=slot 0 (darkest)
+		{-1, 5, 4, 3, 2, 1, 0, -1}, // f=4: moving right, front=slot 6 (brightest), back=slot 1 (darkest)
+		{-1, -1, 5, 4, 3, 2, 1, 0}, // f=5: moving right, front=slot 7 (brightest), back=slot 2 (darkest)
+	}
+	slots := slotsTable[f]
+
+	shades := squaresShadesDark
+	dotColor := squaresDotDark
+	if relLuminance(string(background)) >= 0.5 {
+		shades = squaresShadesLight
+		dotColor = squaresDotLight
+	}
+
+	dotStyle := lipgloss.NewStyle().Foreground(dotColor)
+	if bg != "" {
+		dotStyle = dotStyle.Background(bg)
+	}
+	dotStr := dotStyle.Render("·")
+
+	var sb strings.Builder
+	for _, s := range slots {
+		if s == -1 {
+			sb.WriteString(dotStr)
+		} else {
+			sqStyle := lipgloss.NewStyle().Foreground(shades[s])
+			if bg != "" {
+				sqStyle = sqStyle.Background(bg)
+			}
+			sb.WriteString(sqStyle.Render("◼"))
+		}
+	}
+	return sb.String()
+}
+
+func renderTypingItemCell(def struct {
+	key         string
+	displayName string
+	icons       []string
+}, isSelected bool, shineFrame int, colFill lipgloss.Style, indent, dot string, dotSt lipgloss.Style, itemBg lipgloss.Color, baseSt, shineSt, nameSt lipgloss.Style) string {
+	if def.key == "squares" {
+		var iconStr string
+		var labelStr string
+		if isSelected {
+			iconStr = renderSquaresIcon(shineFrame, itemBg)
+			labelStr = renderShine(def.displayName, baseSt, shineSt, shineFrame)
+		} else {
+			iconStr = renderSquaresIcon(0, itemBg)
+			labelStr = nameSt.Render(def.displayName)
+		}
+		return colFill.Render(indent + dotSt.Render(dot) + iconStr + "  " + labelStr)
+	}
+
+	if isSelected {
+		icon := def.icons[shineFrame%len(def.icons)]
+		label := fmt.Sprintf("%s  %s", icon, def.displayName)
+		return colFill.Render(indent + dotSt.Render(dot) + renderShine(label, baseSt, shineSt, shineFrame))
+	}
+	label := fmt.Sprintf("%s  %s", def.icons[0], def.displayName)
+	return colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(label))
 }
 
 func buildTypingAnimationPickerItems() []pickerItem {
@@ -116,51 +216,40 @@ func (p *picker) RenderTypingAnimation(w, h, shineFrame int) string {
 
 		leftIdx := r
 		leftDef := typingAnimationList[leftIdx]
-		leftLabel := ""
-		dotColor := muted
+		leftIsActive := leftIdx == p.idx
+		if leftIsActive {
+			rowHasActive = true
+		}
+
 		dot := "\U000F0C52 "
+		baseSt := activeBg.Foreground(v2Color(text, muted)).Bold(true).Underline(!themeV2)
+		shineSt := activeBg.Foreground(accent).Bold(true).Underline(!themeV2)
+		nameSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, text)).Bold(!themeV2))
 
 		var leftCell string
-		if leftIdx == p.idx {
-			leftIcon := leftDef.icons[shineFrame%len(leftDef.icons)]
-			leftLabel = fmt.Sprintf("%s  %s", leftIcon, leftDef.displayName)
-			rowHasActive = true
-			dotColor = accent
-			dotSt := activeBg.Foreground(dotColor).Bold(true)
-			baseSt := activeBg.Foreground(v2Color(text, muted)).Bold(true).Underline(!themeV2)
-			shineSt := activeBg.Foreground(accent).Bold(true).Underline(!themeV2)
-			renderedLabel := renderShine(leftLabel, baseSt, shineSt, shineFrame)
-			leftCell = colFill.Render(activeIndent + dotSt.Render(dot) + renderedLabel)
+		if leftIsActive {
+			dotSt := activeBg.Foreground(accent).Bold(true)
+			leftCell = renderTypingItemCell(leftDef, true, shineFrame, colFill, activeIndent, dot, dotSt, activePanelBg, baseSt, shineSt, nameSt)
 		} else {
-			leftLabel = fmt.Sprintf("%s  %s", leftDef.icons[0], leftDef.displayName)
-			dotSt := bg(lipgloss.NewStyle().Foreground(dotColor).Bold(true))
-			nameSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, text)).Bold(!themeV2))
-			leftCell = colFill.Render(indent + dotSt.Render(dot) + nameSt.Render(leftLabel))
+			dotSt := bg(lipgloss.NewStyle().Foreground(muted).Bold(true))
+			leftCell = renderTypingItemCell(leftDef, false, shineFrame, colFill, indent, dot, dotSt, panelBg, baseSt, shineSt, nameSt)
 		}
 
 		var rightCell string
 		if r < rightLen {
 			rightIdx := p.fromColRow(1, r)
 			rightDef := typingAnimationList[rightIdx]
-			rightLabel := ""
-			dotColor2 := muted
-			dot2 := "\U000F0C52 "
-
-			if rightIdx == p.idx {
-				rightIcon := rightDef.icons[shineFrame%len(rightDef.icons)]
-				rightLabel = fmt.Sprintf("%s  %s", rightIcon, rightDef.displayName)
+			rightIsActive := rightIdx == p.idx
+			if rightIsActive {
 				rowHasActive = true
-				dotColor2 = accent
-				dotSt := activeBg.Foreground(dotColor2).Bold(true)
-				baseSt := activeBg.Foreground(v2Color(text, muted)).Bold(true).Underline(!themeV2)
-				shineSt := activeBg.Foreground(accent).Bold(true).Underline(!themeV2)
-				renderedLabel := renderShine(rightLabel, baseSt, shineSt, shineFrame)
-				rightCell = colFill.Render(activeIndent + dotSt.Render(dot2) + renderedLabel)
+			}
+
+			if rightIsActive {
+				dotSt := activeBg.Foreground(accent).Bold(true)
+				rightCell = renderTypingItemCell(rightDef, true, shineFrame, colFill, activeIndent, dot, dotSt, activePanelBg, baseSt, shineSt, nameSt)
 			} else {
-				rightLabel = fmt.Sprintf("%s  %s", rightDef.icons[0], rightDef.displayName)
-				dotSt := bg(lipgloss.NewStyle().Foreground(dotColor2).Bold(true))
-				nameSt := bg(lipgloss.NewStyle().Foreground(v2Color(textSecondary, text)).Bold(!themeV2))
-				rightCell = colFill.Render(indent + dotSt.Render(dot2) + nameSt.Render(rightLabel))
+				dotSt := bg(lipgloss.NewStyle().Foreground(muted).Bold(true))
+				rightCell = renderTypingItemCell(rightDef, false, shineFrame, colFill, indent, dot, dotSt, panelBg, baseSt, shineSt, nameSt)
 			}
 		}
 
