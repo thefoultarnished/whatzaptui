@@ -42,7 +42,7 @@ func playSoundProfileCmd(profile int) tea.Cmd {
 			playSoundProfile(profile)
 			<-soundSlot
 		default:
-			// playback already in progress — drop this notification
+			// playback already in progress - drop this notification
 		}
 		return nil
 	}

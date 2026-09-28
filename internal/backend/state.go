@@ -32,7 +32,7 @@ var maxLIDCacheCaps = 10000
 // cappedEvict is a generic helper that trims a map to at most max
 // entries by deleting random keys. Pass max <= 0 to disable. The
 // random-order iteration of Go maps provides a uniform distribution
-// for eviction — at a 1k/5k/10k cap the probability of hitting a
+// for eviction - at a 1k/5k/10k cap the probability of hitting a
 // recently-used entry in any single tick is negligible.
 func cappedEvict[K comparable, V any](m map[K]V, max int) {
 	if max <= 0 {
@@ -132,14 +132,14 @@ func (a *App) resetPersistentStorage() error {
 
 // wipeCacheDirExceptLogs removes every entry directly under dir except the
 // actionLog's own "logs" subdirectory. Logout used to os.RemoveAll(dir)
-// wholesale, which includes the actionLog's currently-open log file —
+// wholesale, which includes the actionLog's currently-open log file -
 // Windows refuses to delete a file another handle still has open, so that
 // RemoveAll failed with a generic "used by another process" error the
 // moment a session had generated enough log lines to still be flushing at
 // wipe time. Every /logout then came back "backend cleanup failed", and
 // whatever had already been removed (session.token, store.db) stayed gone
 // while the still-open logs/ directory blocked the rest, leaving cacheDir
-// half-wiped. Logs are meant to survive a logout anyway — they are the
+// half-wiped. Logs are meant to survive a logout anyway - they are the
 // diagnostic trail for exactly this kind of failure.
 func wipeCacheDirExceptLogs(dir string) error {
 	entries, err := os.ReadDir(dir)
@@ -162,7 +162,7 @@ func wipeCacheDirExceptLogs(dir string) error {
 
 // reconcileLIDChats merges any in-memory chat/contact entries stored under a
 // raw @lid JID into their resolved phone-number JID equivalents. It runs after
-// history sync when the LID cache is warmest. DB rows are not re-keyed — only
+// history sync when the LID cache is warmest. DB rows are not re-keyed - only
 // the in-memory sidebar state is fixed.
 func (a *App) reconcileLIDChats() {
 	if client := a.getClient(); client == nil || client.Store == nil || client.Store.LIDs == nil {
@@ -516,7 +516,7 @@ func (a *App) backfillFTS() {
 			}
 			// Delete-then-insert per page (atomic): a live writer may
 			// have indexed these rows first, and a crashed/resumed
-			// backfill may revisit them — either way we converge to
+			// backfill may revisit them - either way we converge to
 			// exactly one FTS row per triple, never duplicates.
 			for _, r := range pending {
 				if _, err := tx.Exec(`DELETE FROM messages_fts WHERE chat_id = ? AND msg_id = ? AND from_me = ?`, r.chatID, r.msgID, r.fromMe); err != nil {
@@ -650,7 +650,7 @@ func (a *App) purgeGroupSenderNames() {
 
 // backfillReceipt upgrades any FromMe message row that has no receipt state
 // to "delivered". History sync (and pre-fix inserts) leave FromMe rows with
-// an empty receipt, which the TUI renders as a single tick — looking the
+// an empty receipt, which the TUI renders as a single tick - looking the
 // same as a live message that's been sent but not yet delivered. Any FromMe
 // row that made it into the store is, at minimum, delivered, so this is a
 // safe default. Idempotent: a second run is a no-op.
@@ -674,7 +674,7 @@ func (a *App) backfillReceipt() {
 // purgeInvisibleProtocolMessages deletes stored protocol control messages
 // (history sync notifications, peer data op responses, key shares, ...) that
 // should never appear as chat content, plus their orphaned FTS rows.
-// Runs every startup — the DELETE is a no-op when there is nothing to clean.
+// Runs every startup - the DELETE is a no-op when there is nothing to clean.
 func (a *App) purgeInvisibleProtocolMessages() {
 	_, db := a.dbHandles()
 	if db == nil {
@@ -719,7 +719,7 @@ func (a *App) purgeEmptyPhantomChats() {
 func (a *App) loadState() {
 	_, db := a.dbHandles()
 	// Defensive: clear any chat_permissions rows that have the local user's own
-	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
+	// push name as the contact name (legacy bug - see purgeOwnPushNameFromContacts).
 	a.purgeOwnPushNameFromContacts()
 	a.purgeGroupSenderNames()
 	// Upgrade FromMe rows that have no receipt state (legacy: pre-fix history
@@ -817,7 +817,7 @@ func (a *App) bootstrapFromStore() {
 // by bootstrapFromStore (the initial pass, run moments after connecting)
 // and runContactReseed (re-run whenever WhatsApp finishes pushing more app
 // state) because the address book often keeps arriving in the background
-// for a while after the initial bootstrap already returned — see
+// for a while after the initial bootstrap already returned - see
 // handleAppStateSyncComplete.
 //
 // getAllContacts is a parameter (not a.client.Store.Contacts.GetAllContacts
@@ -887,7 +887,7 @@ func (a *App) seedContactsFromStore(ctx context.Context, getAllContacts func(con
 
 		// Do not write a Chats entry here: a saved-contact name alone
 		// (no hasChat) must not synthesize a phantom zero-message chat
-		// — same bug as the historysync pushname path (events.go). A
+		// - same bug as the historysync pushname path (events.go). A
 		// real chat's name is already filled in from Contacts at serve
 		// time (handleChats), so writing it here again was redundant
 		// for real chats and actively wrong for everyone else.
@@ -904,7 +904,7 @@ func (a *App) seedContactsFromStore(ctx context.Context, getAllContacts func(con
 var contactReseedDebounce = 2 * time.Second
 
 // handleAppStateSyncComplete is called for every events.AppStateSyncComplete
-// whatsmeow dispatches — both the ones bootstrapFromStore triggers directly
+// whatsmeow dispatches - both the ones bootstrapFromStore triggers directly
 // and the ones whatsmeow triggers on its own later, when the server pushes
 // a "server_sync" notification with a newer app-state version (this is how
 // a large address book that didn't finish syncing within the first ~25s
@@ -1404,7 +1404,7 @@ func (a *App) migrateStateCanonicalIDs(state *PersistedState) {
 
 // upsertPermission records that a sender exists (allowed stays 0) and keeps
 // the auto-captured push name fresh. The row is only (re)written when its
-// stored name is empty or still matches prevName — the push name last
+// stored name is empty or still matches prevName - the push name last
 // captured for this contact. Anything else was set by the user via /rename
 // and is left alone, so a contact who changes their WhatsApp name picks up
 // the new name on their next message instead of keeping the first one forever.

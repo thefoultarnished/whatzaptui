@@ -197,7 +197,7 @@ func (p *Picker) RenderTheme(s Style, w, h int) string {
 }
 
 // RenderHelp renders a 3-column grouped command palette for the help picker.
-// Depth is achieved via a raised surface colour applied to every style — no
+// Depth is achieved via a raised surface colour applied to every style - no
 // border characters, so the panel floats cleanly.
 func (p *Picker) RenderHelp(s Style, w, h int) string {
 	const padH = 3

@@ -22,7 +22,7 @@ import (
 )
 
 // S-3: minimum log level for the whatsmeow loggers (both the
-// client and the sqlstore). Default is "WARN" — pre-fix was
+// client and the sqlstore). Default is "WARN" - pre-fix was
 // "DEBUG" for the client, which spammed stdout with every
 // protobuf marshal/unmarshal, every retry, and every received
 // message body. Override at startup with WHATZAP_LOG_LEVEL=DEBUG
@@ -75,7 +75,7 @@ type redactingWriter struct {
 
 // newRedactingWriter scrubs whatever secret() currently returns out of
 // every write. secret is called per-write (not once at construction) so
-// that a token rotated later (A-1) is still redacted — without this, a
+// that a token rotated later (A-1) is still redacted - without this, a
 // rotated token logged after rotation would bypass a redactor built from
 // the token's old value.
 func newRedactingWriter(w io.Writer, secret func() string) io.Writer {
@@ -178,7 +178,7 @@ func Run() {
 	// A-13: periodic eviction of in-memory maps. Runs every 30s
 	// to keep Chats/Contacts/lidCache within their caps. Uses
 	// a background goroutine because the maps are not persisted
-	// as a batch anywhere we could piggyback on — lidCache in
+	// as a batch anywhere we could piggyback on - lidCache in
 	// particular has no persistence path at all.
 	//
 	// A-1: the same tick also checks whether the registered TUI session
@@ -233,6 +233,7 @@ func Run() {
 	app.shuttingDown = true
 	app.mu.Unlock()
 	app.stopPersistWorker()
+	app.closeAllWSClients()
 
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -246,7 +247,7 @@ func Run() {
 	}
 }
 
-// mustGetwd returns the current working directory or fatals — Run has
+// mustGetwd returns the current working directory or fatals - Run has
 // already touched os.Stderr by this point so log.Fatalf carries the
 // usual cleanup semantics (the deferred Close on actionLog still runs).
 func mustGetwd() string {
@@ -275,7 +276,7 @@ func whatzapDataRoot() (string, error) {
 
 // sessionTokenPath returns the path to the session token file (S-1):
 // <data-root>/backend/session.token. The TUI writes/reads this same file
-// (it computes the same path independently — see internal/tui/main.go).
+// (it computes the same path independently - see internal/tui/main.go).
 func sessionTokenPath() (string, error) {
 	dataRoot, err := whatzapDataRoot()
 	if err != nil {
@@ -290,7 +291,7 @@ func sessionTokenPath() (string, error) {
 
 // readSessionToken reads and validates the session token file written by
 // the TUI. Returns an error (with a message pointing at the cause) if the
-// file is missing or empty — the backend should not start with no token,
+// file is missing or empty - the backend should not start with no token,
 // since isAuthorized() would then reject every request.
 func readSessionToken(path string) (string, error) {
 	b, err := os.ReadFile(path)
@@ -375,7 +376,7 @@ func copyDirContents(srcDir, dstDir string) error {
 		// S-8: skip symlinks. The legacy `.whatsmeow_cache` dir may
 		// contain a symlink the user (or an attacker with write access
 		// to the working dir) placed there pointing at, say,
-		// ~/.ssh/id_rsa — without this check we'd open the symlink
+		// ~/.ssh/id_rsa - without this check we'd open the symlink
 		// and copy the target's contents into the live data folder.
 		// entry.Info() uses Lstat semantics so info.Mode() reflects
 		// the symlink itself, not its target; the IsRegular() check
@@ -383,7 +384,7 @@ func copyDirContents(srcDir, dstDir string) error {
 		// obvious and protects against an accidental IsRegular()
 		// edit later. Junctions (Windows directory reparse points)
 		// are not covered by this check and would still be recursed
-		// into — out of scope for S-8, see security_easy.md.
+		// into - out of scope for S-8, see security_easy.md.
 		if info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}

@@ -202,7 +202,7 @@ type wireMsg struct {
 }
 
 // UnmarshalJSON sanitizes wire-derived display text (PushName and every
-// string nested in Message — conversation, extendedTextMessage.text,
+// string nested in Message - conversation, extendedTextMessage.text,
 // quotedText, captions, poll text, reaction emoji, file names, etc.) to
 // strip terminal control characters before they ever reach the TUI renderer.
 func (w *wireMsg) UnmarshalJSON(data []byte) error {
@@ -257,6 +257,7 @@ type m struct {
 	wsCh                     <-chan env
 	wsReconnectDelay         time.Duration // current backoff; 0 = not disconnected
 	wsDisconnected           bool
+	wsCloseReason            string // backend's close-frame text, shown on disconnect
 	backend                  *exec.Cmd
 	startedBackend           bool
 

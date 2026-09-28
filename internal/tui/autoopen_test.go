@@ -9,7 +9,7 @@ import (
 )
 
 // TestChatsMsgDoesNotAutoOpen: a fresh session (active == "") stays on
-// the chat list — no chat opens until the user picks one.
+// the chat list - no chat opens until the user picks one.
 func TestChatsMsgDoesNotAutoOpen(t *testing.T) {
 	var msgsHit bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

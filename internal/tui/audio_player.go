@@ -23,7 +23,7 @@ import (
 //
 // Pause is implemented as stop-and-remember: the process is killed and
 // the elapsed position kept; resume restarts the player with -ss/--start.
-// Single instance only — starting a new playback supersedes the old one
+// Single instance only - starting a new playback supersedes the old one
 // via audioGen.
 
 type audioPlayerKind int
@@ -45,7 +45,7 @@ type audioDoneMsg struct {
 }
 
 // resolveAudioPlayer finds a headless player on PATH. Empty PATH entries
-// are fine — LookPath just finds nothing and we fall back.
+// are fine - LookPath just finds nothing and we fall back.
 func resolveAudioPlayer() (audioPlayerKind, string) {
 	if p, err := exec.LookPath("ffplay"); err == nil {
 		return audioPlayerFFplay, p
@@ -157,7 +157,7 @@ func audioTickCmd() tea.Cmd {
 
 // audioDuration extracts the voice-note length. The backend stores Seconds
 // as a number that may arrive as uint32 (live), float64 (JSON round-trip),
-// int, or json.Number — all are accepted. 0 means unknown.
+// int, or json.Number - all are accepted. 0 means unknown.
 func audioDuration(msg wireMsg) time.Duration {
 	v, ok := msg.Message["audioMessage"].(map[string]any)
 	if !ok {

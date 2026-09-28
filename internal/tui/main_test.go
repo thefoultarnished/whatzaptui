@@ -34,7 +34,7 @@ func TestResolveSessionTokenGeneratesAndWritesFile(t *testing.T) {
 }
 
 // resolveSessionToken reuses an existing token file rather than generating
-// a new one — restarting the TUI while the backend keeps running must not
+// a new one - restarting the TUI while the backend keeps running must not
 // invalidate the existing session.
 func TestResolveSessionTokenReusesExistingFile(t *testing.T) {
 	dataDir := t.TempDir()
@@ -58,7 +58,7 @@ func TestResolveSessionTokenReusesExistingFile(t *testing.T) {
 	}
 }
 
-// An empty (but present) token file is treated as absent — a fresh token
+// An empty (but present) token file is treated as absent - a fresh token
 // is generated rather than handing the backend an empty Authorization
 // header.
 func TestResolveSessionTokenIgnoresEmptyFile(t *testing.T) {

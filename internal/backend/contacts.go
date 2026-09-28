@@ -505,10 +505,10 @@ func (a *App) handleSetWhitelistDefault(w http.ResponseWriter, r *http.Request) 
 // normalizeWhitelistPhone validates and normalizes a phone string
 // for chat_permissions. Accepts digits only (e.g. "15551230001")
 // or digits + @s.whatsapp.net suffix (e.g. "15551230001@s.whatsapp.net")
-// — the suffix is stripped to the local part that phoneFromJID would
+// - the suffix is stripped to the local part that phoneFromJID would
 // extract from a chat ID. Returns an error if the input is empty,
 // contains non-digit characters, is a bare @server with no local
-// part, or (A-9) is a group JID (@g.us) — the whitelist is a
+// part, or (A-9) is a group JID (@g.us) - the whitelist is a
 // phone-number allowlist, not a group allowlist.
 func normalizeWhitelistPhone(phone string) (string, error) {
 	if strings.HasSuffix(phone, "@g.us") {

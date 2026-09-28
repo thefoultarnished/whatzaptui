@@ -48,7 +48,7 @@ func dbHelpers(app *App) map[string]func() {
 }
 
 // Negative: after logout (no DB, no store) every helper is a clean no-op or
-// error — never a nil-pointer panic.
+// error - never a nil-pointer panic.
 func TestDBHelpersAfterLogoutDoNotPanic(t *testing.T) {
 	app := loggedOut(t)
 	for name, f := range dbHelpers(app) {

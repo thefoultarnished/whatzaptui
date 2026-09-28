@@ -696,7 +696,7 @@ func TestRenderMainOutgoingReactionKeepsMessageIndentedRight(t *testing.T) {
 	if !strings.Contains(rendered, reactionBody) {
 		t.Fatalf("reaction body did not use reactor name color: %q", rendered)
 	}
-	// 1-to-1: reactor name should be suppressed — the other party is implicit.
+	// 1-to-1: reactor name should be suppressed - the other party is implicit.
 	if strings.Contains(rendered, "Shadu Mady") {
 		t.Fatalf("1-to-1 reaction should not show reactor name: %q", rendered)
 	}
@@ -2291,7 +2291,7 @@ func setTestTheme(t *testing.T, theme Theme) {
 	})
 }
 
-// #2: WS-first path — WS delivers real message before HTTP response.
+// #2: WS-first path - WS delivers real message before HTTP response.
 // Expected: only one message in the list (no duplicate).
 func TestOptimisticWSFirstNoDuplicate(t *testing.T) {
 	chatID := "15551230001@s.whatsapp.net"
@@ -2327,7 +2327,7 @@ func TestOptimisticWSFirstNoDuplicate(t *testing.T) {
 	}
 }
 
-// #2: HTTP-first path (normal case) — must still work correctly after the fix.
+// #2: HTTP-first path (normal case) - must still work correctly after the fix.
 func TestOptimisticHTTPFirstStillWorks(t *testing.T) {
 	chatID := "15551230001@s.whatsapp.net"
 	now := time.Now().Unix()
@@ -2434,7 +2434,7 @@ func TestPlaySoundProfileCmdDropsConcurrentCalls(t *testing.T) {
 	// Release the slot.
 	<-soundSlot
 
-	// fired stays false because the slot was occupied — no concurrent playback.
+	// fired stays false because the slot was occupied - no concurrent playback.
 	if fired {
 		t.Fatal("sound played while slot was occupied")
 	}
@@ -2984,7 +2984,7 @@ func TestAltToggleFallsBackToActiveChatWhenNoSidebarSelection(t *testing.T) {
 	defer srv.Close()
 
 	// Active chat is set but the sidebar has no chats and sel is out of bounds
-	// — the helper should still toggle the open chat (matches /whitelist).
+	// - the helper should still toggle the open chat (matches /whitelist).
 	chatID := "15551230007@s.whatsapp.net"
 	model := m{
 		status:       "ready",
@@ -3027,7 +3027,7 @@ func TestAltToggleFallsBackToActiveChatWhenNoSidebarSelection(t *testing.T) {
 // If an incoming message reorders the sidebar (a different chat's
 // ConversationTimestamp bumps it above the one the user has highlighted),
 // the sidebar selection (x.sel) must follow the same chat rather than
-// staying on a raw index — so Alt+B/Alt+W still targets the chat the user
+// staying on a raw index - so Alt+B/Alt+W still targets the chat the user
 // actually had selected.
 func TestAltToggleTargetsHighlightedChatAfterSidebarReorder(t *testing.T) {
 	withTempAPIEnv(t)
@@ -3129,7 +3129,7 @@ func TestAltToggleFiresViaInlineRuneFallback(t *testing.T) {
 }
 
 // Switching the active chat (Alt+Up/Down, sidebar selection) must not leak
-// an unsent composer draft into the newly opened chat — each chat keeps its
+// an unsent composer draft into the newly opened chat - each chat keeps its
 // own draft, restored when you return to it.
 func TestOpenSelectedChatSavesAndRestoresPerChatDraft(t *testing.T) {
 	chat1 := "15551230001@s.whatsapp.net"
@@ -3154,7 +3154,7 @@ func TestOpenSelectedChatSavesAndRestoresPerChatDraft(t *testing.T) {
 	}
 	model.rebuildContactIndex()
 
-	// Switch to chat2 without sending — chat1's draft must be saved, and
+	// Switch to chat2 without sending - chat1's draft must be saved, and
 	// chat2's composer must start empty (no leaked text).
 	next, _ := model.openSelectedChat()
 	got := next.(m)
@@ -3168,7 +3168,7 @@ func TestOpenSelectedChatSavesAndRestoresPerChatDraft(t *testing.T) {
 		t.Fatalf("drafts[chat1] = %q, want %q", got.drafts[chat1], "hello from chat1")
 	}
 
-	// Switch back to chat1 — its draft must be restored.
+	// Switch back to chat1 - its draft must be restored.
 	got.sel = 0
 	back, _ := got.openSelectedChat()
 	final := back.(m)

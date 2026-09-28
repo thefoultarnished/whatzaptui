@@ -1055,7 +1055,7 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Inform WhatsApp server in the background so the HTTP response returns
-	// immediately — MarkRead can be slow and would otherwise trigger the TUI's
+	// immediately - MarkRead can be slow and would otherwise trigger the TUI's
 	// 12s client timeout. persistState is called after the API calls complete
 	// so we don't flush the zeroed unread count before WhatsApp confirms it.
 	if client != nil {
@@ -1216,7 +1216,7 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		// a delete using only (chat_id, id) would wipe both the
 		// incoming and outgoing row if the same chat ever has two
 		// messages with the same id (A-16). Old TUI binaries that
-		// send no fromMe field get a 400 — the TUI is rebuilt in
+		// send no fromMe field get a 400 - the TUI is rebuilt in
 		// lockstep with the backend, so this is a hard fail-fast
 		// rather than a silent regression.
 		FromMe *bool `json:"fromMe"`
@@ -1227,7 +1227,7 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	// Input validation (bad request shape) runs before any
 	// state-dependent check (not connected), so a malformed
-	// request always gets 400 — never 409.
+	// request always gets 400 - never 409.
 	if req.FromMe == nil {
 		writeErr(w, http.StatusBadRequest, "fromMe is required")
 		return
@@ -1672,7 +1672,7 @@ func (a *App) quotedStanzaFromMe(chatID, stanzaID string) (bool, bool) {
 // normalized is the output of normalizeQuotedParticipant, which returns ""
 // precisely when the quoted author is self. So a raw participant that was
 // present but normalized away is the unambiguous "this is my message"
-// signal — and it works in groups too, where the elimination heuristic
+// signal - and it works in groups too, where the elimination heuristic
 // below can't. If it wasn't self, fall back to the 1-to-1 elimination check.
 func quotedMessageFromMe(chatID, rawParticipant, normalized string, isGroup bool) bool {
 	if strings.TrimSpace(rawParticipant) != "" && strings.TrimSpace(normalized) == "" {

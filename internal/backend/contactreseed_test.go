@@ -55,7 +55,7 @@ func TestSeedContactsFromStoreIsAdditive(t *testing.T) {
 }
 
 // A saved-contact name with no existing chat must not synthesize a
-// phantom zero-message Chats entry — the same phantom-chat bug as the
+// phantom zero-message Chats entry - the same phantom-chat bug as the
 // historysync pushname path (events.go), reachable here through a fresh
 // login's normal bootstrap/reseed of the address book. handleChats already
 // fills a real chat's name in from Contacts at serve time, so nothing is
@@ -95,7 +95,7 @@ func TestSeedContactsFromStoreHandlesNilAndError(t *testing.T) {
 // code: it must finish fast even while a history-sync transaction holds
 // the app's single SQLite connection, because it never touches a.db at
 // all (GetAllContacts is whatsmeow's own store). This is the same class
-// of bug as the history-sync deadlock — proving this path doesn't share it.
+// of bug as the history-sync deadlock - proving this path doesn't share it.
 func TestSeedContactsFromStoreIndependentOfDBLock(t *testing.T) {
 	app := newTestApp(t)
 	app.db.SetMaxOpenConns(1)

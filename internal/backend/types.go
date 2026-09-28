@@ -117,6 +117,19 @@ func (c *wsClient) ping() error {
 	return c.conn.WriteMessage(websocket.PingMessage, nil)
 }
 
+// closeGoingAway sends a "going away" close frame so the peer sees a clean
+// shutdown instead of a dropped socket. Taken under the write lock so it
+// can't interleave with a broadcast write.
+func (c *wsClient) closeGoingAway() error {
+	if c == nil || c.conn == nil {
+		return fmt.Errorf("websocket client unavailable")
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	msg := websocket.FormatCloseMessage(websocket.CloseGoingAway, wsShutdownReason)
+	return c.conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(time.Second))
+}
+
 // enqueue queues data for delivery by this client's writer goroutine. It
 // never blocks the caller: if the client's outbound queue is full (a slow
 // or stuck peer) or the client has already been torn down, the event is
@@ -239,7 +252,7 @@ type App struct {
 	// actionLog is the per-session structured event log. One file per
 	// backend startup, written next to the DB (inside <data-root>/backend/
 	// logs/, owner-only). Used for triage: durations, counts, error class,
-	// redacted identifiers — never bodies or tokens. Nil before NewApp
+	// redacted identifiers - never bodies or tokens. Nil before NewApp
 	// completes and after Close; helpers are safe on a nil receiver.
 	actionLog *actionLog
 }

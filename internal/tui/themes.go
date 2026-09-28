@@ -1,11 +1,11 @@
 package tui
 
 var (
-	// Ember — near-black coal bg, glowing amber/orange/red — like a dying fire
+	// Ember - near-black coal bg, glowing amber/orange/red - like a dying fire
 	Ember = Theme{
 		Brand:                    "#ff8c00", // amber flame
 		Accent:                   "#ff6b35", // vivid ember orange
-		Purple:                   "#cc3333", // deep red — no purple in fire
+		Purple:                   "#cc3333", // deep red - no purple in fire
 		Amber:                    "#ffb347", // bright amber
 		Red:                      "#ff3300", // hot red ember
 		Muted:                    "#4a3018", // dark coal-brown
@@ -21,8 +21,8 @@ var (
 		AnomalyTag:               "#ff3300", // hot red
 		SentText:                 "#ffe0b0", // warm amber-white
 		ReceivedText:             "#ffd0a0", // warm parchment
-		SentName:                 "#ff8c00", // amber flame — "me"
-		ReceivedName:             "#cc3333", // deep red — "them"
+		SentName:                 "#ff8c00", // amber flame - "me"
+		ReceivedName:             "#cc3333", // deep red - "them"
 		QuotedSentText:           "#a07040", // muted amber
 		QuotedReceivedText:       "#9a5a30", // muted burnt orange
 		BadgeInk:                 "#0e0900",
@@ -43,12 +43,12 @@ var (
 		Background:               "#0e0900", // near-black coal
 	}
 
-	// Glacier — very dark ice-navy bg, pale blues and crisp whites — cold and minimal
+	// Glacier - very dark ice-navy bg, pale blues and crisp whites - cold and minimal
 	Glacier = Theme{
 		Brand:                    "#7ec8e3", // glacier blue
 		Accent:                   "#a8daf0", // pale ice
 		Purple:                   "#8899cc", // deep periwinkle
-		Amber:                    "#b8d4e8", // pale cool — no warm amber in glaciers
+		Amber:                    "#b8d4e8", // pale cool - no warm amber in glaciers
 		Red:                      "#7090b8", // steel-blue danger
 		Muted:                    "#2a4060", // deep slate
 		Text:                     "#d8eef8", // cool ice-white
@@ -60,11 +60,11 @@ var (
 		ContactTag:               "#60b0d0", // teal-blue
 		PollTag:                  "#b0d0e8", // soft ice
 		LocationTag:              "#7890c0", // deep periwinkle
-		AnomalyTag:               "#9090b8", // muted cool — cold anomaly
+		AnomalyTag:               "#9090b8", // muted cool - cold anomaly
 		SentText:                 "#c0e8f8", // icy sent
 		ReceivedText:             "#d0d8f0", // periwinkle-tinted received
-		SentName:                 "#7ec8e3", // glacier — "me"
-		ReceivedName:             "#8899cc", // periwinkle — "them"
+		SentName:                 "#7ec8e3", // glacier - "me"
+		ReceivedName:             "#8899cc", // periwinkle - "them"
 		QuotedSentText:           "#5888a8", // deeper glacier
 		QuotedReceivedText:       "#607898", // muted slate
 		BadgeInk:                 "#080e14",
@@ -85,12 +85,12 @@ var (
 		Background:               "#080e14", // very dark ice-navy
 	}
 
-	// Verdant — very dark forest floor bg, rich greens and warm bark tones
+	// Verdant - very dark forest floor bg, rich greens and warm bark tones
 	Verdant = Theme{
 		Brand:                    "#5aab3a", // forest green
 		Accent:                   "#78c850", // leaf bright green
-		Purple:                   "#8a9060", // olive — nature's "purple"
-		Amber:                    "#c8a030", // honey gold — bark warmth
+		Purple:                   "#8a9060", // olive - nature's "purple"
+		Amber:                    "#c8a030", // honey gold - bark warmth
 		Red:                      "#c04a3a", // berry red
 		Muted:                    "#3a4828", // dark olive
 		Text:                     "#c8dca8", // pale sage
@@ -104,9 +104,9 @@ var (
 		LocationTag:              "#6a9060", // sage
 		AnomalyTag:               "#c04a3a", // berry
 		SentText:                 "#c0e8a0", // pale leaf green
-		ReceivedText:             "#d4c890", // warm parchment — earthy contrast
-		SentName:                 "#5aab3a", // forest green — "me"
-		ReceivedName:             "#c8a030", // honey gold — "them"
+		ReceivedText:             "#d4c890", // warm parchment - earthy contrast
+		SentName:                 "#5aab3a", // forest green - "me"
+		ReceivedName:             "#c8a030", // honey gold - "them"
 		QuotedSentText:           "#7a9860", // muted olive-green
 		QuotedReceivedText:       "#9a8850", // muted bark
 		BadgeInk:                 "#0a0f07",
@@ -127,10 +127,10 @@ var (
 		Background:               "#0a0f07", // very dark forest floor
 	}
 
-	// Dusk — deep indigo-purple bg, warm sunset oranges, rose-golds, twilight violet
+	// Dusk - deep indigo-purple bg, warm sunset oranges, rose-golds, twilight violet
 	Dusk = Theme{
 		Brand:                    "#f4a261", // warm sunset orange-gold
-		Accent:                   "#e76f51", // burnt coral — the last light
+		Accent:                   "#e76f51", // burnt coral - the last light
 		Purple:                   "#c084fc", // twilight violet
 		Amber:                    "#ffd166", // golden hour
 		Red:                      "#ef4565", // vivid sunset red
@@ -145,10 +145,10 @@ var (
 		PollTag:                  "#ffd166", // gold
 		LocationTag:              "#a08cff", // periwinkle-violet
 		AnomalyTag:               "#ef4565", // sunset red
-		SentText:                 "#ffe8c8", // warm golden-white — sunset light
-		ReceivedText:             "#f0dff8", // soft violet — twilight sky
-		SentName:                 "#f4a261", // sunset orange — "me"
-		ReceivedName:             "#c084fc", // twilight violet — "them"
+		SentText:                 "#ffe8c8", // warm golden-white - sunset light
+		ReceivedText:             "#f0dff8", // soft violet - twilight sky
+		SentName:                 "#f4a261", // sunset orange - "me"
+		ReceivedName:             "#c084fc", // twilight violet - "them"
 		QuotedSentText:           "#a07858", // muted amber-gold
 		QuotedReceivedText:       "#a080b8", // muted violet
 		BadgeInk:                 "#110818",
@@ -169,11 +169,11 @@ var (
 		Background:               "#110818", // deep indigo-purple
 	}
 
-	// Fossil — dark warm sepia-black bg, aged parchment, ochre, leather tones
+	// Fossil - dark warm sepia-black bg, aged parchment, ochre, leather tones
 	Fossil = Theme{
 		Brand:                    "#c8a864", // parchment gold
 		Accent:                   "#a87c50", // aged leather
-		Purple:                   "#8a6858", // muted terracotta — earthy "purple"
+		Purple:                   "#8a6858", // muted terracotta - earthy "purple"
 		Amber:                    "#d4b06a", // warm ochre
 		Red:                      "#a84840", // burnt sienna
 		Muted:                    "#604e38", // dark sepia
@@ -189,8 +189,8 @@ var (
 		AnomalyTag:               "#a84840", // burnt sienna
 		SentText:                 "#eedcb0", // warm parchment
 		ReceivedText:             "#dcc8a0", // slightly darker parchment
-		SentName:                 "#c8a864", // parchment gold — "me"
-		ReceivedName:             "#a87c50", // aged leather — "them"
+		SentName:                 "#c8a864", // parchment gold - "me"
+		ReceivedName:             "#a87c50", // aged leather - "them"
 		QuotedSentText:           "#9a8460", // muted gold
 		QuotedReceivedText:       "#887060", // muted sepia
 		BadgeInk:                 "#14110c",
@@ -211,7 +211,7 @@ var (
 		Background:               "#14110c", // dark warm sepia-black
 	}
 
-	// Linen — warm off-white bg, pastel muted palette, soft and modern
+	// Linen - warm off-white bg, pastel muted palette, soft and modern
 	Linen = Theme{
 		Brand:                    "#7a9e9f", // muted teal-sage
 		Accent:                   "#7a95b8", // dusty cornflower
@@ -229,10 +229,10 @@ var (
 		PollTag:                  "#c4986a", // caramel
 		LocationTag:              "#7a8fc4", // periwinkle
 		AnomalyTag:               "#c47878", // dusty rose
-		SentText:                 "#2d4a6b", // dark slate blue — sent messages
-		ReceivedText:             "#3a3530", // warm dark — received
-		SentName:                 "#7a9e9f", // brand teal — "me"
-		ReceivedName:             "#9e8fbd", // dusty lavender — "them"
+		SentText:                 "#2d4a6b", // dark slate blue - sent messages
+		ReceivedText:             "#3a3530", // warm dark - received
+		SentName:                 "#7a9e9f", // brand teal - "me"
+		ReceivedName:             "#9e8fbd", // dusty lavender - "them"
 		QuotedSentText:           "#8a9aaa", // muted blue-gray
 		QuotedReceivedText:       "#aaa49e", // muted warm gray
 		BadgeInk:                 "#f9f7f4",
@@ -253,7 +253,7 @@ var (
 		Background:               "#f9f7f4", // warm linen off-white
 	}
 
-	// Halo — airy porcelain base, powder blue cards, fresh citrus green, and deep cobalt anchors
+	// Halo - airy porcelain base, powder blue cards, fresh citrus green, and deep cobalt anchors
 	Halo = Theme{
 		Brand:                    "#95B1EE", // powder blue
 		Accent:                   "#364C84", // deep cobalt
@@ -295,7 +295,7 @@ var (
 		Background:               "#FFFDF5", // porcelain white
 	}
 
-	// Cornflower — deep cobalt canvas, porcelain contrast, powder-blue surfaces, and citrus highlights
+	// Cornflower - deep cobalt canvas, porcelain contrast, powder-blue surfaces, and citrus highlights
 	Cornflower = Theme{
 		Brand:                    "#95B1EE", // powder blue highlight
 		Accent:                   "#E7F1A8", // citrus-lime accent
@@ -337,7 +337,7 @@ var (
 		Background:               "#364C84", // source palette dark blue
 	}
 
-	// WhatsApp — classic WhatsApp greens on a dark app shell with the familiar outgoing bubble tint
+	// WhatsApp - classic WhatsApp greens on a dark app shell with the familiar outgoing bubble tint
 	WhatsApp = Theme{
 		Brand:                    "#25D366", // WhatsApp green
 		Accent:                   "#128C7E", // classic WhatsApp dark teal
@@ -379,27 +379,27 @@ var (
 		Background:               "#0B141A", // WhatsApp dark app background
 	}
 
-	// Tokyo Night — neon city at night: indigo-navy canvas, soft neon glow.
+	// Tokyo Night - neon city at night: indigo-navy canvas, soft neon glow.
 	// First theme on the V2 role tokens (docs/themes.md §15); every ratio
 	// in that section is measured against these values.
 	TokyoNight = normalizeTheme(Theme{
 		V2: true,
 
 		BgApp:      "#1a1b26", // TN bg
-		BgSidebar:  "#16161e", // TN bg_dark — keeps panes apart when borderless
+		BgSidebar:  "#16161e", // TN bg_dark - keeps panes apart when borderless
 		BgPanel:    "#222436", // raised popup surface
 		BgSelected: "#283457", // TN visual selection
 
 		TextPrimary:   "#c0caf5", // TN fg
 		TextSecondary: "#a9b1d6", // TN fg_dark
 		TextMuted:     "#8089b4", // adjusted: TN comment #565f89 is only 2.76:1
-		TextFaint:     "#545c7e", // TN dark3 — decoration only
+		TextFaint:     "#545c7e", // TN dark3 - decoration only
 
 		BorderSubtle: "#3b4261", // TN fg_gutter
 
-		Brand:    "#9ed365", // neon green — "me", MOOD badge
-		Action:   "#7dcfff", // cyan — keys, cursor, unread, read receipts
-		Emphasis: "#ba95fc", // violet — headings, "them", theme badge
+		Brand:    "#9ed365", // neon green - "me", MOOD badge
+		Action:   "#7dcfff", // cyan - keys, cursor, unread, read receipts
+		Emphasis: "#ba95fc", // violet - headings, "them", theme badge
 
 		StatusSuccess: "#9ed365",
 		StatusWarning: "#e6b062",
@@ -416,10 +416,10 @@ var (
 		TagContact:  "#6edfce",
 		TagPoll:     "#7dcfff",
 		TagLocation: "#9ed365",
-		TagSystem:   "#7c84ad", // neutral slate — deleted/edited/system events
+		TagSystem:   "#7c84ad", // neutral slate - deleted/edited/system events
 	})
 
-	// Catppuccin Mocha — official Catppuccin Mocha palette, #1e1e2e bg
+	// Catppuccin Mocha - official Catppuccin Mocha palette, #1e1e2e bg
 	Catppuccin = Theme{
 		Brand:                    "#a6e3a1", // Mocha Green (official)
 		Accent:                   "#89b4fa", // Mocha Blue (official)
@@ -437,12 +437,12 @@ var (
 		PollTag:                  "#f9e2af", // Mocha Yellow
 		LocationTag:              "#89dceb", // Mocha Sky
 		AnomalyTag:               "#f38ba8", // Mocha Red
-		SentText:                 "#d0efc5", // soft sage-mint — brand green family
-		ReceivedText:             "#dcd0f5", // soft mauve-lavender — incoming, purple family
-		SentName:                 "#a6e3a1", // brand green — "me" label
-		ReceivedName:             "#cba4f7", // vivid mauve — "them" label
-		QuotedSentText:           "#9eafa5", // 50% blend sentText+muted — ghost sage for quoted own
-		QuotedReceivedText:       "#a4a0bd", // 50% blend receivedText+muted — ghost mauve for quoted theirs
+		SentText:                 "#d0efc5", // soft sage-mint - brand green family
+		ReceivedText:             "#dcd0f5", // soft mauve-lavender - incoming, purple family
+		SentName:                 "#a6e3a1", // brand green - "me" label
+		ReceivedName:             "#cba4f7", // vivid mauve - "them" label
+		QuotedSentText:           "#9eafa5", // 50% blend sentText+muted - ghost sage for quoted own
+		QuotedReceivedText:       "#a4a0bd", // 50% blend receivedText+muted - ghost mauve for quoted theirs
 		BadgeInk:                 "#1e1e2e",
 		ButtonInk:                "#1e1e2e",
 		TagInk:                   "#1e1e2e",
@@ -451,17 +451,17 @@ var (
 		QRDark:                   "#000000",
 		ShortcutActive:           "#2a2a3d", // Mocha Surface0 variant
 		SidebarActiveBg:          "#313244", // Mocha Surface0 (official)
-		SidebarActiveUnreadBg:    "#2a2545", // mauve-tinted navy — on-theme for unread
+		SidebarActiveUnreadBg:    "#2a2545", // mauve-tinted navy - on-theme for unread
 		SidebarWhitelistActiveBg: "#a6e3a1", // brand green
 		SidebarBlacklistActiveBg: "#f38ba8", // red
 		ReplyPreviewBg:           "#272040", // dark mauve context
 		MessageSelectedBg:        "#3c345a", // deep mauve selection
 		MediaTokenBg:             "#f38ba8", // Mocha Red
-		MediaTokenPulseBg:        "#f5bde6", // Mocha Pink — soft pulse
+		MediaTokenPulseBg:        "#f5bde6", // Mocha Pink - soft pulse
 		Background:               "#1e1e2e",
 	}
 
-	// Monokai — classic #272822 bg, vivid 6-color palette
+	// Monokai - classic #272822 bg, vivid 6-color palette
 	Monokai = Theme{
 		Brand:                    "#a6e22e", // Monokai green
 		Accent:                   "#66d9ef", // Monokai cyan
@@ -472,19 +472,19 @@ var (
 		Text:                     "#f8f8f2", // Monokai foreground
 		ImageTag:                 "#f92672", // red
 		VideoTag:                 "#66d9ef", // cyan
-		AudioTag:                 "#fd971f", // Monokai orange — distinct from yellow PollTag
+		AudioTag:                 "#fd971f", // Monokai orange - distinct from yellow PollTag
 		FileTag:                  "#a6e22e", // green
 		StickerTag:               "#ae81ff", // purple
-		ContactTag:               "#78dce8", // Monokai Pro teal — distinct from cyan
+		ContactTag:               "#78dce8", // Monokai Pro teal - distinct from cyan
 		PollTag:                  "#e6db74", // yellow
 		LocationTag:              "#66d9ef", // cyan (exact official)
-		AnomalyTag:               "#f92672", // red — using official red, not external pink
-		SentText:                 "#d9f7a7", // warm lime — outgoing, brand green family
-		ReceivedText:             "#c0eeff", // soft cyan-white — incoming, accent family
-		SentName:                 "#a6e22e", // brand green — "me" label
-		ReceivedName:             "#ae81ff", // purple — "them", clearly distinct
-		QuotedSentText:           "#a7b482", // 50% blend sentText+muted — ghost olive for quoted own
-		QuotedReceivedText:       "#9aafae", // 50% blend receivedText+muted — ghost cyan for quoted theirs
+		AnomalyTag:               "#f92672", // red - using official red, not external pink
+		SentText:                 "#d9f7a7", // warm lime - outgoing, brand green family
+		ReceivedText:             "#c0eeff", // soft cyan-white - incoming, accent family
+		SentName:                 "#a6e22e", // brand green - "me" label
+		ReceivedName:             "#ae81ff", // purple - "them", clearly distinct
+		QuotedSentText:           "#a7b482", // 50% blend sentText+muted - ghost olive for quoted own
+		QuotedReceivedText:       "#9aafae", // 50% blend receivedText+muted - ghost cyan for quoted theirs
 		BadgeInk:                 "#1f1f1f",
 		ButtonInk:                "#1f1f1f",
 		TagInk:                   "#1f1f1f",
@@ -493,7 +493,7 @@ var (
 		QRDark:                   "#000000",
 		ShortcutActive:           "#2a2820", // darker than Monokai bg
 		SidebarActiveBg:          "#3e3d32", // Monokai bg lightened
-		SidebarActiveUnreadBg:    "#3e3520", // warm yellow-green tint — on-theme
+		SidebarActiveUnreadBg:    "#3e3520", // warm yellow-green tint - on-theme
 		SidebarWhitelistActiveBg: "#a6e22e", // brand green
 		SidebarBlacklistActiveBg: "#f92672", // red
 		ReplyPreviewBg:           "#332c18", // dark warm Monokai
@@ -503,7 +503,7 @@ var (
 		Background:               "#272822",
 	}
 
-	// Charcoal — pure monochrome, dark #1c1c1c bg, deliberate luminance steps
+	// Charcoal - pure monochrome, dark #1c1c1c bg, deliberate luminance steps
 	Charcoal = Theme{
 		Brand:                    "#ebebeb", // near-white brand
 		Accent:                   "#d0d0d0", // lighter gray accent
@@ -511,7 +511,7 @@ var (
 		Amber:                    "#e0e0e0", // lighter gray "amber"
 		Red:                      "#a0a0a0", // darker gray "red"
 		Muted:                    "#686868", // clearly muted
-		Text:                     "#f0f0f0", // off-white text — easier on eyes
+		Text:                     "#f0f0f0", // off-white text - easier on eyes
 		ImageTag:                 "#e2e2e2", // brightest tag tier
 		VideoTag:                 "#cccccc", // second tier
 		AudioTag:                 "#b8b8b8", // third tier
@@ -520,13 +520,13 @@ var (
 		ContactTag:               "#c0c0c0", // medium
 		PollTag:                  "#d0d0d0", // upper mid
 		LocationTag:              "#989898", // darker tier
-		AnomalyTag:               "#808080", // darkest — visually distinct as anomaly
-		SentText:                 "#f0f0f0", // near-white — my messages pop
-		ReceivedText:             "#bebebe", // clearly dimmer — their messages
+		AnomalyTag:               "#808080", // darkest - visually distinct as anomaly
+		SentText:                 "#f0f0f0", // near-white - my messages pop
+		ReceivedText:             "#bebebe", // clearly dimmer - their messages
 		SentName:                 "#ebebeb", // brightest gray for "me"
 		ReceivedName:             "#adadad", // distinctly subordinate
-		QuotedSentText:           "#acacac", // 50% blend sentText+muted — dimmer gray for quoted own
-		QuotedReceivedText:       "#939393", // 50% blend receivedText+muted — darker gray for quoted theirs
+		QuotedSentText:           "#acacac", // 50% blend sentText+muted - dimmer gray for quoted own
+		QuotedReceivedText:       "#939393", // 50% blend receivedText+muted - darker gray for quoted theirs
 		BadgeInk:                 "#1a1a1a",
 		ButtonInk:                "#1a1a1a",
 		TagInk:                   "#1a1a1a",
@@ -545,10 +545,10 @@ var (
 		Background:               "#1c1c1c",
 	}
 
-	// Aurora — Northern Lights on deep night sky, vivid electric palette across the spectrum
+	// Aurora - Northern Lights on deep night sky, vivid electric palette across the spectrum
 	Aurora = Theme{
-		Brand:                    "#50fa7b", // electric green — aurora's primary band
-		Accent:                   "#8be9fd", // electric cyan — aurora blue
+		Brand:                    "#50fa7b", // electric green - aurora's primary band
+		Accent:                   "#8be9fd", // electric cyan - aurora blue
 		Purple:                   "#bd93f9", // aurora violet/amethyst
 		Amber:                    "#ffb86c", // aurora warm orange glow
 		Red:                      "#ff5555", // aurora red fringe
@@ -559,25 +559,25 @@ var (
 		AudioTag:                 "#f1fa8c", // aurora yellow-green flash
 		FileTag:                  "#50fa7b", // electric green
 		StickerTag:               "#bd93f9", // violet
-		ContactTag:               "#6dcfb4", // teal — distinct from cyan and green
+		ContactTag:               "#6dcfb4", // teal - distinct from cyan and green
 		PollTag:                  "#ffb86c", // warm orange
 		LocationTag:              "#80bfff", // sky blue
 		AnomalyTag:               "#ff5555", // aurora red
-		SentText:                 "#ccffdc", // soft mint — outgoing, green family
-		ReceivedText:             "#e0d8ff", // soft violet — incoming, DISTINCT hue from sent
-		SentName:                 "#50fa7b", // brand electric green — "me"
-		ReceivedName:             "#bd93f9", // violet — "them", clearly distinct from green
-		QuotedSentText:           "#88a39b", // 50% blend sentText+muted — ghost mint for quoted own
-		QuotedReceivedText:       "#928fac", // 50% blend receivedText+muted — ghost violet for quoted theirs
+		SentText:                 "#ccffdc", // soft mint - outgoing, green family
+		ReceivedText:             "#e0d8ff", // soft violet - incoming, DISTINCT hue from sent
+		SentName:                 "#50fa7b", // brand electric green - "me"
+		ReceivedName:             "#bd93f9", // violet - "them", clearly distinct from green
+		QuotedSentText:           "#88a39b", // 50% blend sentText+muted - ghost mint for quoted own
+		QuotedReceivedText:       "#928fac", // 50% blend receivedText+muted - ghost violet for quoted theirs
 		BadgeInk:                 "#0d1117",
 		ButtonInk:                "#0d1117",
 		TagInk:                   "#0d1117",
-		Cursor:                   "#50fa7b", // brand green cursor — glowing
+		Cursor:                   "#50fa7b", // brand green cursor - glowing
 		QRLight:                  "#FFFFFF",
 		QRDark:                   "#0d1117",
 		ShortcutActive:           "#1a1e2e",
 		SidebarActiveBg:          "#1e2540", // deep aurora night sky blue
-		SidebarActiveUnreadBg:    "#18272a", // dark teal — aurora green band
+		SidebarActiveUnreadBg:    "#18272a", // dark teal - aurora green band
 		SidebarWhitelistActiveBg: "#50fa7b", // brand green
 		SidebarBlacklistActiveBg: "#ff5555", // red
 		ReplyPreviewBg:           "#1a2030",
@@ -587,39 +587,39 @@ var (
 		Background:               "#0d1117",
 	}
 
-	// Sakura — Cherry blossom, dark plum bg, pink/rose/lavender palette
+	// Sakura - Cherry blossom, dark plum bg, pink/rose/lavender palette
 	Sakura = Theme{
-		Brand:                    "#ffb7d5", // sakura petal — soft light pink
-		Accent:                   "#f472b6", // vibrant cherry — deeper pink
+		Brand:                    "#ffb7d5", // sakura petal - soft light pink
+		Accent:                   "#f472b6", // vibrant cherry - deeper pink
 		Purple:                   "#e879f9", // wisteria/orchid
-		Amber:                    "#fcd34d", // golden stamen — warm contrast
+		Amber:                    "#fcd34d", // golden stamen - warm contrast
 		Red:                      "#fb7185", // coral rose
 		Muted:                    "#8b6070", // dusty rose-gray
 		Text:                     "#fce8f3", // warm blush white
 		ImageTag:                 "#f472b6", // cherry pink
-		VideoTag:                 "#c084fc", // soft purple — cool contrast to pink
+		VideoTag:                 "#c084fc", // soft purple - cool contrast to pink
 		AudioTag:                 "#fcd34d", // golden stamen
-		FileTag:                  "#a5f3fc", // sakura sky blue — cherry blossom viewing sky
+		FileTag:                  "#a5f3fc", // sakura sky blue - cherry blossom viewing sky
 		StickerTag:               "#e879f9", // orchid/wisteria
 		ContactTag:               "#fda4af", // soft rose
 		PollTag:                  "#fde68a", // soft gold
 		LocationTag:              "#93c5fd", // spring sky blue
 		AnomalyTag:               "#fb7185", // coral
-		SentText:                 "#ffe8f5", // warm rose-white — soft, "mine"
-		ReceivedText:             "#f0e0ff", // soft lavender — "theirs", distinct hue
-		SentName:                 "#ffb7d5", // brand light-pink — "me" label
-		ReceivedName:             "#e879f9", // vivid orchid — "them", pops against pink
-		QuotedSentText:           "#c5a4b2", // 50% blend sentText+muted — ghost rose for quoted own
-		QuotedReceivedText:       "#bda0b7", // 50% blend receivedText+muted — ghost lavender for quoted theirs
+		SentText:                 "#ffe8f5", // warm rose-white - soft, "mine"
+		ReceivedText:             "#f0e0ff", // soft lavender - "theirs", distinct hue
+		SentName:                 "#ffb7d5", // brand light-pink - "me" label
+		ReceivedName:             "#e879f9", // vivid orchid - "them", pops against pink
+		QuotedSentText:           "#c5a4b2", // 50% blend sentText+muted - ghost rose for quoted own
+		QuotedReceivedText:       "#bda0b7", // 50% blend receivedText+muted - ghost lavender for quoted theirs
 		BadgeInk:                 "#1a0d14",
 		ButtonInk:                "#1a0d14",
 		TagInk:                   "#1a0d14",
-		Cursor:                   "#ffb7d5", // brand pink cursor — thematic
+		Cursor:                   "#ffb7d5", // brand pink cursor - thematic
 		QRLight:                  "#FFFFFF",
 		QRDark:                   "#1a0d14",
 		ShortcutActive:           "#231019",
-		SidebarActiveBg:          "#3d1f35", // rich plum — active
-		SidebarActiveUnreadBg:    "#2a1020", // clearly darker plum — unread, distinct from active
+		SidebarActiveBg:          "#3d1f35", // rich plum - active
+		SidebarActiveUnreadBg:    "#2a1020", // clearly darker plum - unread, distinct from active
 		SidebarWhitelistActiveBg: "#ffb7d5", // brand pink
 		SidebarBlacklistActiveBg: "#fb7185", // red
 		ReplyPreviewBg:           "#4a1d3f", // deep plum reply context
@@ -629,30 +629,30 @@ var (
 		Background:               "#1a0d14",
 	}
 
-	// Abyssal — deep ocean bioluminescence, near-black #020810 bg
+	// Abyssal - deep ocean bioluminescence, near-black #020810 bg
 	Abyssal = Theme{
-		Brand:                    "#00e5c8", // bioluminescent teal — signature glow
+		Brand:                    "#00e5c8", // bioluminescent teal - signature glow
 		Accent:                   "#00cfff", // electric cyan
 		Purple:                   "#7b6cff", // deep ocean violet
 		Amber:                    "#ffb347", // anglerfish amber lure
 		Red:                      "#ff4f6e", // bioluminescent red
 		Muted:                    "#2d4a5a", // deep ocean blue-gray
 		Text:                     "#c4dce8", // cool ocean-light text
-		ImageTag:                 "#ff79b0", // pink bioluminescence — vivid, unique
+		ImageTag:                 "#ff79b0", // pink bioluminescence - vivid, unique
 		VideoTag:                 "#00cfff", // electric cyan
 		AudioTag:                 "#ffb347", // anglerfish amber
 		FileTag:                  "#00e5c8", // teal bioluminescence
 		StickerTag:               "#7b6cff", // deep violet
-		ContactTag:               "#40e0d0", // turquoise — distinct from teal and cyan above
-		PollTag:                  "#ffd166", // golden yellow — distinct from amber
-		LocationTag:              "#74b9ff", // deep ocean blue — distinct from cyan
+		ContactTag:               "#40e0d0", // turquoise - distinct from teal and cyan above
+		PollTag:                  "#ffd166", // golden yellow - distinct from amber
+		LocationTag:              "#74b9ff", // deep ocean blue - distinct from cyan
 		AnomalyTag:               "#ff4f6e", // bioluminescent red
-		SentText:                 "#a8f0e8", // bioluminescent teal-tinted — outgoing
-		ReceivedText:             "#b8d0ff", // soft electric blue — incoming, distinct hue
-		SentName:                 "#00e5c8", // brand teal — "me", glowing
-		ReceivedName:             "#7b6cff", // deep violet — "them", clearly distinct
-		QuotedSentText:           "#6a9da1", // 50% blend sentText+muted — ghost teal for quoted own
-		QuotedReceivedText:       "#728dac", // 50% blend receivedText+muted — ghost blue for quoted theirs
+		SentText:                 "#a8f0e8", // bioluminescent teal-tinted - outgoing
+		ReceivedText:             "#b8d0ff", // soft electric blue - incoming, distinct hue
+		SentName:                 "#00e5c8", // brand teal - "me", glowing
+		ReceivedName:             "#7b6cff", // deep violet - "them", clearly distinct
+		QuotedSentText:           "#6a9da1", // 50% blend sentText+muted - ghost teal for quoted own
+		QuotedReceivedText:       "#728dac", // 50% blend receivedText+muted - ghost blue for quoted theirs
 		BadgeInk:                 "#020c14",
 		ButtonInk:                "#020c14",
 		TagInk:                   "#020c14",
@@ -661,7 +661,7 @@ var (
 		QRDark:                   "#020c14",
 		ShortcutActive:           "#0d1f2d",
 		SidebarActiveBg:          "#0a2233",
-		SidebarActiveUnreadBg:    "#102a20", // dark teal-green — distinct from blue active
+		SidebarActiveUnreadBg:    "#102a20", // dark teal-green - distinct from blue active
 		SidebarWhitelistActiveBg: "#00e5c8", // brand teal
 		SidebarBlacklistActiveBg: "#ff4f6e", // red
 		ReplyPreviewBg:           "#0c2030",
@@ -671,7 +671,7 @@ var (
 		Background:               "#020810",
 	}
 
-	// Cyberpunk — neon on black: acid yellow and cyan, maximum punch.
+	// Cyberpunk - neon on black: acid yellow and cyan, maximum punch.
 	// V2 role tokens (docs/themes.md §10 brief); hot pink-red is Danger.
 	Cyberpunk = Theme{
 		Brand:                    "#ff007f",
@@ -714,15 +714,15 @@ var (
 		Background:               "#0a0a14",
 	}
 
-	// Nord — light mode, very light blue background with Nord Frost/Aurora accents
+	// Nord - light mode, very light blue background with Nord Frost/Aurora accents
 	Nord = Theme{
 		Brand:                    "#5E81AC", // Frost deep blue
 		Accent:                   "#4C6F9E", // slightly deeper frost blue for contrast on light bg
 		Purple:                   "#B48EAD", // Aurora purple, dusty/muted
-		Amber:                    "#D08770", // Aurora orange — more visible than pale yellow on light bg
+		Amber:                    "#D08770", // Aurora orange - more visible than pale yellow on light bg
 		Red:                      "#BF616A", // Aurora red
 		Muted:                    "#9AA8C0", // pale blue-gray
-		Text:                     "#2E3440", // Polar Night nord0 — dark text on light bg
+		Text:                     "#2E3440", // Polar Night nord0 - dark text on light bg
 		ImageTag:                 "#BF616A", // red
 		VideoTag:                 "#5E81AC", // frost blue
 		AudioTag:                 "#D08770", // orange
@@ -732,12 +732,12 @@ var (
 		PollTag:                  "#C9A227", // darkened amber/yellow
 		LocationTag:              "#4C7DAD", // mid frost blue
 		AnomalyTag:               "#BF616A", // red
-		SentText:                 "#3B5C82", // dark frost blue — outgoing
-		ReceivedText:             "#2E3440", // dark neutral — incoming
-		SentName:                 "#5E81AC", // brand blue — "me"
-		ReceivedName:             "#B48EAD", // Aurora purple — "them"
-		QuotedSentText:           "#6A82A1", // 50% blend sentText+muted — ghost blue for quoted own
-		QuotedReceivedText:       "#646E80", // 50% blend receivedText+muted — ghost gray for quoted theirs
+		SentText:                 "#3B5C82", // dark frost blue - outgoing
+		ReceivedText:             "#2E3440", // dark neutral - incoming
+		SentName:                 "#5E81AC", // brand blue - "me"
+		ReceivedName:             "#B48EAD", // Aurora purple - "them"
+		QuotedSentText:           "#6A82A1", // 50% blend sentText+muted - ghost blue for quoted own
+		QuotedReceivedText:       "#646E80", // 50% blend receivedText+muted - ghost gray for quoted theirs
 		BadgeInk:                 "#ECEFF4",
 		ButtonInk:                "#ECEFF4",
 		TagInk:                   "#ECEFF4",
@@ -746,7 +746,7 @@ var (
 		QRDark:                   "#2E3440",
 		ShortcutActive:           "#D8E3F0", // soft blue-gray, deeper than bg
 		SidebarActiveBg:          "#D6E4F5", // light blue active wash
-		SidebarActiveUnreadBg:    "#E1F0E3", // pale green wash — unread
+		SidebarActiveUnreadBg:    "#E1F0E3", // pale green wash - unread
 		SidebarWhitelistActiveBg: "#A3BE8C", // brand green
 		SidebarBlacklistActiveBg: "#BF616A", // red
 		ReplyPreviewBg:           "#DCE8F7",

@@ -35,7 +35,7 @@ func Run() {
 	demoMode := demoEnabled()
 	for {
 		// Route OS Ctrl+C/SIGTERM through Bubble Tea so p.Run() always returns
-		// and cleanup() (which now stops the backend too) always runs — even
+		// and cleanup() (which now stops the backend too) always runs - even
 		// when the signal arrives as a real OS signal rather than a keypress.
 		// Re-created per-iteration so a cancelled context is not inherited on /restart.
 		sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -125,7 +125,7 @@ func Run() {
 	}
 }
 
-// sessionTokenPath returns <data-root>/backend/session.token — the same
+// sessionTokenPath returns <data-root>/backend/session.token - the same
 // path the backend resolves independently (internal/backend/main.go's
 // sessionTokenPath). S-1: this is the shared file the token lives in,
 // replacing the WHATZAP_API_TOKEN env var.
@@ -139,7 +139,7 @@ func sessionTokenPath() (string, error) {
 
 // resolveSessionToken returns the token to use for talking to the backend.
 // If a token file already exists (e.g. from a previous TUI run, or written
-// by the backend during A-1 rotation), it's reused — this lets a restarted
+// by the backend during A-1 rotation), it's reused - this lets a restarted
 // TUI reconnect to an already-running backend without a token mismatch.
 // Otherwise a fresh token is generated and written to the file (0600).
 func resolveSessionToken() (string, error) {

@@ -77,3 +77,63 @@ func TestDetectMIMEType(t *testing.T) {
 		t.Fatalf("DetectMIMEType fallback = %q, want application/octet-stream", got)
 	}
 }
+
+var (
+	id3MP3   = []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0, 0xFF, 0xFB, 0x90, 0x44}
+	rawMP3   = []byte{0xFF, 0xFB, 0x90, 0x44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	adtsAAC  = []byte{0xFF, 0xF1, 0x50, 0x80, 0x02, 0x1F, 0xFC, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	oggOpus  = []byte{'O', 'g', 'g', 'S', 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'O', 'p', 'u', 's', 'H', 'e', 'a', 'd'}
+	m4aAudio = []byte{0, 0, 0, 0x1C, 'f', 't', 'y', 'p', 'M', '4', 'A', ' ', 0, 0, 0, 0, 'M', '4', 'A', ' ', 'm', 'p', '4', '2', 'i', 's', 'o', 'm'}
+)
+
+func TestMediaTypeForSendKindAudio(t *testing.T) {
+	if mt, err := MediaTypeForSendKind("audio"); err != nil || mt != whatsmeow.MediaAudio {
+		t.Fatalf("audio kind = %q, %v; want MediaAudio", mt, err)
+	}
+}
+
+func TestValidateSendFileInputAudio(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"song.mp3", id3MP3, "audio/mpeg"},
+		{"song.mp3", rawMP3, "audio/mpeg"},
+		{"clip.aac", adtsAAC, "audio/aac"},
+		{"note.ogg", oggOpus, "audio/ogg; codecs=opus"},
+		{"note.opus", oggOpus, "audio/ogg; codecs=opus"},
+		{"memo.m4a", m4aAudio, "audio/mp4"},
+	}
+	for _, c := range cases {
+		if err := ValidateSendFileInput(c.name, c.data, "audio"); err != nil {
+			t.Errorf("%s should pass as audio: %v", c.name, err)
+		}
+		msg, wire, err := BuildOutgoingMediaMessage("audio", c.name, "ignored caption", whatsmeow.UploadResponse{}, c.data)
+		if err != nil {
+			t.Fatalf("%s: build: %v", c.name, err)
+		}
+		if got := msg.GetAudioMessage().GetMimetype(); got != c.want {
+			t.Errorf("%s mimetype = %q, want %q", c.name, got, c.want)
+		}
+		if _, ok := wire["audioMessage"]; !ok {
+			t.Errorf("%s: wire body should be an audioMessage, got %v", c.name, wire)
+		}
+	}
+}
+
+func TestValidateSendFileInputRejectsFakeAudio(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		data []byte
+	}{
+		{"song.mp3", []byte("just some text, not audio")},
+		{"song.mp3", exeHeader},
+		{"song.mp3", pngHeader},
+		{"clip.m4a", heicHeader[:4]}, // too short to be a container
+	} {
+		if err := ValidateSendFileInput(c.name, c.data, "audio"); err == nil {
+			t.Errorf("%s with non-audio content should be rejected", c.name)
+		}
+	}
+}

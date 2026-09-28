@@ -20,7 +20,7 @@ const (
 
 // RestrictFileToCurrentUser replaces path's DACL with a protected (no
 // inheritance) DACL granting full control to the current user only.
-// Administrators can still take ownership — this stops other standard
+// Administrators can still take ownership - this stops other standard
 // local accounts, which is the shared-workstation threat.
 func RestrictFileToCurrentUser(path string) error {
 	userSID, err := currentUserSID()

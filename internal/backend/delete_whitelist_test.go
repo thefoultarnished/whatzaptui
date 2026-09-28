@@ -31,7 +31,7 @@ func TestHandleDeleteMessageWhitelist(t *testing.T) {
 	}
 
 	// Allowed chat passes the whitelist gate and is only stopped by the
-	// missing live connection (409) — proving the 403 gate was passed.
+	// missing live connection (409) - proving the 403 gate was passed.
 	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230002', 'Sam', 1)`); err != nil {
 		t.Fatalf("seed allow row: %v", err)
 	}

@@ -115,7 +115,7 @@ func TestIsClientMessageID(t *testing.T) {
 // --- The original bug: quick successive sends ---
 
 // Regression: WhatsApp's copies arrive in the opposite order to the sends.
-// Each must land on its own placeholder — no swap, no duplicate.
+// Each must land on its own placeholder - no swap, no duplicate.
 func TestQuickSendsEchoesOutOfOrder(t *testing.T) {
 	x, ids := withPlaceholders("first", "second")
 	now := time.Now().Unix()
@@ -192,7 +192,7 @@ func TestResponseFirstThenEcho(t *testing.T) {
 	assertBodies(t, x, "hi")
 }
 
-// Edge: a "read" receipt that arrives before the echo/response is kept —
+// Edge: a "read" receipt that arrives before the echo/response is kept -
 // neither may downgrade it back to "sent".
 func TestReceiptBeforeEchoIsNotOverwritten(t *testing.T) {
 	x, ids := withPlaceholders("hi")
@@ -208,7 +208,7 @@ func TestReceiptBeforeEchoIsNotOverwritten(t *testing.T) {
 
 // --- Failures ---
 
-// Negative: send fails and WhatsApp never saw it — placeholder removed and
+// Negative: send fails and WhatsApp never saw it - placeholder removed and
 // the text handed back.
 func TestSendFailureRemovesPlaceholderAndRestoresText(t *testing.T) {
 	x, ids := withPlaceholders("lost")
@@ -222,7 +222,7 @@ func TestSendFailureRemovesPlaceholderAndRestoresText(t *testing.T) {
 }
 
 // Edge: the response failed but WhatsApp's copy already arrived, so the
-// message really went out — keep it and don't restore the text (which would
+// message really went out - keep it and don't restore the text (which would
 // invite a duplicate resend).
 func TestSendFailureAfterEchoKeepsMessage(t *testing.T) {
 	x, ids := withPlaceholders("made it")
