@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"whatzap/internal/logprune"
 )
 
 // The TUI trace log is a per-session triage file at
@@ -42,6 +44,8 @@ func openTraceLog(dir string) string {
 	if err != nil {
 		return ""
 	}
+	// One file per start adds up; keep only the newest few sessions.
+	_ = logprune.KeepNewest(dir, "tui-", ".log", logprune.DefaultKeep)
 	traceMu.Lock()
 	traceFile = f
 	traceLastChats, traceLastActive, traceLastMsgs = -1, "", -1

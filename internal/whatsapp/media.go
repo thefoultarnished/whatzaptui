@@ -36,20 +36,16 @@ func ValidateSendFileInput(filename string, data []byte, kind string) error {
 		return nil
 	}
 
-	sniffedType := http.DetectContentType(data)
-	extType := ""
-	if ext := strings.ToLower(filepath.Ext(filename)); ext != "" {
-		extType = mime.TypeByExtension(ext)
-	}
-
+	// The file's content decides, not its name: a renamed .exe must not go
+	// out as "photo.png".
 	switch kind {
 	case "image":
-		if isExpectedMediaType(sniffedType, "image/") || isExpectedMediaType(extType, "image/") {
+		if mediaMIMEType("image/", filename, data) != "" {
 			return nil
 		}
 		return fmt.Errorf("kind=image but file does not appear to be an image")
 	case "video":
-		if isExpectedMediaType(sniffedType, "video/") || isExpectedMediaType(extType, "video/") {
+		if mediaMIMEType("video/", filename, data) != "" {
 			return nil
 		}
 		return fmt.Errorf("kind=video but file does not appear to be a video")
@@ -60,6 +56,44 @@ func ValidateSendFileInput(filename string, data []byte, kind string) error {
 
 func isExpectedMediaType(actual, prefix string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(actual)), prefix)
+}
+
+// isISOBMFF reports whether data starts with an ISO base media "ftyp" box,
+// the container used by HEIC/AVIF photos and MOV/3GP/M4V videos.
+func isISOBMFF(data []byte) bool {
+	return len(data) >= 12 && string(data[4:8]) == "ftyp"
+}
+
+// isoBMFFTypes maps the extensions of ISO-BMFF media that Go's sniffer
+// can't identify to their MIME types. A fixed table, not
+// mime.TypeByExtension, because the OS registry doesn't reliably know them.
+var isoBMFFTypes = map[string]string{
+	".heic": "image/heic",
+	".heif": "image/heif",
+	".avif": "image/avif",
+	".mp4":  "video/mp4",
+	".m4v":  "video/x-m4v",
+	".mov":  "video/quicktime",
+	".3gp":  "video/3gpp",
+	".3g2":  "video/3gpp2",
+}
+
+// mediaMIMEType returns the MIME type for an image ("image/") or video
+// ("video/") upload, judged by content: the sniffed type when it matches,
+// otherwise the extension's type only for ISO-BMFF files, which Go's sniffer
+// can't identify (HEIC, AVIF, MOV, 3GP). Returns "" when the content isn't
+// that kind of media.
+func mediaMIMEType(prefix, filename string, data []byte) string {
+	if sniffed := http.DetectContentType(data); isExpectedMediaType(sniffed, prefix) {
+		return sniffed
+	}
+	if !isISOBMFF(data) {
+		return ""
+	}
+	if t := isoBMFFTypes[strings.ToLower(filepath.Ext(filename))]; isExpectedMediaType(t, prefix) {
+		return t
+	}
+	return ""
 }
 
 func DetectMIMEType(filename string, data []byte, fallback string) string {
@@ -76,6 +110,16 @@ func DetectMIMEType(filename string, data []byte, fallback string) string {
 
 func BuildOutgoingMediaMessage(kind, filename, caption string, upload whatsmeow.UploadResponse, data []byte) (*waE2E.Message, map[string]any, error) {
 	mimeType := DetectMIMEType(filename, data, "application/octet-stream")
+	switch kind {
+	case "image":
+		if t := mediaMIMEType("image/", filename, data); t != "" {
+			mimeType = t
+		}
+	case "video":
+		if t := mediaMIMEType("video/", filename, data); t != "" {
+			mimeType = t
+		}
+	}
 	fileName := filepath.Base(filename)
 	switch kind {
 	case "image":

@@ -642,7 +642,7 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jid = jid.ToNonAD()
-	log.Printf("handleBlock: canonical=%s parsed=%s server=%s", req.ChatID, jid.String(), jid.Server)
+	log.Printf("handleBlock: chat=%s server=%s", redactChatID(req.ChatID), jid.Server)
 	var altJID types.JID
 	blockCtx, blockCancel := waCallCtx()
 	defer blockCancel()
@@ -664,8 +664,18 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		writeInternalErr(w, fmt.Errorf("failed to block %s (alt: %s): %w", jid.String(), altJID.String(), err))
+		writeInternalErr(w, blockFailedErr(jid, altJID, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// blockFailedErr builds the error logged when a block fails. Chat IDs are
+// redacted so the server log never holds a full phone number.
+func blockFailedErr(jid, altJID types.JID, err error) error {
+	alt := "none"
+	if altJID.User != "" {
+		alt = redactChatID(altJID.String())
+	}
+	return fmt.Errorf("failed to block %s (alt: %s): %w", redactChatID(jid.String()), alt, err)
 }
