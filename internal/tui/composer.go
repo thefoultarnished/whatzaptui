@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -79,10 +82,36 @@ func msgRowHeight(msg wireMsg, w int) int {
 	return max(1, rows)
 }
 
+// newOutgoingMessageID picks the real WhatsApp message ID up front, in the
+// same "3EB0" + uppercase-hex shape WhatsApp uses. The placeholder, the send
+// response and WhatsApp's echo then all share it, so they match exactly.
+func newOutgoingMessageID() string {
+	b := make([]byte, 9)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("local-%d", time.Now().UnixNano())
+	}
+	return "3EB0" + strings.ToUpper(hex.EncodeToString(b))
+}
+
+// isClientMessageID reports whether id was made by newOutgoingMessageID and
+// can be sent to the backend as the message's real ID.
+func isClientMessageID(id string) bool {
+	if len(id) != 22 || !strings.HasPrefix(id, "3EB0") {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= '0' && r <= '9' || r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 func optimisticOutgoingMessage(chatID, text, pendingID string, replyTo *wireMsg) wireMsg {
 	msg := wireMsg{
 		MessageTimestamp: time.Now().Unix(),
 		ReceiptStatus:    "sent",
+		pending:          true,
 	}
 	msg.Key.ID = pendingID
 	msg.Key.RemoteJID = chatID
@@ -132,6 +161,7 @@ func optimisticOutgoingMediaMessage(chatID, kind, fileName, caption, pendingID s
 		Message:          message,
 		MessageTimestamp: time.Now().Unix(),
 		ReceiptStatus:    "sending",
+		pending:          true,
 	}
 	msg.Key.ID = pendingID
 	msg.Key.RemoteJID = chatID
@@ -163,6 +193,82 @@ func (x *m) restoreDraft() {
 	x.input = x.drafts[x.active]
 	x.inputBuf = ""
 	x.inputFlushScheduled = false
+}
+
+// messageIndex returns the index of message id in chatID, or -1.
+func (x *m) messageIndex(chatID, id string) int {
+	if id == "" {
+		return -1
+	}
+	for i, msg := range x.msgs[chatID] {
+		if msg.Key.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// pendingPlaceholderIndex is messageIndex restricted to unconfirmed
+// placeholders.
+func (x *m) pendingPlaceholderIndex(chatID, id string) int {
+	if i := x.messageIndex(chatID, id); i >= 0 && x.msgs[chatID][i].pending {
+		return i
+	}
+	return -1
+}
+
+// removeMessage drops message id from chatID if present.
+func (x *m) removeMessage(chatID, id string) {
+	i := x.messageIndex(chatID, id)
+	if i < 0 {
+		return
+	}
+	msgs := x.msgs[chatID]
+	x.msgs[chatID] = append(msgs[:i], msgs[i+1:]...)
+}
+
+// applySentMessage merges a successful send response. The placeholder and
+// the real message normally share an ID; the placeholder is only swapped
+// for the response while still unconfirmed, so a WhatsApp echo (and any
+// receipt already applied to it) that arrived first is never overwritten.
+// If the backend returned a different ID and WhatsApp's copy already
+// arrived under it, the leftover placeholder is dropped instead.
+func (x *m) applySentMessage(chatID, pendingID string, sent wireMsg) {
+	pendIdx := x.messageIndex(chatID, pendingID)
+	realIdx := x.messageIndex(chatID, sent.Key.ID)
+	switch {
+	case pendIdx >= 0 && realIdx >= 0 && pendIdx != realIdx:
+		if x.msgs[chatID][pendIdx].pending {
+			x.removeMessage(chatID, pendingID)
+		}
+	case pendIdx >= 0:
+		if x.msgs[chatID][pendIdx].pending {
+			x.msgs[chatID][pendIdx] = sent
+		}
+	case realIdx < 0:
+		x.msgs[chatID] = append(x.msgs[chatID], sent)
+	}
+}
+
+// restoreFailedSendText gives back the text of a send that failed. It only
+// fills an empty composer (or, if the user has switched chats, an empty
+// draft) so it never overwrites something new the user has started typing.
+func (x *m) restoreFailedSendText(chatID, text string) {
+	if chatID == "" || text == "" {
+		return
+	}
+	if chatID == x.active {
+		if x.input == "" && x.inputBuf == "" {
+			x.input = text
+		}
+		return
+	}
+	if x.drafts[chatID] == "" {
+		if x.drafts == nil {
+			x.drafts = map[string]string{}
+		}
+		x.drafts[chatID] = text
+	}
 }
 
 func (x *m) clearChatComposer() {

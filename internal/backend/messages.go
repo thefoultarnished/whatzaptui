@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -339,7 +340,11 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if beforeStr := strings.TrimSpace(r.URL.Query().Get("before")); beforeStr != "" {
-		beforeTS, _ := strconv.ParseInt(beforeStr, 10, 64)
+		beforeTS, perr := strconv.ParseInt(beforeStr, 10, 64)
+		if perr != nil || beforeTS <= 0 {
+			writeErr(w, http.StatusBadRequest, "before must be a positive unix timestamp")
+			return
+		}
 		rows, err = db.Query(qBefore, chatID, beforeTS, fetch)
 	} else {
 		rows, err = db.Query(qAll, chatID, fetch)
@@ -586,12 +591,19 @@ func (a *App) getClient() *whatsapp.Client {
 }
 
 func (a *App) requireConnectedClient(w http.ResponseWriter) bool {
+	return a.connectedClient(w) != nil
+}
+
+// connectedClient returns a snapshot of the logged-in client, or writes 409
+// and returns nil. Handlers must keep using the returned snapshot: re-reading
+// a.client later can see nil if a logout lands mid-request.
+func (a *App) connectedClient(w http.ResponseWriter) *whatsapp.Client {
 	client := a.getClient()
 	if client == nil || !client.IsConnected() || !client.IsLoggedIn() {
 		writeErr(w, http.StatusConflict, "not connected")
-		return false
+		return nil
 	}
-	return true
+	return client
 }
 
 // historySyncPageSize is how many older messages to request per chat per
@@ -609,7 +621,8 @@ func (a *App) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !a.requireConnectedClient(w) {
+	client := a.connectedClient(w)
+	if client == nil {
 		return
 	}
 	a.mu.RLock()
@@ -657,9 +670,9 @@ func (a *App) handleSyncHistory(w http.ResponseWriter, r *http.Request) {
 			ID:            types.MessageID(msgID),
 			Timestamp:     time.Unix(ts, 0),
 		}
-		req := a.client.BuildHistorySyncRequest(&mi, historySyncPageSize)
+		req := client.BuildHistorySyncRequest(&mi, historySyncPageSize)
 		sendCtx, sendCancel := context.WithTimeout(r.Context(), 15*time.Second)
-		_, err = a.client.SendPeerMessage(sendCtx, req)
+		_, err = client.SendPeerMessage(sendCtx, req)
 		sendCancel()
 		if err != nil {
 			failed++
@@ -694,6 +707,31 @@ func (a *App) isChatAllowed(chatID string) (bool, error) {
 	return allowed == 1, nil
 }
 
+// clientMessageIDPattern accepts the uppercase-hex IDs WhatsApp itself
+// generates (e.g. "3EB0" + 18 hex chars) with some slack on length.
+var clientMessageIDPattern = regexp.MustCompile(`^[0-9A-F]{16,64}$`)
+
+// parseClientMessageID validates an optional sender-chosen message ID. The
+// TUI picks the ID up front so its placeholder, the send response and
+// WhatsApp's echo all share one ID and can be matched exactly.
+func parseClientMessageID(raw string) (types.MessageID, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", nil
+	}
+	if !clientMessageIDPattern.MatchString(id) {
+		return "", fmt.Errorf("invalid messageId")
+	}
+	return types.MessageID(id), nil
+}
+
+func sendExtra(id types.MessageID) []whatsmeow.SendRequestExtra {
+	if id == "" {
+		return nil
+	}
+	return []whatsmeow.SendRequestExtra{{ID: id}}
+}
+
 func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -709,9 +747,15 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		ReplyToText        string   `json:"replyToText,omitempty"`
 		ReplyToParticipant string   `json:"replyToParticipant,omitempty"`
 		MentionedJIDs      []string `json:"mentionedJids,omitempty"`
+		MessageID          string   `json:"messageId,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	msgID, err := parseClientMessageID(req.MessageID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.ChatID = strings.TrimSpace(req.ChatID)
@@ -751,7 +795,7 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := waCallCtx()
 	defer cancel()
-	resp, err := client.SendMessage(ctx, jid, msg)
+	resp, err := client.SendMessage(ctx, jid, msg, sendExtra(msgID)...)
 	if err != nil {
 		writeInternalErr(w, err)
 		return
@@ -809,6 +853,11 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	chatID := a.canonicalizeChatID(strings.TrimSpace(r.FormValue("chatId")))
 	kind := strings.ToLower(strings.TrimSpace(r.FormValue("kind")))
 	caption := strings.TrimSpace(sanitizeOutgoingText(r.FormValue("caption")))
+	msgID, err := parseClientMessageID(r.FormValue("messageId"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if chatID == "" {
 		writeErr(w, http.StatusBadRequest, "chatId is required")
@@ -891,7 +940,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := waCallCtx()
 	defer cancel()
-	resp, err := client.SendMessage(ctx, jid, msg)
+	resp, err := client.SendMessage(ctx, jid, msg, sendExtra(msgID)...)
 	if err != nil {
 		writeInternalErr(w, err)
 		return

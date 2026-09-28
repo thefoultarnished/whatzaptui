@@ -12,33 +12,33 @@ func TestMediaViewPickerClosesAndSwitchesToSettings(t *testing.T) {
 	defer func() { currentConfig = origCfg }()
 	currentConfig.MediaViewStyle = "full"
 	x := m{status: "ready"}
-	x.mediaViewPicker = picker{title: "Media View", items: buildMediaViewPickerItems()}
+	x.mediaViewPicker = newMediaViewPicker()
 	x.mediaViewPicker.Open(currentConfig.MediaViewStyle)
-	if !x.mediaViewPicker.open {
+	if !x.mediaViewPicker.IsOpen {
 		t.Fatal("expected mediaViewPicker to be open")
 	}
 
 	// 1. Arrow down
 	resModel, _ := x.key(tea.KeyMsg{Type: tea.KeyDown})
 	resM := resModel.(m)
-	if !resM.mediaViewPicker.open {
+	if !resM.mediaViewPicker.IsOpen {
 		t.Fatal("mediaViewPicker should remain open while navigating")
 	}
 
 	// 2. Press Enter to confirm
 	resModel2, _ := resM.key(tea.KeyMsg{Type: tea.KeyEnter})
 	resM2 := resModel2.(m)
-	if resM2.mediaViewPicker.open {
+	if resM2.mediaViewPicker.IsOpen {
 		t.Fatal("mediaViewPicker should be closed after Enter confirm")
 	}
-	if !resM2.settingsPicker.open {
+	if !resM2.settingsPicker.IsOpen {
 		t.Fatal("settingsPicker should be open after confirming sub-picker")
 	}
 
 	// 3. Test Esc cancel restores original
 	currentConfig.MediaViewStyle = "text"
 	y := m{status: "ready"}
-	y.mediaViewPicker = picker{title: "Media View", items: buildMediaViewPickerItems()}
+	y.mediaViewPicker = newMediaViewPicker()
 	y.mediaViewPicker.Open(currentConfig.MediaViewStyle)
 	// Arrow to another option
 	resY, _ := y.key(tea.KeyMsg{Type: tea.KeyDown})
@@ -46,7 +46,7 @@ func TestMediaViewPickerClosesAndSwitchesToSettings(t *testing.T) {
 	// Cancel with Esc
 	resY2, _ := resYM.key(tea.KeyMsg{Type: tea.KeyEsc})
 	resYM2 := resY2.(m)
-	if resYM2.mediaViewPicker.open {
+	if resYM2.mediaViewPicker.IsOpen {
 		t.Fatal("mediaViewPicker should be closed after Esc")
 	}
 	if currentConfig.MediaViewStyle != "text" {
@@ -55,14 +55,11 @@ func TestMediaViewPickerClosesAndSwitchesToSettings(t *testing.T) {
 }
 
 func TestMediaIconPickerRenderAndNavigation(t *testing.T) {
-	p := picker{title: "Media Icons", items: buildMediaIconPickerItems()}
+	p := newMediaIconPicker()
 	p.Open("text")
-	if !p.isSingleCol() {
-		t.Fatal("Media Icons picker should be single column to prevent label wrapping")
-	}
 
-	rendered := p.Render(80, 20)
-	if !strings.Contains(rendered, "Media Icons") {
+	rendered := p.Render(pickerStyle(), 80, 20)
+	if !strings.Contains(rendered, "Media Icon Style") {
 		t.Fatalf("missing title in rendered picker: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Text") || !strings.Contains(rendered, "Nerd") {

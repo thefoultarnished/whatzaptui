@@ -7,7 +7,9 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"whatzap/internal/tui/picker"
 )
+
 func TestTypingAnimationListContainsSquares(t *testing.T) {
 	idx := typingAnimationIndex("squares")
 	if idx < 0 || idx >= len(typingAnimationList) {
@@ -31,10 +33,10 @@ func TestTypingAnimationListContainsSquares(t *testing.T) {
 	}
 
 	// Verify the picker item fits within the 20-rune column limit
-	items := buildTypingAnimationPickerItems()
-	var squaresItem *pickerItem
+	items := newTypingAnimationPicker().Items
+	var squaresItem *picker.Item
 	for i := range items {
-		if items[i].key == "squares" {
+		if items[i].Key == "squares" {
 			squaresItem = &items[i]
 			break
 		}
@@ -42,7 +44,7 @@ func TestTypingAnimationListContainsSquares(t *testing.T) {
 	if squaresItem == nil {
 		t.Fatal("squares item missing from buildTypingAnimationPickerItems()")
 	}
-	if w := runeDisplayWidth(squaresItem.label); w > 20 {
+	if w := runeDisplayWidth(squaresItem.Label); w > 20 {
 		t.Fatalf("squares label display width = %d, want <= 20 to preserve 2-column layout", w)
 	}
 }
@@ -53,9 +55,9 @@ func TestRenderSquaresIconFrames(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
 	for f := range 6 {
-		rendered := renderSquaresIcon(f, "")
+		rendered := picker.SquaresIcon(f, "", false)
 		if rendered == "" {
-			t.Fatalf("renderSquaresIcon(%d) returned empty string", f)
+			t.Fatalf("picker.SquaresIcon(%d) returned empty string", f)
 		}
 		// Strip ANSI codes and verify track width is exactly 8 characters
 		plain := ansiStripRe.ReplaceAllString(rendered, "")
@@ -65,7 +67,7 @@ func TestRenderSquaresIconFrames(t *testing.T) {
 	}
 
 	// Frame 0 should match progress.png: 2 dots on the left and 6 squares on the right: "··◼◼◼◼◼◼"
-	frame0 := renderSquaresIcon(0, "")
+	frame0 := picker.SquaresIcon(0, "", false)
 	frame0Plain := ansiStripRe.ReplaceAllString(frame0, "")
 	if frame0Plain != "··◼◼◼◼◼◼" {
 		t.Fatalf("frame 0 plain = %q, want '··◼◼◼◼◼◼'", frame0Plain)
@@ -80,28 +82,28 @@ func TestRenderSquaresIconFrames(t *testing.T) {
 	}
 
 	// Frame 3 should have 6 squares on the left and 2 dots on the right: "◼◼◼◼◼◼··"
-	frame3Plain := ansiStripRe.ReplaceAllString(renderSquaresIcon(3, ""), "")
+	frame3Plain := ansiStripRe.ReplaceAllString(picker.SquaresIcon(3, "", false), "")
 	if frame3Plain != "◼◼◼◼◼◼··" {
 		t.Fatalf("frame 3 plain = %q, want '◼◼◼◼◼◼··'", frame3Plain)
 	}
 }
 
 func TestTypingAnimationPickerRenderWithSquares(t *testing.T) {
-	p := picker{title: "Typing Style", items: buildTypingAnimationPickerItems()}
+	p := newTypingAnimationPicker()
 	p.Open("squares")
-	if !p.open {
+	if !p.IsOpen {
 		t.Fatal("expected picker to be open")
 	}
 
 	// Active frame
-	viewActive := p.RenderTypingAnimation(80, 24, 3)
+	viewActive := p.RenderTypingAnimation(pickerStyle(), 80, 24, 3)
 	if !strings.Contains(viewActive, "Squares") {
 		t.Fatalf("view should contain 'Squares':\n%s", viewActive)
 	}
 
 	// Inactive frame (when other item is selected)
-	p.idx = 0 // dots selected, squares inactive
-	viewInactive := p.RenderTypingAnimation(80, 24, 0)
+	p.Idx = 0 // dots selected, squares inactive
+	viewInactive := p.RenderTypingAnimation(pickerStyle(), 80, 24, 0)
 	if !strings.Contains(viewInactive, "Squares") {
 		t.Fatalf("inactive view should contain 'Squares':\n%s", viewInactive)
 	}

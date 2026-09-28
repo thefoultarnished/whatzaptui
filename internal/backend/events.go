@@ -16,7 +16,13 @@ import (
 )
 
 func (a *App) bindEvents() {
-	a.client.AddEventHandler(func(evt interface{}) {
+	// Handlers use the client they were registered on, never a.client:
+	// a logout can nil the field while events are still being delivered.
+	client := a.getClient()
+	if client == nil {
+		return
+	}
+	client.AddEventHandler(func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Connected:
 			a.mu.Lock()
@@ -28,7 +34,7 @@ func (a *App) bindEvents() {
 			go func() {
 				presCtx, presCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer presCancel()
-				if err := a.client.SendPresence(presCtx, types.PresenceAvailable); err != nil {
+				if err := client.SendPresence(presCtx, types.PresenceAvailable); err != nil {
 					a.actionLog.Event("client.presence.error", map[string]string{
 						"err": truncateErr(err),
 					})
@@ -56,9 +62,9 @@ func (a *App) bindEvents() {
 			a.connState = "logged-out"
 			a.mu.Unlock()
 			a.broadcast(EventEnvelope{Type: "status", Payload: "Logged out. Start again to scan QR."})
-			if a.client != nil && a.client.Store != nil {
-				_ = a.client.Store.Delete(context.Background())
-				a.client.Store.ID = nil
+			if client.Store != nil {
+				_ = client.Store.Delete(context.Background())
+				client.Store.ID = nil
 			}
 		case *events.PushName:
 			jid := a.canonicalizeChatID(v.JID.String())
@@ -207,6 +213,7 @@ func (a *App) toWireCallEvent(status string, meta types.BasicCallMeta, media str
 }
 
 func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
+	_, db := a.dbHandles()
 	if data == nil {
 		return
 	}
@@ -272,8 +279,8 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 	watch.Phase("begin-tx")
 	var tx *sql.Tx
 	var err error
-	if a.db != nil && len(pending) > 0 {
-		tx, err = a.db.Begin()
+	if db != nil && len(pending) > 0 {
+		tx, err = db.Begin()
 		if err != nil {
 			log.Printf("applyHistorySync: begin tx: %v", err)
 			a.actionLog.Event("historysync.tx.begin.fail", map[string]string{
@@ -287,7 +294,7 @@ func (a *App) applyHistorySync(data *waHistorySync.HistorySync) {
 		}
 	}()
 
-	var exec dbExecutor = a.db
+	var exec dbExecutor = db
 	if tx != nil {
 		exec = tx
 	}

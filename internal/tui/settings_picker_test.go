@@ -41,19 +41,19 @@ func TestSettingsSelectorsOpenTheirOwnPicker(t *testing.T) {
 		name   string
 		isOpen func(m) bool
 	}{
-		{"Typing style", func(x m) bool { return x.typingAnimationPicker.open }},
-		{"Media icon style", func(x m) bool { return x.mediaIconPicker.open }},
-		{"Media preview", func(x m) bool { return x.mediaViewPicker.open }},
-		{"Chat list icons", func(x m) bool { return x.userlistIconPicker.open }},
-		{"Startup speed", func(x m) bool { return x.splashSpeedPicker.open }},
-		{"Theme", func(x m) bool { return x.themePicker.open }},
+		{"Typing style", func(x m) bool { return x.typingAnimationPicker.IsOpen }},
+		{"Media icon style", func(x m) bool { return x.mediaIconPicker.IsOpen }},
+		{"Media preview", func(x m) bool { return x.mediaViewPicker.IsOpen }},
+		{"Chat list icons", func(x m) bool { return x.userlistIconPicker.IsOpen }},
+		{"Startup speed", func(x m) bool { return x.splashSpeedPicker.IsOpen }},
+		{"Theme", func(x m) bool { return x.themePicker.IsOpen }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			x := m{status: "ready"}
-			x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+			x.settingsPicker = newSettingsPicker()
 			x.settingsPicker.Open("")
-			x.settingsPicker.idx = settingsIndex(t, tc.name)
+			x.settingsPicker.Idx = settingsIndex(t, tc.name)
 
 			res, _ := x.key(tea.KeyMsg{Type: tea.KeyEnter})
 			got := res.(m)
@@ -71,9 +71,9 @@ func TestSettingsMouseToggleAppliesMouseMode(t *testing.T) {
 	currentConfig.MouseEnabled = false
 
 	x := m{status: "ready"}
-	x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+	x.settingsPicker = newSettingsPicker()
 	x.settingsPicker.Open("")
-	x.settingsPicker.idx = settingsIndex(t, "Mouse support")
+	x.settingsPicker.Idx = settingsIndex(t, "Mouse support")
 
 	res, _ := x.key(tea.KeyMsg{Type: tea.KeyEnter})
 	if got := res.(m); !got.mouseEnabled {
@@ -86,23 +86,23 @@ func TestSettingsValuesStartAtSameColumn(t *testing.T) {
 	defer func() { currentConfig = origCfg }()
 	currentConfig.SplashStageSpeed = "extremely_slow"
 
-	p := picker{title: "Settings", items: buildSettingsPickerItems()}
+	p := newSettingsPicker()
 	p.Open("")
-	lines := strings.Split(ansiStripRe.ReplaceAllString(p.RenderSettings(120, 40), ""), "\n")
+	lines := strings.Split(ansiStripRe.ReplaceAllString(p.RenderSettings(pickerStyle(), 120, 40), ""), "\n")
 
 	valueCols := map[int]map[int]string{}
-	for i, item := range p.items {
+	for i, item := range p.Items {
 		var line string
 		for _, l := range lines {
-			if strings.Contains(l, item.key) {
+			if strings.Contains(l, item.Key) {
 				line = l
 				break
 			}
 		}
 		if line == "" {
-			t.Fatalf("setting %q not rendered", item.key)
+			t.Fatalf("setting %q not rendered", item.Key)
 		}
-		end := strings.Index(line, item.key) + len(item.key)
+		end := strings.Index(line, item.Key) + len(item.Key)
 		rest := line[end:]
 		// Skip the padding/separator spaces, and an optional status dot
 		// (toggles only) which is decoration, not the value itself.
@@ -117,11 +117,11 @@ func TestSettingsValuesStartAtSameColumn(t *testing.T) {
 			}
 		}
 		col := lipgloss.Width(line[:end]) + lipgloss.Width(rest[:skip])
-		_, gridCol := settingsVisualPos(i)
+		_, gridCol := p.SettingsPos(i)
 		if valueCols[gridCol] == nil {
 			valueCols[gridCol] = map[int]string{}
 		}
-		valueCols[gridCol][col] = item.key
+		valueCols[gridCol][col] = item.Key
 	}
 	for gridCol, cols := range valueCols {
 		if len(cols) != 1 {
@@ -131,38 +131,38 @@ func TestSettingsValuesStartAtSameColumn(t *testing.T) {
 }
 
 func TestSettingsNavigationAcrossSections(t *testing.T) {
-	p := picker{title: "Settings", items: buildSettingsPickerItems()}
+	p := newSettingsPicker()
 	p.Open("")
 	press := func(k tea.KeyType) { p.HandleSettings(tea.KeyMsg{Type: k}) }
 
 	// Down from the lone last toggle (odd count leaves it alone in col 0)
 	// enters OPTIONS at col 0.
-	p.idx = settingsIndex(t, "Show phone number")
+	p.Idx = settingsIndex(t, "Show phone number")
 	press(tea.KeyDown)
-	if got := settingsDefs[p.idx].name; got != "Typing style" {
+	if got := settingsDefs[p.Idx].name; got != "Typing style" {
 		t.Fatalf("Down from last toggle row = %q, want Typing style", got)
 	}
 	// Down into the last row lands in the same column.
-	p.idx = settingsIndex(t, "Chat list icons")
+	p.Idx = settingsIndex(t, "Chat list icons")
 	press(tea.KeyDown)
-	if got := settingsDefs[p.idx].name; got != "Theme" {
+	if got := settingsDefs[p.Idx].name; got != "Theme" {
 		t.Fatalf("Down into last row = %q, want Theme", got)
 	}
-	p.idx = settingsIndex(t, "Media preview")
+	p.Idx = settingsIndex(t, "Media preview")
 	press(tea.KeyDown)
-	if got := settingsDefs[p.idx].name; got != "Startup speed" {
+	if got := settingsDefs[p.Idx].name; got != "Startup speed" {
 		t.Fatalf("Down into last row = %q, want Startup speed", got)
 	}
 	// Right from the last cell stays put.
-	p.idx = settingsIndex(t, "Theme")
+	p.Idx = settingsIndex(t, "Theme")
 	press(tea.KeyRight)
-	if got := settingsDefs[p.idx].name; got != "Theme" {
+	if got := settingsDefs[p.Idx].name; got != "Theme" {
 		t.Fatalf("Right from last cell moved to %q", got)
 	}
 	// Up from OPTIONS returns to the last toggle row.
-	p.idx = settingsIndex(t, "Typing style")
+	p.Idx = settingsIndex(t, "Typing style")
 	press(tea.KeyUp)
-	if got := settingsDefs[p.idx].name; got != "Show phone number" {
+	if got := settingsDefs[p.Idx].name; got != "Show phone number" {
 		t.Fatalf("Up from first option = %q, want Show phone number", got)
 	}
 }
@@ -170,9 +170,9 @@ func TestSettingsNavigationAcrossSections(t *testing.T) {
 // Every ON/OFF toggle must show a status dot in front of its name so the
 // state is visible at a glance alongside the ON/OFF text.
 func TestSettingsTogglesShowStatusDot(t *testing.T) {
-	p := picker{title: "Settings", items: buildSettingsPickerItems()}
+	p := newSettingsPicker()
 	p.Open("")
-	out := ansiStripRe.ReplaceAllString(p.RenderSettings(120, 40), "")
+	out := ansiStripRe.ReplaceAllString(p.RenderSettings(pickerStyle(), 120, 40), "")
 	lines := strings.Split(out, "\n")
 	for i, s := range settingsDefs {
 		if s.isSelector {
@@ -180,7 +180,7 @@ func TestSettingsTogglesShowStatusDot(t *testing.T) {
 		}
 		var line string
 		for _, l := range lines {
-			if strings.Contains(l, p.items[i].key) {
+			if strings.Contains(l, p.Items[i].Key) {
 				line = l
 				break
 			}
@@ -204,27 +204,30 @@ func TestSettingsOptionsStartNewRowAfterOddToggles(t *testing.T) {
 	defer func() { settingsDefs = orig }()
 	settingsDefs = append(append(orig[:0:0], orig[:6]...), orig[8:]...) // drop two toggles → 7
 
-	firstOpt := settingsToggleCount()
-	lastTogRow, _ := settingsVisualPos(firstOpt - 1)
-	row, col := settingsVisualPos(firstOpt)
+	p := newSettingsPicker()
+	firstOpt := 0
+	for firstOpt < len(settingsDefs) && !settingsDefs[firstOpt].isSelector {
+		firstOpt++
+	}
+	lastTogRow, _ := p.SettingsPos(firstOpt - 1)
+	row, col := p.SettingsPos(firstOpt)
 	if row != lastTogRow+1 || col != 0 {
 		t.Fatalf("first option at (%d,%d), want (%d,0)", row, col, lastTogRow+1)
 	}
-	if i := settingsIdxAt(lastTogRow, 1); i != -1 {
+	if i := p.SettingsIdxAt(lastTogRow, 1); i != -1 {
 		t.Fatalf("cell beside last toggle holds %q, want empty", settingsDefs[i].name)
 	}
 
-	p := picker{title: "Settings", items: buildSettingsPickerItems()}
 	p.Open("")
-	p.idx = settingsIndex(t, "Mouse support") // row 1, col 0 above the lone toggle
+	p.Idx = settingsIndex(t, "Mouse support") // row 1, col 0 above the lone toggle
 	p.HandleSettings(tea.KeyMsg{Type: tea.KeyDown})
 	p.HandleSettings(tea.KeyMsg{Type: tea.KeyDown})
 	p.HandleSettings(tea.KeyMsg{Type: tea.KeyDown})
-	if !settingsDefs[p.idx].isSelector {
-		t.Fatalf("Down from last toggle row should reach OPTIONS, got %q", settingsDefs[p.idx].name)
+	if !settingsDefs[p.Idx].isSelector {
+		t.Fatalf("Down from last toggle row should reach OPTIONS, got %q", settingsDefs[p.Idx].name)
 	}
 
-	out := ansiStripRe.ReplaceAllString(p.RenderSettings(120, 40), "")
+	out := ansiStripRe.ReplaceAllString(p.RenderSettings(pickerStyle(), 120, 40), "")
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, "●") && strings.Contains(l, "→") {
 			t.Fatalf("toggle and option share a row: %q", strings.TrimSpace(l))
@@ -242,9 +245,9 @@ func TestSettingsSubPickerReturnRestoresSelection(t *testing.T) {
 
 	openSettingsAt := func(name string) m {
 		x := m{status: "ready"}
-		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker = newSettingsPicker()
 		x.settingsPicker.Open("")
-		x.settingsPicker.idx = settingsIndex(t, name)
+		x.settingsPicker.Idx = settingsIndex(t, name)
 		return x
 	}
 	enter := tea.KeyMsg{Type: tea.KeyEnter}
@@ -254,15 +257,15 @@ func TestSettingsSubPickerReturnRestoresSelection(t *testing.T) {
 	x := openSettingsAt("Media preview")
 	res, _ := x.key(enter)
 	x = res.(m)
-	if !x.mediaViewPicker.open {
+	if !x.mediaViewPicker.IsOpen {
 		t.Fatal("Enter on Media preview did not open its sub-picker")
 	}
 	res, _ = x.key(esc)
 	x = res.(m)
-	if !x.settingsPicker.open {
+	if !x.settingsPicker.IsOpen {
 		t.Fatal("Esc in sub-picker did not return to settings")
 	}
-	if got := settingsDefs[x.settingsPicker.idx].name; got != "Media preview" {
+	if got := settingsDefs[x.settingsPicker.Idx].name; got != "Media preview" {
 		t.Fatalf("returned to %q, want Media preview", got)
 	}
 
@@ -270,15 +273,15 @@ func TestSettingsSubPickerReturnRestoresSelection(t *testing.T) {
 	x = openSettingsAt("Startup speed")
 	res, _ = x.key(enter)
 	x = res.(m)
-	if !x.splashSpeedPicker.open {
+	if !x.splashSpeedPicker.IsOpen {
 		t.Fatal("Enter on Startup speed did not open its sub-picker")
 	}
 	res, _ = x.key(enter)
 	x = res.(m)
-	if !x.settingsPicker.open {
+	if !x.settingsPicker.IsOpen {
 		t.Fatal("confirm in sub-picker did not return to settings")
 	}
-	if got := settingsDefs[x.settingsPicker.idx].name; got != "Startup speed" {
+	if got := settingsDefs[x.settingsPicker.Idx].name; got != "Startup speed" {
 		t.Fatalf("returned to %q, want Startup speed", got)
 	}
 
@@ -286,18 +289,18 @@ func TestSettingsSubPickerReturnRestoresSelection(t *testing.T) {
 	x = openSettingsAt("Theme")
 	res, _ = x.key(enter)
 	x = res.(m)
-	if !x.themePicker.open {
+	if !x.themePicker.IsOpen {
 		t.Fatal("Enter on Theme did not open the theme picker")
 	}
 	res, _ = x.key(esc)
 	x = res.(m)
-	if x.themePicker.open {
+	if x.themePicker.IsOpen {
 		t.Fatal("theme picker still open after Esc")
 	}
-	if !x.settingsPicker.open {
+	if !x.settingsPicker.IsOpen {
 		t.Fatal("Esc in theme picker did not return to settings")
 	}
-	if got := settingsDefs[x.settingsPicker.idx].name; got != "Theme" {
+	if got := settingsDefs[x.settingsPicker.Idx].name; got != "Theme" {
 		t.Fatalf("returned to %q, want Theme", got)
 	}
 }

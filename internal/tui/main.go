@@ -86,12 +86,12 @@ func Run() {
 			mouseEnabled:          currentConfig.MouseEnabled,
 			sidebarCache:          &sidebarCache{},
 			mainCache:             &renderCache{},
-			themePicker:           picker{title: "Select Theme", items: buildThemePickerItems()},
-			pointerPicker:         picker{title: "Select Pointer Icon", items: buildPointerPickerItems()},
-			helpPicker:            picker{title: "Commands", items: buildHelpPickerItems()},
-			settingsPicker:        picker{title: "Settings", items: buildSettingsPickerItems()},
-			typingAnimationPicker: picker{title: "Typing Style", items: buildTypingAnimationPickerItems()},
-			splashSpeedPicker:     picker{title: "Startup Speed", items: buildSplashSpeedPickerItems()},
+			themePicker:           newThemePicker(),
+			pointerPicker:         newPointerPicker(),
+			helpPicker:            newHelpPicker(),
+			settingsPicker:        newSettingsPicker(),
+			typingAnimationPicker: newTypingAnimationPicker(),
+			splashSpeedPicker:     newSplashSpeedPicker(),
 		}
 		if demoMode {
 			model.status = "Starting demo..."

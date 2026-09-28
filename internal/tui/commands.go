@@ -16,7 +16,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.open || x.pointerPicker.open || x.helpPicker.open || x.settingsPicker.open || x.typingAnimationPicker.open || x.mediaIconPicker.open || x.mediaViewPicker.open || x.userlistIconPicker.open || x.splashSpeedPicker.open || x.fontTestOpen {
+	if x.themePicker.IsOpen || x.pointerPicker.IsOpen || x.helpPicker.IsOpen || x.settingsPicker.IsOpen || x.typingAnimationPicker.IsOpen || x.mediaIconPicker.IsOpen || x.mediaViewPicker.IsOpen || x.userlistIconPicker.IsOpen || x.splashSpeedPicker.IsOpen || x.fontTestOpen {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -284,10 +284,19 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 		if name == "" {
 			return x.setTopBar("usage: /rename <name>"), true
 		}
-		if includeGlobal && x.active == "" {
-			return x.setTopBar("No active chat"), true
+		target := x.active
+		if includeGlobal {
+			// From the command bar, rename whoever is highlighted in the
+			// visible (possibly search-filtered) list; the open chat is only
+			// the fallback.
+			if items := x.filtered(); x.sel >= 0 && x.sel < len(items) {
+				target = items[x.sel].ID
+			}
 		}
-		n := num(x.active)
+		if target == "" {
+			return x.setTopBar("No contact selected"), true
+		}
+		n := num(target)
 		x.names[n] = name
 		if _, ok := x.whitelist[n]; ok {
 			x.whitelist[n] = name
@@ -332,7 +341,7 @@ func (x *m) runMediaSendCommand(txt string, includeGlobal bool) (tea.Cmd, bool) 
 		}
 	}
 	fileName := filepath.Base(cmd.path)
-	pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+	pendingID := newOutgoingMessageID()
 	x.msgs[x.active] = append(x.msgs[x.active],
 		optimisticOutgoingMediaMessage(x.active, kind, fileName, cmd.caption, pendingID))
 	x.invalidate()
@@ -381,7 +390,7 @@ func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
 		x.invalidate()
 		return nil, true
 	case txt == "/typinganimation":
-		x.typingAnimationPicker = picker{title: "Typing Style", items: buildTypingAnimationPickerItems()}
+		x.typingAnimationPicker = newTypingAnimationPicker()
 		x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 		x.leftInput = ""
 		x.leftInputFocused = false
@@ -394,14 +403,14 @@ func (x *m) runUICommand(txt string) (tea.Cmd, bool) {
 		x.invalidate()
 		return nil, true
 	case txt == "/settings":
-		x.settingsPicker = picker{title: "Settings", items: buildSettingsPickerItems()}
+		x.settingsPicker = newSettingsPicker()
 		x.settingsPicker.Open("")
 		x.leftInput = ""
 		x.leftInputFocused = false
 		x.invalidate()
 		return nil, true
 	case txt == "/splashspeed":
-		x.splashSpeedPicker = picker{title: "Startup Speed", items: buildSplashSpeedPickerItems()}
+		x.splashSpeedPicker = newSplashSpeedPicker()
 		speed := currentConfig.SplashStageSpeed
 		if speed == "" {
 			speed = "normal"

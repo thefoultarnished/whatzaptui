@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"whatzap/internal/tui/picker"
 )
 
 func mouseModeCmd(enabled bool) tea.Cmd {
@@ -256,7 +257,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return x, nil
 	}
-	if x.themePicker.open {
+	if x.themePicker.IsOpen {
 		action, done := x.themePicker.HandleTheme(k)
 		if !done {
 			applyThemeByName(x.themePicker.SelectedKey())
@@ -279,7 +280,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return x, nil
 	}
-	if x.pointerPicker.open {
+	if x.pointerPicker.IsOpen {
 		action, done := x.pointerPicker.Handle(k)
 		if !done {
 			receivedMsgIcon = x.pointerPicker.SelectedKey()
@@ -294,7 +295,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return x, nil
 	}
-	if x.helpPicker.open {
+	if x.helpPicker.IsOpen {
 		_, done := x.helpPicker.HandleHelp(k)
 		if done {
 			x.helpPicker.Close(false)
@@ -302,16 +303,16 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return x, nil
 	}
-	if x.settingsPicker.open {
+	if x.settingsPicker.IsOpen {
 		action, done := x.settingsPicker.HandleSettings(k)
 		if done {
 			if action == "confirm" {
-				msg := x.settingsPicker.toggleSetting()
+				msg := toggleSetting(&x.settingsPicker)
 				x.invalidate()
 
 				// Handle mouse enable/disable command for the toggle
 				var cmd tea.Cmd
-				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) && settingsDefs[x.settingsPicker.idx].name == "Mouse support" {
+				if x.settingsPicker.Idx >= 0 && x.settingsPicker.Idx < len(settingsDefs) && settingsDefs[x.settingsPicker.Idx].name == "Mouse support" {
 					x.mouseEnabled = currentConfig.MouseEnabled
 					cmd = mouseModeCmd(x.mouseEnabled)
 					return x, tea.Batch(x.setTopBar(msg), cmd)
@@ -319,27 +320,27 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return x, x.setTopBar(msg)
 			} else if action == "selector" {
 				selName := ""
-				if x.settingsPicker.idx >= 0 && x.settingsPicker.idx < len(settingsDefs) {
-					selName = settingsDefs[x.settingsPicker.idx].name
+				if x.settingsPicker.Idx >= 0 && x.settingsPicker.Idx < len(settingsDefs) {
+					selName = settingsDefs[x.settingsPicker.Idx].name
 				}
-				x.settingsReturnIdx = x.settingsPicker.idx
+				x.settingsReturnIdx = x.settingsPicker.Idx
 				x.settingsPicker.Close(false)
 				switch selName {
 				case "Media icon style":
-					x.mediaIconPicker = picker{title: "Media Icon Style", items: buildMediaIconPickerItems()}
+					x.mediaIconPicker = newMediaIconPicker()
 					x.mediaIconPicker.Open(currentConfig.MediaIconStyle)
 				case "Media preview":
-					x.mediaViewPicker = picker{title: "Media Preview", items: buildMediaViewPickerItems()}
+					x.mediaViewPicker = newMediaViewPicker()
 					x.mediaViewPicker.Open(currentConfig.MediaViewStyle)
 				case "Chat list icons":
-					x.userlistIconPicker = picker{title: "Chat List Icons", items: buildUserlistIconPickerItems()}
+					x.userlistIconPicker = newUserlistIconPicker()
 					style := currentConfig.UserlistIconStyle
 					if style == "" {
 						style = "numbers"
 					}
 					x.userlistIconPicker.Open(style)
 				case "Startup speed":
-					x.splashSpeedPicker = picker{title: "Startup Speed", items: buildSplashSpeedPickerItems()}
+					x.splashSpeedPicker = newSplashSpeedPicker()
 					speed := currentConfig.SplashStageSpeed
 					if speed == "" {
 						speed = "normal"
@@ -347,10 +348,10 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.splashSpeedPicker.Open(speed)
 				case "Theme":
 					x.themeFromSettings = true
-					x.themePicker = picker{title: "Select Theme", items: buildThemePickerItems()}
+					x.themePicker = newThemePicker()
 					x.themePicker.Open(currentConfig.ThemeName)
 				default:
-					x.typingAnimationPicker = picker{title: "Typing Style", items: buildTypingAnimationPickerItems()}
+					x.typingAnimationPicker = newTypingAnimationPicker()
 					x.typingAnimationPicker.Open(currentConfig.TypingAnimationStyle)
 				}
 				x.invalidate()
@@ -361,19 +362,19 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return x, nil
 	}
-	if x.typingAnimationPicker.open {
+	if x.typingAnimationPicker.IsOpen {
 		return x.handleSettingsSubPicker(&x.typingAnimationPicker, &currentConfig.TypingAnimationStyle, k)
 	}
-	if x.mediaIconPicker.open {
+	if x.mediaIconPicker.IsOpen {
 		return x.handleSettingsSubPicker(&x.mediaIconPicker, &currentConfig.MediaIconStyle, k)
 	}
-	if x.mediaViewPicker.open {
+	if x.mediaViewPicker.IsOpen {
 		return x.handleSettingsSubPicker(&x.mediaViewPicker, &currentConfig.MediaViewStyle, k)
 	}
-	if x.userlistIconPicker.open {
+	if x.userlistIconPicker.IsOpen {
 		return x.handleSettingsSubPicker(&x.userlistIconPicker, &currentConfig.UserlistIconStyle, k)
 	}
-	if x.splashSpeedPicker.open {
+	if x.splashSpeedPicker.IsOpen {
 		return x.handleSettingsSubPicker(&x.splashSpeedPicker, &currentConfig.SplashStageSpeed, k)
 	}
 	if x.emojiPickerOpen {
@@ -414,7 +415,7 @@ func wrappedIndex(cur, n, delta int) int {
 	return next
 }
 
-func (x *m) handleSettingsSubPicker(p *picker, cfgField *string, k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (x *m) handleSettingsSubPicker(p *picker.Picker, cfgField *string, k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	action, done := p.Handle(k)
 	if !done {
 		*cfgField = p.SelectedKey()
@@ -670,7 +671,7 @@ func (x m) handleLeftInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.leftInput = graphemeDeleteLast(x.leftInput)
 		}
 	case tea.KeyEnter:
-		txt := strings.TrimSpace(x.leftInput)
+		txt := strings.TrimSpace(sanitizeOutgoingText(x.leftInput))
 		x.leftInput = ""
 		x.leftInputFocused = false
 		if txt == "" {
@@ -687,8 +688,10 @@ func (x m) handleLeftInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.leftInputFocused = false
 		}
 	default:
-		if len(k.Runes) > 0 {
-			x.leftInput += string(k.Runes)
+		// Some terminals send NUL/control runes alongside Shift presses;
+		// keep them out so they can't end up inside a /rename name.
+		if typed := sanitizeOutgoingText(strings.ReplaceAll(string(k.Runes), "\n", "")); typed != "" {
+			x.leftInput += typed
 		}
 	}
 	return x, nil

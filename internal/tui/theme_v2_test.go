@@ -491,10 +491,9 @@ func TestSettingsOffDotColour(t *testing.T) {
 	enableTrueColor(t)
 	red := fgANSI("#ef4444")
 	render := func() string {
-		var p picker
-		p.items = buildSettingsPickerItems()
-		p.idx = -1
-		return p.RenderSettings(120, 60)
+		p := newSettingsPicker()
+		p.Idx = -1
+		return p.RenderSettings(pickerStyle(), 120, 60)
 	}
 	setTestTheme(t, TokyoNight)
 	if strings.Contains(render(), red) {

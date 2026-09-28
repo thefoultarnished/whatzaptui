@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"whatzap/internal/tui/picker"
 )
 
 const successLoadingScreenName = "Success Loading Screen"
@@ -147,30 +148,30 @@ func (x m) renderStartupView(frameW int) string {
 	}
 	if x.status == "qr" {
 		if x.qrRaw != "" {
-		qrMaxW := min(max(12, innerW-6), 48)
-		qrMaxH := min(max(8, innerH-6), 24)
-		qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
-		if qrBody == "" {
-			qrBody = x.qrRaw
-		}
-		qrBoxed := renderViewfinder(qrBody, 6, 3, brand, qrDark)
-		qrW := lipgloss.Width(qrBoxed)
+			qrMaxW := min(max(12, innerW-6), 48)
+			qrMaxH := min(max(8, innerH-6), 24)
+			qrBody := renderQR(x.qrRaw, qrMaxW, qrMaxH)
+			if qrBody == "" {
+				qrBody = x.qrRaw
+			}
+			qrBoxed := renderViewfinder(qrBody, 6, 3, brand, qrDark)
+			qrW := lipgloss.Width(qrBoxed)
 
-		var body string
-		if innerW >= linkPanelW+qrW+4 {
-			spacerW := max(2, min(8, innerW-(linkPanelW+qrW)-2))
-			panel := x.renderLinkPanel(lipgloss.Height(qrBoxed))
-			row := lipgloss.JoinHorizontal(lipgloss.Center, panel, strings.Repeat(" ", spacerW), qrBoxed)
-			body = lipgloss.PlaceHorizontal(innerW, lipgloss.Center, row)
-		} else {
-			body = lipgloss.JoinVertical(
-				lipgloss.Center,
-				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
-				"",
-				lipgloss.PlaceHorizontal(innerW, lipgloss.Center, x.renderLinkPanel(0)),
-			)
-		}
-		return renderStatusBox(body, innerW, innerH, outerW, outerH)
+			var body string
+			if innerW >= linkPanelW+qrW+4 {
+				spacerW := max(2, min(8, innerW-(linkPanelW+qrW)-2))
+				panel := x.renderLinkPanel(lipgloss.Height(qrBoxed))
+				row := lipgloss.JoinHorizontal(lipgloss.Center, panel, strings.Repeat(" ", spacerW), qrBoxed)
+				body = lipgloss.PlaceHorizontal(innerW, lipgloss.Center, row)
+			} else {
+				body = lipgloss.JoinVertical(
+					lipgloss.Center,
+					lipgloss.PlaceHorizontal(innerW, lipgloss.Center, qrBoxed),
+					"",
+					lipgloss.PlaceHorizontal(innerW, lipgloss.Center, x.renderLinkPanel(0)),
+				)
+			}
+			return renderStatusBox(body, innerW, innerH, outerW, outerH)
 		}
 		statusBody = "Generating QR..."
 		hint = mutedStyle.Render("Preparing login QR")
@@ -198,32 +199,32 @@ func (x m) renderRightMain(rightW, mainH int) string {
 			break
 		}
 	}
-	if x.themePicker.open {
-		return x.themePicker.RenderTheme(rightW, mainH)
+	if x.themePicker.IsOpen {
+		return x.themePicker.RenderTheme(pickerStyle(), rightW, mainH)
 	}
-	if x.pointerPicker.open {
-		return x.pointerPicker.Render(rightW, mainH)
+	if x.pointerPicker.IsOpen {
+		return x.pointerPicker.Render(pickerStyle(), rightW, mainH)
 	}
-	if x.typingAnimationPicker.open {
-		return x.typingAnimationPicker.RenderTypingAnimation(rightW, mainH, x.shineFrame)
+	if x.typingAnimationPicker.IsOpen {
+		return x.typingAnimationPicker.RenderTypingAnimation(pickerStyle(), rightW, mainH, x.shineFrame)
 	}
-	if x.mediaIconPicker.open {
-		return x.mediaIconPicker.Render(rightW, mainH)
+	if x.mediaIconPicker.IsOpen {
+		return x.mediaIconPicker.Render(pickerStyle(), rightW, mainH)
 	}
-	if x.mediaViewPicker.open {
-		return x.mediaViewPicker.Render(rightW, mainH)
+	if x.mediaViewPicker.IsOpen {
+		return x.mediaViewPicker.Render(pickerStyle(), rightW, mainH)
 	}
-	if x.userlistIconPicker.open {
-		return x.userlistIconPicker.Render(rightW, mainH)
+	if x.userlistIconPicker.IsOpen {
+		return x.userlistIconPicker.Render(pickerStyle(), rightW, mainH)
 	}
-	if x.splashSpeedPicker.open {
-		return x.splashSpeedPicker.Render(rightW, mainH)
+	if x.splashSpeedPicker.IsOpen {
+		return x.splashSpeedPicker.Render(pickerStyle(), rightW, mainH)
 	}
-	if x.helpPicker.open {
-		return x.helpPicker.RenderHelp(rightW, mainH)
+	if x.helpPicker.IsOpen {
+		return x.helpPicker.RenderHelp(pickerStyle(), rightW, mainH)
 	}
-	if x.settingsPicker.open {
-		return x.settingsPicker.RenderSettings(rightW, mainH)
+	if x.settingsPicker.IsOpen {
+		return x.settingsPicker.RenderSettings(pickerStyle(), rightW, mainH)
 	}
 	if x.confirmDialog.open {
 		return x.confirmDialog.Render(rightW, mainH)
@@ -336,7 +337,6 @@ func renderViewfinder(content string, cornerLen, armHeight int, frameColor, bgCo
 	out = append(out, botRow)
 	return strings.Join(out, "\n")
 }
-
 
 func connectFrameJunctions(framedBody string) string {
 	lines := strings.Split(framedBody, "\n")
@@ -1912,6 +1912,7 @@ var (
 	urlRegex          = regexp.MustCompile(`https?://[^\s]+`)
 	mentionTokenRegex = regexp.MustCompile(`(^|\s)(@[a-zA-Z0-9_]+)`)
 )
+
 func mentionPattern(knownTags []string) *regexp.Regexp {
 	if len(knownTags) == 0 {
 		return mentionTokenRegex
@@ -2869,8 +2870,8 @@ func (x m) assembleChatLines(w, h int, msgBlocks [][]string, msgTimestamps []int
 	if _, typing := x.typingChats[x.active]; typing {
 		name := x.nameFor(x.active)
 		typingText := name + " is typing..."
-		if currentConfig.TypingAnimationStyle == "squares" {
-			icon := renderSquaresIcon(x.shineFrame, lipgloss.Color(""))
+		if currentConfig.TypingAnimationStyle == picker.SquaresKey {
+			icon := picker.SquaresIcon(x.shineFrame, lipgloss.Color(""), relLuminance(string(background)) >= 0.5)
 			var textWithShine string
 			if themeV2 {
 				baseSt := lipgloss.NewStyle().Foreground(purple)
