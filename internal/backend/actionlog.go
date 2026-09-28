@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"whatzap/internal/logprune"
 )
 
 // actionLog is a per-session structured event log. One file per backend
@@ -58,6 +60,8 @@ func openActionLog(cacheDir string, start time.Time, secret func() string) (*act
 	if err != nil {
 		return nil, fmt.Errorf("action log: open %s: %w", path, err)
 	}
+	// One file per start adds up; keep only the newest few sessions.
+	_ = logprune.KeepNewest(dir, actionLogPrefix, actionLogExt, logprune.DefaultKeep)
 	a := &actionLog{
 		w:      f,
 		file:   path,

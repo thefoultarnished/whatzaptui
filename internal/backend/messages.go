@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"go.mau.fi/whatsmeow"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
@@ -832,6 +833,18 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"message": wire})
 }
 
+// maxCaptionRunes caps a media caption. The multipart body can be ~150 MB,
+// so without a cap the whole thing could be sent as caption text.
+const maxCaptionRunes = 4096
+
+// capCaption trims a caption to maxCaptionRunes runes.
+func capCaption(s string) string {
+	if utf8.RuneCountInString(s) <= maxCaptionRunes {
+		return s
+	}
+	return string([]rune(s)[:maxCaptionRunes])
+}
+
 func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -852,7 +865,7 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 
 	chatID := a.canonicalizeChatID(strings.TrimSpace(r.FormValue("chatId")))
 	kind := strings.ToLower(strings.TrimSpace(r.FormValue("kind")))
-	caption := strings.TrimSpace(sanitizeOutgoingText(r.FormValue("caption")))
+	caption := capCaption(strings.TrimSpace(sanitizeOutgoingText(r.FormValue("caption"))))
 	msgID, err := parseClientMessageID(r.FormValue("messageId"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

@@ -1857,7 +1857,7 @@ func TestValidateSendFileInput(t *testing.T) {
 		t.Fatalf("image validation failed: %v", err)
 	}
 
-	videoData := []byte("not-a-real-video")
+	videoData := []byte{0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'm', 'p', '4', '2', 0, 0, 0, 0, 'm', 'p', '4', '2', 'i', 's', 'o', 'm'}
 	if err := validateSendFileInput("sample.mp4", videoData, "video"); err != nil {
 		t.Fatalf("video validation failed: %v", err)
 	}
@@ -2027,14 +2027,14 @@ func TestHandleSendFileRejectsMissingFilePart(t *testing.T) {
 
 func TestHandleSendFileMIMEMismatchReturnsError(t *testing.T) {
 	// Pure unit test: validateSendFileInput (which handleSendFile calls
-	// on the file part) rejects text content when kind=image AND the
-	// filename has no image extension. (The check is "extension OR
-	// sniffed type", so a .png extension would let text through on
-	// extension alone — that's intentional, the byte sniff is a
-	// second line of defense not a gate.)
+	// on the file part) rejects text content when kind=image. The file's
+	// content decides, so an image extension doesn't let text through.
 	textData := []byte("this is plain text, not an image")
 	if err := validateSendFileInput("photo", textData, "image"); err == nil {
 		t.Fatalf("expected MIME mismatch error for text content with kind=image and no extension")
+	}
+	if err := validateSendFileInput("photo.png", textData, "image"); err == nil {
+		t.Fatalf("expected MIME mismatch error for text content named .png")
 	}
 }
 
