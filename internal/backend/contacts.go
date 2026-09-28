@@ -17,9 +17,10 @@ import (
 )
 
 func (a *App) getLIDMap() map[string]string {
+	_, db := a.dbHandles()
 	out := make(map[string]string)
-	if a.db != nil {
-		rows, err := a.db.Query(`SELECT lid, pn FROM whatsmeow_lid_map`)
+	if db != nil {
+		rows, err := db.Query(`SELECT lid, pn FROM whatsmeow_lid_map`)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -30,9 +31,9 @@ func (a *App) getLIDMap() map[string]string {
 			}
 		}
 	}
-	if a.client != nil && a.client.Store != nil {
-		if a.client.Store.LID.User != "" && a.client.Store.ID != nil && a.client.Store.ID.User != "" {
-			out[a.client.Store.LID.User] = a.client.Store.ID.User
+	if client := a.getClient(); client != nil && client.Store != nil {
+		if client.Store.LID.User != "" && client.Store.ID != nil && client.Store.ID.User != "" {
+			out[client.Store.LID.User] = client.Store.ID.User
 		}
 	}
 	return out
@@ -47,14 +48,14 @@ func (a *App) handleContacts(w http.ResponseWriter, r *http.Request) {
 	a.mu.RUnlock()
 
 	var selfPhone, selfLID, selfName string
-	if a.client != nil && a.client.Store != nil {
-		if a.client.Store.ID != nil {
-			selfPhone = a.client.Store.ID.User
+	if client := a.getClient(); client != nil && client.Store != nil {
+		if client.Store.ID != nil {
+			selfPhone = client.Store.ID.User
 		}
-		if a.client.Store.LID.User != "" {
-			selfLID = a.client.Store.LID.User
+		if client.Store.LID.User != "" {
+			selfLID = client.Store.LID.User
 		}
-		selfName = a.client.Store.PushName
+		selfName = client.Store.PushName
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -71,7 +72,8 @@ func (a *App) handleResolveLIDPN(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
+	client := a.getClient()
+	if client == nil || client.Store == nil || client.Store.LIDs == nil {
 		writeErr(w, http.StatusInternalServerError, "lid mapping store unavailable")
 		return
 	}
@@ -97,7 +99,7 @@ func (a *App) handleResolveLIDPN(w http.ResponseWriter, r *http.Request) {
 
 	switch jid.Server {
 	case types.DefaultUserServer:
-		lid, err := a.client.Store.LIDs.GetLIDForPN(ctx, jid)
+		lid, err := client.Store.LIDs.GetLIDForPN(ctx, jid)
 		out["lookup"] = "pn_to_lid"
 		out["lid"] = lid.String()
 		if err != nil {
@@ -105,7 +107,7 @@ func (a *App) handleResolveLIDPN(w http.ResponseWriter, r *http.Request) {
 			out["error"] = "lookup failed"
 		}
 	case types.HiddenUserServer:
-		pn, err := a.client.Store.LIDs.GetPNForLID(ctx, jid)
+		pn, err := client.Store.LIDs.GetPNForLID(ctx, jid)
 		out["lookup"] = "lid_to_pn"
 		out["pn"] = pn.String()
 		if err != nil {
@@ -125,12 +127,13 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if a.client == nil || !a.client.IsConnected() || !a.client.IsLoggedIn() {
+	client := a.getClient()
+	if client == nil || !client.IsConnected() || !client.IsLoggedIn() {
 		writeErr(w, http.StatusConflict, "not connected")
 		return
 	}
 
-	if a.client.Store != nil && a.client.Store.AppState != nil {
+	if client.Store != nil && client.Store.AppState != nil {
 		fetchAppStates([]appstate.WAPatchName{
 			appstate.WAPatchCriticalBlock,
 			appstate.WAPatchRegularLow,
@@ -138,13 +141,13 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 			appstate.WAPatchRegular,
 		}, a.safeFetchAppState)
 	}
-	if a.client.Store == nil || a.client.Store.Contacts == nil {
+	if client.Store == nil || client.Store.Contacts == nil {
 		writeErr(w, http.StatusInternalServerError, "contacts store unavailable")
 		return
 	}
 
 	storeCtx, storeCancel := context.WithTimeout(context.Background(), 12*time.Second)
-	allContacts, err := a.client.Store.Contacts.GetAllContacts(storeCtx)
+	allContacts, err := client.Store.Contacts.GetAllContacts(storeCtx)
 	storeCancel()
 	if err != nil {
 		writeInternalErr(w, err)
@@ -302,7 +305,7 @@ func (a *App) handleSyncContacts(w http.ResponseWriter, r *http.Request) {
 			}
 			batch := unique[i:end]
 			lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 8*time.Second)
-			infoMap, err := a.client.GetUserInfo(lookupCtx, batch)
+			infoMap, err := client.GetUserInfo(lookupCtx, batch)
 			lookupCancel()
 			if err != nil {
 				lookupErrors++
@@ -545,6 +548,10 @@ func (a *App) handleSetWhitelist(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Allowed != 0 && req.Allowed != 1 {
+		writeErr(w, http.StatusBadRequest, "allowed must be 0 or 1")
+		return
+	}
 	err = a.withPermissionDB(func(db *sql.DB) error {
 		_, err := db.Exec(
 			`INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, ?)
@@ -578,16 +585,17 @@ func (a *App) handleSetName(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if req.Phone == "" {
-		writeErr(w, http.StatusBadRequest, "phone is required")
+	phone, err := normalizeWhitelistPhone(req.Phone)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// create row if not exists (allowed stays 0), then only update name
-	err := a.withPermissionDB(func(db *sql.DB) error {
+	err = a.withPermissionDB(func(db *sql.DB) error {
 		_, err := db.Exec(
 			`INSERT INTO chat_permissions (phone, name, allowed) VALUES (?, ?, 0)
 			 ON CONFLICT(phone) DO UPDATE SET name=excluded.name`,
-			req.Phone, req.Name,
+			phone, req.Name,
 		)
 		return err
 	})
@@ -607,7 +615,8 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !a.requireConnectedClient(w) {
+	client := a.connectedClient(w)
+	if client == nil {
 		return
 	}
 	var req struct {
@@ -637,20 +646,20 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 	var altJID types.JID
 	blockCtx, blockCancel := waCallCtx()
 	defer blockCancel()
-	_, err = a.client.UpdateBlocklist(blockCtx, jid, events.BlocklistChangeActionBlock)
+	_, err = client.UpdateBlocklist(blockCtx, jid, events.BlocklistChangeActionBlock)
 	if err != nil {
-		if jid.Server == types.DefaultUserServer && a.client.Store != nil && a.client.Store.LIDs != nil {
-			if l, errAlt := a.client.Store.LIDs.GetLIDForPN(context.Background(), jid); errAlt == nil && l.User != "" {
+		if jid.Server == types.DefaultUserServer && client.Store != nil && client.Store.LIDs != nil {
+			if l, errAlt := client.Store.LIDs.GetLIDForPN(context.Background(), jid); errAlt == nil && l.User != "" {
 				altJID = l
 			}
-		} else if jid.Server == types.HiddenUserServer && a.client.Store != nil && a.client.Store.LIDs != nil {
-			if p, errAlt := a.client.Store.LIDs.GetPNForLID(context.Background(), jid); errAlt == nil && p.User != "" {
+		} else if jid.Server == types.HiddenUserServer && client.Store != nil && client.Store.LIDs != nil {
+			if p, errAlt := client.Store.LIDs.GetPNForLID(context.Background(), jid); errAlt == nil && p.User != "" {
 				altJID = p
 			}
 		}
 		if altJID.User != "" {
 			retryCtx, retryCancel := waCallCtx()
-			_, err = a.client.UpdateBlocklist(retryCtx, altJID, events.BlocklistChangeActionBlock)
+			_, err = client.UpdateBlocklist(retryCtx, altJID, events.BlocklistChangeActionBlock)
 			retryCancel()
 		}
 	}

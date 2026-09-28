@@ -16,7 +16,8 @@ import (
 )
 
 func (a *App) handleProfilePicture(w http.ResponseWriter, r *http.Request) {
-	if !a.requireConnectedClient(w) {
+	client := a.connectedClient(w)
+	if client == nil {
 		return
 	}
 	jidRaw := strings.TrimSpace(r.URL.Query().Get("jid"))
@@ -31,7 +32,7 @@ func (a *App) handleProfilePicture(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := waCallCtx()
 	defer cancel()
-	info, err := a.client.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{})
+	info, err := client.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{})
 	if err != nil || info == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"url": nil})
 		return
@@ -40,20 +41,22 @@ func (a *App) handleProfilePicture(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleMediaDownload(w http.ResponseWriter, r *http.Request) {
-	if !a.requireConnectedClient(w) {
+	st, db := a.dbHandles()
+	client := a.connectedClient(w)
+	if client == nil {
 		return
 	}
-	chatID := r.URL.Query().Get("chatId")
+	chatID := a.canonicalizeChatID(strings.TrimSpace(r.URL.Query().Get("chatId")))
 	msgID := r.URL.Query().Get("msgId")
 	if chatID == "" || msgID == "" {
 		writeErr(w, http.StatusBadRequest, "chatId and msgId required")
 		return
 	}
 	var mediaProto string
-	if a.store != nil {
-		mediaProto, _ = a.store.GetMediaProto(chatID, msgID)
-	} else if a.db != nil {
-		_ = a.db.QueryRow(
+	if st != nil {
+		mediaProto, _ = st.GetMediaProto(chatID, msgID)
+	} else if db != nil {
+		_ = db.QueryRow(
 			`SELECT media_proto FROM messages WHERE chat_id = ? AND id = ? AND media_proto != ''`,
 			chatID, msgID,
 		).Scan(&mediaProto)
@@ -74,7 +77,7 @@ func (a *App) handleMediaDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	dlCtx, dlCancel := waDownloadCtx()
 	defer dlCancel()
-	data, err := a.client.DownloadAny(dlCtx, &msg)
+	data, err := client.DownloadAny(dlCtx, &msg)
 	if err != nil {
 		writeInternalErr(w, err)
 		return

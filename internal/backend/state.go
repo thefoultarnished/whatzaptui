@@ -74,16 +74,34 @@ func (a *App) initPersistentResources() error {
 		return err
 	}
 
+	client := whatsapp.NewClient(device, whatsmeowLogLevel)
+	// Published under the lock: after a logout this runs while request
+	// handlers are live, and they read these fields via getClient/RLock.
+	a.mu.Lock()
 	a.store = s
 	a.db = s.DB()
 	a.storeContainer = container
+	a.client = client
+	a.mu.Unlock()
 	// Async so a large first-run FTS build doesn't delay /health and TUI
 	// startup. backfillFTS only touches rows older than its start cutoff
 	// and search dedupes, so racing live inserts can't create dupes.
 	go a.backfillFTS()
-	a.client = whatsapp.NewClient(device, whatsmeowLogLevel)
 	a.bindEvents()
 	return nil
+}
+
+// dbHandles snapshots the store and raw DB under the read lock. Logout
+// closes and nils both, so callers must use these snapshots rather than
+// re-reading a.store/a.db between a nil check and the query. Must not be
+// called while holding a.mu.
+func (a *App) dbHandles() (*store.Store, *sql.DB) {
+	if a == nil {
+		return nil, nil
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.store, a.db
 }
 
 func (a *App) resetPersistentStorage() error {
@@ -147,7 +165,7 @@ func wipeCacheDirExceptLogs(dir string) error {
 // history sync when the LID cache is warmest. DB rows are not re-keyed — only
 // the in-memory sidebar state is fixed.
 func (a *App) reconcileLIDChats() {
-	if a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
+	if client := a.getClient(); client == nil || client.Store == nil || client.Store.LIDs == nil {
 		return
 	}
 
@@ -189,8 +207,9 @@ func (a *App) reconcileLIDChats() {
 }
 
 func (a *App) upsertChatToDB(chat Chat) error {
-	if a.store != nil {
-		return a.store.UpsertChat(store.ChatRecord{
+	st, db := a.dbHandles()
+	if st != nil {
+		return st.UpsertChat(store.ChatRecord{
 			ID:                    chat.ID,
 			Name:                  chat.Name,
 			Subject:               chat.Subject,
@@ -198,10 +217,10 @@ func (a *App) upsertChatToDB(chat Chat) error {
 			UnreadCount:           chat.UnreadCount,
 		})
 	}
-	if a.db == nil {
+	if db == nil {
 		return nil
 	}
-	_, err := a.db.Exec(`
+	_, err := db.Exec(`
 		INSERT OR REPLACE INTO chats (id, name, subject, conv_ts, unread_count)
 		VALUES (?, ?, ?, ?, ?)
 	`, chat.ID, chat.Name, chat.Subject, chat.ConversationTimestamp, chat.UnreadCount)
@@ -209,18 +228,19 @@ func (a *App) upsertChatToDB(chat Chat) error {
 }
 
 func (a *App) upsertContactToDB(contact Contact) error {
-	if a.store != nil {
-		return a.store.UpsertContact(store.ContactRecord{
+	st, db := a.dbHandles()
+	if st != nil {
+		return st.UpsertContact(store.ContactRecord{
 			ID:     contact.ID,
 			Name:   contact.Name,
 			Notify: contact.Notify,
 			Stored: contact.Stored,
 		})
 	}
-	if a.db == nil {
+	if db == nil {
 		return nil
 	}
-	_, err := a.db.Exec(`
+	_, err := db.Exec(`
 		INSERT OR REPLACE INTO contacts (id, name, notify, stored)
 		VALUES (?, ?, ?, ?)
 	`, contact.ID, contact.Name, contact.Notify, boolToInt(contact.Stored))
@@ -228,8 +248,9 @@ func (a *App) upsertContactToDB(contact Contact) error {
 }
 
 func (a *App) loadChatsFromDB() (map[string]Chat, error) {
-	if a.store != nil {
-		records, err := a.store.LoadChats()
+	st, db := a.dbHandles()
+	if st != nil {
+		records, err := st.LoadChats()
 		if err != nil {
 			return nil, err
 		}
@@ -248,10 +269,10 @@ func (a *App) loadChatsFromDB() (map[string]Chat, error) {
 		}
 		return chats, nil
 	}
-	if a.db == nil {
+	if db == nil {
 		return map[string]Chat{}, nil
 	}
-	rows, err := a.db.Query(`SELECT id, name, subject, conv_ts, unread_count FROM chats`)
+	rows, err := db.Query(`SELECT id, name, subject, conv_ts, unread_count FROM chats`)
 	if err != nil {
 		return nil, err
 	}
@@ -271,8 +292,9 @@ func (a *App) loadChatsFromDB() (map[string]Chat, error) {
 }
 
 func (a *App) loadContactsFromDB() (map[string]Contact, error) {
-	if a.store != nil {
-		records, err := a.store.LoadContacts()
+	st, db := a.dbHandles()
+	if st != nil {
+		records, err := st.LoadContacts()
 		if err != nil {
 			return nil, err
 		}
@@ -287,10 +309,10 @@ func (a *App) loadContactsFromDB() (map[string]Contact, error) {
 		}
 		return contacts, nil
 	}
-	if a.db == nil {
+	if db == nil {
 		return map[string]Contact{}, nil
 	}
-	rows, err := a.db.Query(`SELECT id, name, notify, stored FROM contacts`)
+	rows, err := db.Query(`SELECT id, name, notify, stored FROM contacts`)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +358,8 @@ func (a *App) recanonicalizeState() {
 }
 
 func (a *App) refreshGroupMetadata() int {
-	if a == nil || a.client == nil || !a.client.IsConnected() || !a.client.IsLoggedIn() {
+	client := a.getClient()
+	if client == nil || !client.IsConnected() || !client.IsLoggedIn() {
 		return 0
 	}
 	a.mu.RLock()
@@ -350,7 +373,7 @@ func (a *App) refreshGroupMetadata() int {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	groups, err := a.client.GetJoinedGroups(ctx)
+	groups, err := client.GetJoinedGroups(ctx)
 	if err != nil {
 		return 0
 	}
@@ -421,8 +444,9 @@ func (a *App) refreshGroupMetadata() int {
 // first run after the FTS feature was added. No-op if FTS already has rows or
 // if there are no messages.
 func (a *App) backfillFTS() {
-	if a.store != nil {
-		_ = a.store.BackfillFTS(func(msgJSON string) string {
+	st, db := a.dbHandles()
+	if st != nil {
+		_ = st.BackfillFTS(func(msgJSON string) string {
 			var m map[string]any
 			if err := json.Unmarshal([]byte(msgJSON), &m); err == nil {
 				return extractSearchableText(m)
@@ -431,18 +455,18 @@ func (a *App) backfillFTS() {
 		})
 		return
 	}
-	if a.db == nil {
+	if db == nil {
 		return
 	}
 	// Resume watermark: max messages.rowid already examined. Replaces the
 	// old "skip when FTS non-empty" check, which raced with live inserts
 	// once the backfill moved off the startup path.
-	if _, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
 		log.Printf("backfillFTS meta table: %v", err)
 		return
 	}
 	var watermark int64
-	_ = a.db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'rowid'`).Scan(&watermark)
+	_ = db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'rowid'`).Scan(&watermark)
 
 	type ftsRow struct {
 		chatID, msgID, body string
@@ -455,7 +479,7 @@ func (a *App) backfillFTS() {
 	limit := 1000
 	lastRowID := watermark
 	for {
-		rows, err := a.db.Query(`SELECT rowid, id, chat_id, from_me, message_json FROM messages WHERE rowid > ? AND ts <= ? ORDER BY rowid LIMIT ?`, lastRowID, cutoff, limit)
+		rows, err := db.Query(`SELECT rowid, id, chat_id, from_me, message_json FROM messages WHERE rowid > ? AND ts <= ? ORDER BY rowid LIMIT ?`, lastRowID, cutoff, limit)
 		if err != nil {
 			log.Printf("backfillFTS scan query: %v", err)
 			break
@@ -485,7 +509,7 @@ func (a *App) backfillFTS() {
 		_ = rows.Close()
 
 		if len(pending) > 0 {
-			tx, err := a.db.Begin()
+			tx, err := db.Begin()
 			if err != nil {
 				log.Printf("backfillFTS tx: %v", err)
 				break
@@ -511,7 +535,7 @@ func (a *App) backfillFTS() {
 		}
 		// Advance the watermark past every examined row, even textless
 		// ones, so the next boot resumes instead of rescanning.
-		if _, err := a.db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('rowid', ?)
+		if _, err := db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('rowid', ?)
 			ON CONFLICT(key) DO UPDATE SET val=excluded.val`, lastRowID); err != nil {
 			log.Printf("backfillFTS watermark: %v", err)
 			break
@@ -550,17 +574,18 @@ func (a *App) vacuumDB() {
 // purgeContactsWithName clears chat_permissions.name rows that match the given
 // name. Returns the number of rows affected.
 func (a *App) purgeContactsWithName(name string) (int64, error) {
-	if a.store != nil {
-		return a.store.PurgePermissionName(name)
+	st, db := a.dbHandles()
+	if st != nil {
+		return st.PurgePermissionName(name)
 	}
-	if a.db == nil {
+	if db == nil {
 		return 0, nil
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return 0, nil
 	}
-	res, err := a.db.Exec(`UPDATE chat_permissions SET name = '' WHERE name = ?`, name)
+	res, err := db.Exec(`UPDATE chat_permissions SET name = '' WHERE name = ?`, name)
 	if err != nil {
 		return 0, err
 	}
@@ -574,10 +599,11 @@ func (a *App) purgeContactsWithName(name string) (int64, error) {
 // row via INSERT OR IGNORE, so once-bad rows persisted forever. Run once per
 // startup as a defensive sweep.
 func (a *App) purgeOwnPushNameFromContacts() {
-	if a.client == nil || a.client.Store == nil {
+	client := a.getClient()
+	if client == nil || client.Store == nil {
 		return
 	}
-	pushName := a.client.Store.PushName
+	pushName := client.Store.PushName
 	n, err := a.purgeContactsWithName(pushName)
 	if err != nil {
 		log.Printf("purgeOwnPushNameFromContacts: %v", err)
@@ -593,19 +619,20 @@ func (a *App) purgeOwnPushNameFromContacts() {
 // the TUI prefers that name over the group subject. Runs once (marker in
 // fts_backfill_meta) so a later /rename of a group isn't wiped on every start.
 func (a *App) purgeGroupSenderNames() {
-	if a.db == nil {
+	_, db := a.dbHandles()
+	if db == nil {
 		return
 	}
-	if _, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS fts_backfill_meta(key TEXT PRIMARY KEY, val INTEGER NOT NULL DEFAULT 0)`); err != nil {
 		log.Printf("purgeGroupSenderNames: %v", err)
 		return
 	}
 	var done int
-	_ = a.db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'group_name_purge'`).Scan(&done)
+	_ = db.QueryRow(`SELECT val FROM fts_backfill_meta WHERE key = 'group_name_purge'`).Scan(&done)
 	if done == 1 {
 		return
 	}
-	res, err := a.db.Exec(`UPDATE chat_permissions SET name = ''
+	res, err := db.Exec(`UPDATE chat_permissions SET name = ''
 		WHERE name != '' AND phone IN (
 			SELECT substr(id, 1, length(id) - 5) FROM chats WHERE id LIKE '%@g.us')`)
 	if err != nil {
@@ -615,7 +642,7 @@ func (a *App) purgeGroupSenderNames() {
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("purgeGroupSenderNames: cleared %d group row(s)", n)
 	}
-	if _, err := a.db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('group_name_purge', 1)
+	if _, err := db.Exec(`INSERT INTO fts_backfill_meta(key, val) VALUES ('group_name_purge', 1)
 		ON CONFLICT(key) DO UPDATE SET val = 1`); err != nil {
 		log.Printf("purgeGroupSenderNames marker: %v", err)
 	}
@@ -628,10 +655,11 @@ func (a *App) purgeGroupSenderNames() {
 // row that made it into the store is, at minimum, delivered, so this is a
 // safe default. Idempotent: a second run is a no-op.
 func (a *App) backfillReceipt() {
-	if a.db == nil {
+	_, db := a.dbHandles()
+	if db == nil {
 		return
 	}
-	res, err := a.db.Exec(
+	res, err := db.Exec(
 		`UPDATE messages SET receipt = 'delivered' WHERE from_me = 1 AND (receipt = '' OR receipt IS NULL)`,
 	)
 	if err != nil {
@@ -648,10 +676,11 @@ func (a *App) backfillReceipt() {
 // should never appear as chat content, plus their orphaned FTS rows.
 // Runs every startup — the DELETE is a no-op when there is nothing to clean.
 func (a *App) purgeInvisibleProtocolMessages() {
-	if a.db == nil {
+	_, db := a.dbHandles()
+	if db == nil {
 		return
 	}
-	res, err := a.db.Exec(`DELETE FROM messages
+	res, err := db.Exec(`DELETE FROM messages
 		WHERE json_extract(message_json, '$.protocolMessage.type') IS NOT NULL
 		AND json_extract(message_json, '$.protocolMessage.type') NOT IN ('REVOKE', 'MESSAGE_EDIT', 'EPHEMERAL_SETTING')`)
 	if err != nil {
@@ -660,7 +689,7 @@ func (a *App) purgeInvisibleProtocolMessages() {
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("purgeInvisibleProtocol: removed %d control message(s)", n)
-		if _, err := a.db.Exec(`DELETE FROM messages_fts WHERE NOT EXISTS (
+		if _, err := db.Exec(`DELETE FROM messages_fts WHERE NOT EXISTS (
 			SELECT 1 FROM messages m WHERE m.chat_id = messages_fts.chat_id
 			AND m.id = messages_fts.msg_id AND m.from_me = messages_fts.from_me)`); err != nil {
 			log.Printf("purgeInvisibleProtocol fts cleanup: %v", err)
@@ -669,10 +698,11 @@ func (a *App) purgeInvisibleProtocolMessages() {
 }
 
 func (a *App) purgeEmptyPhantomChats() {
-	if a.db == nil {
+	_, db := a.dbHandles()
+	if db == nil {
 		return
 	}
-	res, err := a.db.Exec(`
+	res, err := db.Exec(`
 		DELETE FROM chats 
 		WHERE conv_ts = 0 AND unread_count = 0 
 		AND id NOT IN (SELECT DISTINCT chat_id FROM messages)
@@ -687,6 +717,7 @@ func (a *App) purgeEmptyPhantomChats() {
 }
 
 func (a *App) loadState() {
+	_, db := a.dbHandles()
 	// Defensive: clear any chat_permissions rows that have the local user's own
 	// push name as the contact name (legacy bug — see purgeOwnPushNameFromContacts).
 	a.purgeOwnPushNameFromContacts()
@@ -704,7 +735,7 @@ func (a *App) loadState() {
 	a.purgeEmptyPhantomChats()
 
 	// Primary source: SQLite chats + contacts tables.
-	if a.db == nil {
+	if db == nil {
 		a.mu.Lock()
 		a.needsBootstrapSync = true
 		a.mu.Unlock()
@@ -734,7 +765,8 @@ func (a *App) bootstrapFromStore() {
 		a.mu.Unlock()
 		return
 	}
-	if a.client == nil || !a.client.IsLoggedIn() {
+	client := a.client
+	if client == nil || !client.IsLoggedIn() {
 		a.mu.Unlock()
 		return
 	}
@@ -746,11 +778,11 @@ func (a *App) bootstrapFromStore() {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
-	if a.client == nil || a.client.Store == nil {
+	if client.Store == nil {
 		finish("no-store", nil)
 		return
 	}
-	if a.client.Store.AppState == nil {
+	if client.Store.AppState == nil {
 		log.Printf("bootstrap: app state store unavailable, skipping app state sync")
 	} else {
 		fetchAppStates([]appstate.WAPatchName{
@@ -761,10 +793,10 @@ func (a *App) bootstrapFromStore() {
 		}, a.safeFetchAppState)
 	}
 
-	if a.client.Store.Contacts == nil {
+	if client.Store.Contacts == nil {
 		return
 	}
-	seeded := a.seedContactsFromStore(ctx, a.client.Store.Contacts.GetAllContacts)
+	seeded := a.seedContactsFromStore(ctx, client.Store.Contacts.GetAllContacts)
 
 	if seeded > 0 {
 		a.persistState()
@@ -943,7 +975,11 @@ func (a *App) safeFetchAppState(ctx context.Context, name appstate.WAPatchName) 
 			})
 		}
 	}()
-	if err := a.client.FetchAppState(ctx, name, true, false); err != nil {
+	client := a.getClient()
+	if client == nil {
+		return
+	}
+	if err := client.FetchAppState(ctx, name, true, false); err != nil {
 		log.Printf("bootstrap: failed to fetch app state %s: %v", name, err)
 		a.actionLog.Event("bootstrap.appstate.fail", map[string]string{
 			"patch": string(name),
@@ -1062,12 +1098,13 @@ func (a *App) persistStateWithErrUnlocked() error {
 
 // withTx runs fn inside a single SQLite transaction.
 func (a *App) withTx(fn func(tx *sql.Tx) error) error {
+	_, db := a.dbHandles()
 	a.dbLifecycleMu.RLock()
 	defer a.dbLifecycleMu.RUnlock()
-	if a.db == nil {
+	if db == nil {
 		return fmt.Errorf("db not initialized")
 	}
-	tx, err := a.db.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -1084,10 +1121,11 @@ func (a *App) withTx(fn func(tx *sql.Tx) error) error {
 // reconcileChatTimestampsFromDB queries the DB for the max message timestamp per
 // chat and bumps a.state.Chats entries that are behind.
 func (a *App) reconcileChatTimestampsFromDB() {
-	if a.db == nil {
+	_, db := a.dbHandles()
+	if db == nil {
 		return
 	}
-	rows, err := a.db.Query(`SELECT chat_id, MAX(ts) FROM messages WHERE ts > 0 GROUP BY chat_id`)
+	rows, err := db.Query(`SELECT chat_id, MAX(ts) FROM messages WHERE ts > 0 GROUP BY chat_id`)
 	if err != nil {
 		return
 	}
@@ -1187,11 +1225,12 @@ func (a *App) getPNForLID(lid types.JID) (types.JID, error) {
 		return types.ParseJID(cachedVal)
 	}
 
-	if a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
+	client := a.getClient()
+	if client == nil || client.Store == nil || client.Store.LIDs == nil {
 		return types.JID{}, fmt.Errorf("store unavailable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	pn, err := a.client.Store.LIDs.GetPNForLID(ctx, lid)
+	pn, err := client.Store.LIDs.GetPNForLID(ctx, lid)
 	cancel()
 
 	a.lidCacheMu.Lock()
@@ -1208,7 +1247,8 @@ func (a *App) getPNForLID(lid types.JID) (types.JID, error) {
 }
 
 func (a *App) enqueueLIDMigration(lidUser, pnUser string) {
-	if a == nil || a.db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
+	_, db := a.dbHandles()
+	if a == nil || db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
 		return
 	}
 	a.lidMigrateOnce.Do(func() {
@@ -1226,7 +1266,8 @@ func (a *App) enqueueLIDMigration(lidUser, pnUser string) {
 }
 
 func (a *App) migrateLIDPermissions(lidUser, pnUser string) {
-	if a == nil || a.db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
+	_, db := a.dbHandles()
+	if a == nil || db == nil || lidUser == "" || pnUser == "" || lidUser == pnUser {
 		return
 	}
 	if err := a.withPermissionDB(func(db *sql.DB) error {
@@ -1258,7 +1299,7 @@ func (a *App) canonicalizeChatID(chatID string) string {
 	if base == "" || strings.HasSuffix(base, "@g.us") || base == "status@broadcast" {
 		return base
 	}
-	if a == nil || a.client == nil || a.client.Store == nil || a.client.Store.LIDs == nil {
+	if client := a.getClient(); client == nil || client.Store == nil || client.Store.LIDs == nil {
 		return base
 	}
 

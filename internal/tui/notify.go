@@ -73,11 +73,19 @@ func setTerminalBgCmd(color string) tea.Cmd {
 	}
 }
 
-func setTerminalTitleCmd(title string) tea.Cmd {
-	clean := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(title), "\x1b", ""), "\a", "")
+// cleanWindowTitle strips every control character (not just ESC/BEL) from a
+// title built from other people's chat names, so a name can't inject
+// terminal sequences, and falls back to "WhatZap" when nothing is left.
+func cleanWindowTitle(title string) string {
+	clean := strings.TrimSpace(strings.ReplaceAll(sanitizeIncomingText(title), "\n", " "))
 	if clean == "" {
-		clean = "WhatZap"
+		return "WhatZap"
 	}
+	return clean
+}
+
+func setTerminalTitleCmd(title string) tea.Cmd {
+	clean := cleanWindowTitle(title)
 	legacy := func() tea.Msg {
 		fmt.Printf("\033]0;%s\a", clean)
 		fmt.Printf("\033]2;%s\a", clean)

@@ -126,27 +126,22 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 			notifyTitle := ""
 			notifyBody := ""
 			activeViewing := x.mode == "chat" && x.active == wm.Key.RemoteJID
+			// Match strictly by message ID. Our own sends use an ID we chose
+			// up front (newOutgoingMessageID), so WhatsApp's copy of a sent
+			// message carries the same ID as its placeholder; guessing by
+			// timestamp used to pair quick successive sends the wrong way.
 			exists := false
-			if wm.Key.FromMe && wm.Key.ID != "" {
+			if wm.Key.ID != "" {
 				msgs := x.msgs[wm.Key.RemoteJID]
 				for i, existing := range msgs {
-					if strings.HasPrefix(existing.Key.ID, "local-") &&
-						existing.MessageTimestamp > 0 && wm.MessageTimestamp > 0 &&
-						wm.MessageTimestamp-existing.MessageTimestamp <= 10 &&
-						existing.MessageTimestamp-wm.MessageTimestamp <= 10 {
+					if existing.Key.ID != wm.Key.ID {
+						continue
+					}
+					if existing.pending {
 						msgs[i] = wm
-						x.msgs[wm.Key.RemoteJID] = msgs
-						exists = true
-						break
 					}
-				}
-			}
-			if !exists {
-				for _, existing := range x.msgs[wm.Key.RemoteJID] {
-					if wm.Key.ID != "" && existing.Key.ID == wm.Key.ID {
-						exists = true
-						break
-					}
+					exists = true
+					break
 				}
 			}
 			if !exists {
@@ -227,6 +222,9 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 					for _, id := range rm.MessageIDs {
 						if msgs[i].Key.ID == id {
 							msgs[i].ReceiptStatus = rm.ReceiptStatus
+							// A receipt proves the send went through; later
+							// echoes/responses must not overwrite this status.
+							msgs[i].pending = false
 							changed = true
 							break
 						}

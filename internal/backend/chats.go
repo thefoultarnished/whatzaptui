@@ -40,6 +40,8 @@ func (a *App) handleChats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	client := a.getClient()
+	canResolveLID := client != nil && client.Store != nil && client.Store.LIDs != nil
 	mergedByID := map[string]Chat{}
 	for _, c := range rawChats {
 		resolvedID := a.canonicalizeChatID(c.ID)
@@ -55,7 +57,7 @@ func (a *App) handleChats(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if c.Name == "" && a.client != nil && a.client.Store != nil && a.client.Store.LIDs != nil {
+		if c.Name == "" && canResolveLID {
 			if jid, err := types.ParseJID(c.ID); err == nil && jid.Server == types.DefaultUserServer {
 				if lid, err := types.ParseJID(jid.User + "@lid"); err == nil {
 					pn, err := a.getPNForLID(lid)
@@ -108,15 +110,15 @@ func (a *App) handleSyncGroups(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if a.client == nil || !a.client.IsConnected() || !a.client.IsLoggedIn() {
-		writeErr(w, http.StatusConflict, "not connected")
+	client := a.connectedClient(w)
+	if client == nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	groups, err := a.client.GetJoinedGroups(ctx)
+	groups, err := client.GetJoinedGroups(ctx)
 	if err != nil {
 		writeInternalErr(w, err)
 		return
@@ -135,7 +137,8 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !a.requireConnectedClient(w) {
+	client := a.connectedClient(w)
+	if client == nil {
 		return
 	}
 	jidStr := r.URL.Query().Get("jid")
@@ -148,7 +151,7 @@ func (a *App) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid jid")
 		return
 	}
-	info, err := a.client.GetGroupInfo(r.Context(), jid)
+	info, err := client.GetGroupInfo(r.Context(), jid)
 	if err != nil {
 		writeInternalErr(w, fmt.Errorf("get group info: %w", err))
 		return

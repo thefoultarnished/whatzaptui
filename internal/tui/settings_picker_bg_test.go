@@ -81,16 +81,16 @@ func TestSettingsSelectionHighlightWidthConstant(t *testing.T) {
 
 	origCfg := currentConfig
 	t.Cleanup(func() { currentConfig = origCfg })
-	currentConfig.MouseEnabled = false          // "Mouse support" -> "OFF" (short)
+	currentConfig.MouseEnabled = false                // "Mouse support" -> "OFF" (short)
 	currentConfig.SplashStageSpeed = "extremely_slow" // "Startup speed" -> "Extra slow" (long)
 
-	p := picker{title: "Settings", items: buildSettingsPickerItems()}
+	p := newSettingsPicker()
 	p.Open("")
 
 	highlightWidth := func(idxName string) int {
 		t.Helper()
-		p.idx = settingsIndex(t, idxName)
-		out := p.RenderSettings(120, 40)
+		p.Idx = settingsIndex(t, idxName)
+		out := p.RenderSettings(pickerStyle(), 120, 40)
 		var best int
 		for _, line := range strings.Split(out, "\n") {
 			stripped := ansiStripRe.ReplaceAllString(line, "")

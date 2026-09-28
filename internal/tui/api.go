@@ -232,9 +232,7 @@ func ensureBackend(ctx context.Context, c *http.Client, base, apiToken string) t
 }
 
 func probeAuth(ctx context.Context, c *http.Client, base, apiToken string) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
-	attachAuthHeader(req, apiToken)
-	res, err := c.Do(req)
+	res, err := doAPIRequest(ctx, c, http.MethodGet, base+"/contacts", nil, apiToken)
 	if err != nil {
 		return err
 	}
@@ -289,10 +287,7 @@ func postEmpty(ctx context.Context, c *http.Client, url string, ok func([]byte) 
 func postJSON(ctx context.Context, c *http.Client, url string, body any, ok func([]byte) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(body)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(url))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodPost, url, bytes.NewReader(b), apiTokenFromURL(url))
 		if err != nil {
 			return dataErr{err: err}
 		}
@@ -313,10 +308,7 @@ func logout(ctx context.Context, c *http.Client, base string) tea.Cmd {
 		logoutClient := *c
 		logoutClient.Timeout = 60 * time.Second
 		b, _ := json.Marshal(map[string]string{})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/logout", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := logoutClient.Do(req)
+		res, err := doAPIRequest(ctx, &logoutClient, http.MethodPost, base+"/logout", bytes.NewReader(b), apiTokenFromURL(base))
 		if err != nil {
 			return logoutMsg{err: err}
 		}
@@ -346,9 +338,7 @@ func logout(ctx context.Context, c *http.Client, base string) tea.Cmd {
 
 func getChats(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/chats", nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, base+"/chats", nil, apiTokenFromURL(base))
 		if err != nil {
 			return chatsMsg{err: err}
 		}
@@ -367,9 +357,7 @@ func getChats(ctx context.Context, c *http.Client, base string) tea.Cmd {
 }
 func getContacts(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/contacts", nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, base+"/contacts", nil, apiTokenFromURL(base))
 		if err != nil {
 			return contactsMsg{err: err}
 		}
@@ -399,10 +387,7 @@ func getContacts(ctx context.Context, c *http.Client, base string) tea.Cmd {
 
 func fetchGroupPreview(ctx context.Context, c *http.Client, base, jid string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
-			base+"/group/members?jid="+url.QueryEscape(jid), nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, base+"/group/members?jid="+url.QueryEscape(jid), nil, apiTokenFromURL(base))
 		if err != nil {
 			return groupPreviewMsg{jid: jid, err: err}
 		}
@@ -436,9 +421,7 @@ func getMsgsBefore(ctx context.Context, c *http.Client, base, chatID string, lim
 			q.Set("before", strconv.FormatInt(before, 10))
 		}
 		u := base + "/messages?" + q.Encode()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, u, nil, apiTokenFromURL(base))
 		if err != nil {
 			if before > 0 {
 				return olderMsgsMsg{chatID: chatID, requested: limit, err: err}
@@ -477,9 +460,7 @@ func getMsgsAround(ctx context.Context, c *http.Client, base, chatID, msgID stri
 		q.Set("around", msgID)
 		q.Set("limit", strconv.Itoa(limit))
 		u := base + "/messages?" + q.Encode()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, u, nil, apiTokenFromURL(base))
 		if err != nil {
 			return aroundMsgsMsg{chatID: chatID, err: err}
 		}
@@ -504,9 +485,7 @@ func searchMsgs(ctx context.Context, c *http.Client, base, query string) tea.Cmd
 		q.Set("q", query)
 		q.Set("limit", "50")
 		u := base + "/search?" + q.Encode()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, u, nil, apiTokenFromURL(base))
 		if err != nil {
 			return searchResultsMsg{query: query, err: err}
 		}
@@ -527,6 +506,9 @@ func searchMsgs(ctx context.Context, c *http.Client, base, query string) tea.Cmd
 func send(ctx context.Context, c *http.Client, base, chatID, text string, replyTo *wireMsg, pendingID string, mentionedJIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		payload := map[string]any{"chatId": chatID, "text": text}
+		if isClientMessageID(pendingID) {
+			payload["messageId"] = pendingID
+		}
 		if len(mentionedJIDs) > 0 {
 			payload["mentionedJids"] = mentionedJIDs
 		}
@@ -544,10 +526,7 @@ func send(ctx context.Context, c *http.Client, base, chatID, text string, replyT
 			payload["replyToParticipant"] = participant
 		}
 		b, _ := json.Marshal(payload)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/messages/send", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodPost, base+"/messages/send", bytes.NewReader(b), apiTokenFromURL(base))
 		if err != nil {
 			return sentMsg{chatID: chatID, pendingID: pendingID, err: err}
 		}
@@ -655,6 +634,11 @@ func sendFile(ctx context.Context, c *http.Client, base, chatID, kind, path, cap
 			if err := mw.WriteField("caption", caption); err != nil {
 				return
 			}
+			if isClientMessageID(pendingID) {
+				if err := mw.WriteField("messageId", pendingID); err != nil {
+					return
+				}
+			}
 			fw, err := mw.CreateFormFile("file", filepath.Base(path))
 			if err != nil {
 				return
@@ -739,9 +723,7 @@ func shutdownBackend(c *http.Client, base, apiToken string) {
 
 func getWhitelist(ctx context.Context, c *http.Client, base string) tea.Cmd {
 	return func() tea.Msg {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/whitelist", nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, base+"/whitelist", nil, apiTokenFromURL(base))
 		if err != nil {
 			return whitelistLoadMsg{err: err}
 		}
@@ -783,9 +765,7 @@ func downloadMedia(ctx context.Context, c *http.Client, base, chatID, msgID stri
 		q.Set("chatId", chatID)
 		q.Set("msgId", msgID)
 		u := base + "/media/download?" + q.Encode()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodGet, u, nil, apiTokenFromURL(base))
 		if err != nil {
 			return mediaDownloadMsg{chatID: chatID, msgID: msgID, err: err, isPreview: isPreview}
 		}
@@ -864,10 +844,7 @@ func openFile(path string) tea.Cmd {
 func setName(ctx context.Context, c *http.Client, base, phone, name string) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]any{"phone": phone, "name": name})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/names/set", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodPost, base+"/names/set", bytes.NewReader(b), apiTokenFromURL(base))
 		if err != nil {
 			return whitelistSetMsg{err: err}
 		}
@@ -882,10 +859,7 @@ func setName(ctx context.Context, c *http.Client, base, phone, name string) tea.
 func setWhitelistEntry(ctx context.Context, c *http.Client, base, phone, name string, allowed int) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]any{"phone": phone, "name": name, "allowed": allowed})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/whitelist/set", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodPost, base+"/whitelist/set", bytes.NewReader(b), apiTokenFromURL(base))
 		if err != nil {
 			return whitelistSetMsg{err: err}
 		}
@@ -904,10 +878,7 @@ func setWhitelistEntry(ctx context.Context, c *http.Client, base, phone, name st
 func setWhitelistDefault(ctx context.Context, c *http.Client, base string, allowed int) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]any{"allowed": allowed})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/whitelist/default", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodPost, base+"/whitelist/default", bytes.NewReader(b), apiTokenFromURL(base))
 		if err != nil {
 			return whitelistSetMsg{err: err}
 		}
@@ -921,6 +892,21 @@ func setWhitelistDefault(ctx context.Context, c *http.Client, base string, allow
 		}
 		return whitelistSetMsg{}
 	}
+}
+
+// doAPIRequest builds, authenticates and sends a backend request. A failure
+// to build the request comes back as an ordinary error instead of leaving
+// a nil request for the caller to crash on. Non-nil bodies are sent as JSON.
+func doAPIRequest(ctx context.Context, c *http.Client, method, url string, body io.Reader, apiToken string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("build %s request: %w", method, err)
+	}
+	if body != nil {
+		req.Header.Set("content-type", "application/json")
+	}
+	attachAuthHeader(req, apiToken)
+	return c.Do(req)
 }
 
 func attachAuthHeader(req *http.Request, apiToken string) {
@@ -1034,10 +1020,7 @@ type blockMsg struct {
 func blockContact(ctx context.Context, c *http.Client, base, chatID string) tea.Cmd {
 	return func() tea.Msg {
 		b, _ := json.Marshal(map[string]string{"chatId": chatID})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/block", bytes.NewReader(b))
-		req.Header.Set("content-type", "application/json")
-		attachAuthHeader(req, apiTokenFromURL(base))
-		res, err := c.Do(req)
+		res, err := doAPIRequest(ctx, c, http.MethodPost, base+"/block", bytes.NewReader(b), apiTokenFromURL(base))
 		if err != nil {
 			return blockMsg{err: err}
 		}

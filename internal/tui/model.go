@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
+	"whatzap/internal/tui/picker"
 )
 
 // renderCache stores the last-rendered main pane. It is validated by a
@@ -194,6 +195,10 @@ type wireMsg struct {
 	MediaProto       string         `json:"mediaProto,omitempty"`
 	ReceiptStatus    string         `json:"receiptStatus,omitempty"`
 	PushName         string         `json:"pushName,omitempty"`
+
+	// pending marks a local placeholder for a message we're still sending;
+	// cleared once the send response or WhatsApp's own copy replaces it.
+	pending bool
 }
 
 // UnmarshalJSON sanitizes wire-derived display text (PushName and every
@@ -244,16 +249,16 @@ type m struct {
 	audioCancel       context.CancelFunc // kills the player process
 	audioFallbackPath string             // audio file for default-player fallback from popup
 	// API & Connection
-	baseURL, wsURL, apiToken             string
-	client                               *http.Client
-	apiCtx                               context.Context
-	apiCancel                            context.CancelFunc
-	ws                                   *websocket.Conn
-	wsCh                                 <-chan env
-	wsReconnectDelay                     time.Duration // current backoff; 0 = not disconnected
-	wsDisconnected                       bool
-	backend                              *exec.Cmd
-	startedBackend                       bool
+	baseURL, wsURL, apiToken string
+	client                   *http.Client
+	apiCtx                   context.Context
+	apiCancel                context.CancelFunc
+	ws                       *websocket.Conn
+	wsCh                     <-chan env
+	wsReconnectDelay         time.Duration // current backoff; 0 = not disconnected
+	wsDisconnected           bool
+	backend                  *exec.Cmd
+	startedBackend           bool
 
 	// Window & Layout
 	w, h         int
@@ -276,6 +281,7 @@ type m struct {
 	inputBuf                                 string
 	inputFlushScheduled                      bool
 	drafts                                   map[string]string // chatID -> unsent composer text
+	pendingSendText                          map[string]string // pendingID -> composer text, restored if that send fails
 
 	// WhatsApp Entities
 	chats                                          []chat
@@ -305,15 +311,15 @@ type m struct {
 	downloadingMedia map[string]bool
 
 	// Pickers & Modals
-	themePicker           picker
-	pointerPicker         picker
-	helpPicker            picker
-	settingsPicker        picker
-	typingAnimationPicker picker
-	mediaIconPicker       picker
-	mediaViewPicker       picker
-	userlistIconPicker    picker
-	splashSpeedPicker     picker
+	themePicker           picker.Picker
+	pointerPicker         picker.Picker
+	helpPicker            picker.Picker
+	settingsPicker        picker.Picker
+	typingAnimationPicker picker.Picker
+	mediaIconPicker       picker.Picker
+	mediaViewPicker       picker.Picker
+	userlistIconPicker    picker.Picker
+	splashSpeedPicker     picker.Picker
 	settingsReturnIdx     int  // settings selection to restore when a sub-picker closes
 	themeFromSettings     bool // theme picker opened from settings; close returns there
 	confirmDialog         confirmDialog

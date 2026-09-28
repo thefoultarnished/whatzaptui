@@ -374,68 +374,30 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return x, listenFileProgress(ch)
 	case sentMsg:
+		failedText, hadText := x.pendingSendText[v.pendingID]
 		if v.pendingID != "" {
 			delete(x.uploadProgress, v.pendingID)
 			delete(x.uploadChans, v.pendingID)
+			delete(x.pendingSendText, v.pendingID)
 		}
 		if v.err != nil {
-			if v.pendingID != "" {
-				if msgs, ok := x.msgs[v.chatID]; ok {
-					filtered := msgs[:0]
-					for _, msg := range msgs {
-						if msg.Key.ID == v.pendingID {
-							continue
-						}
-						filtered = append(filtered, msg)
-					}
-					x.msgs[v.chatID] = filtered
-				}
+			// WhatsApp's own copy may have arrived (and confirmed the
+			// placeholder) even though the send response failed — the
+			// message really went out, so keep it and don't hand the text
+			// back for a duplicate resend.
+			if x.pendingPlaceholderIndex(v.chatID, v.pendingID) < 0 && x.messageIndex(v.chatID, v.pendingID) >= 0 {
+				x.invalidate()
+				return x, nil
 			}
+			if hadText {
+				x.restoreFailedSendText(v.chatID, failedText)
+			}
+			x.removeMessage(v.chatID, v.pendingID)
 			x.invalidate()
 			x.err = ""
 			return x, x.setTopBar(v.err.Error())
 		}
-		replaced := false
-		if v.pendingID != "" {
-			if msgs, ok := x.msgs[v.chatID]; ok {
-				for i := range msgs {
-					if msgs[i].Key.ID == v.pendingID {
-						msgs[i] = v.msg
-						replaced = true
-						break
-					}
-				}
-				x.msgs[v.chatID] = msgs
-			}
-		}
-		if !replaced {
-			// WS may have already claimed the placeholder and delivered the real
-			// message. If the real ID is already present, just drop the stale
-			// local placeholder instead of appending a duplicate.
-			alreadyPresent := false
-			if v.msg.Key.ID != "" {
-				for _, existing := range x.msgs[v.chatID] {
-					if existing.Key.ID == v.msg.Key.ID {
-						alreadyPresent = true
-						break
-					}
-				}
-			}
-			if alreadyPresent {
-				if v.pendingID != "" {
-					msgs := x.msgs[v.chatID]
-					out := msgs[:0]
-					for _, m := range msgs {
-						if m.Key.ID != v.pendingID {
-							out = append(out, m)
-						}
-					}
-					x.msgs[v.chatID] = out
-				}
-			} else {
-				x.msgs[v.chatID] = append(x.msgs[v.chatID], v.msg)
-			}
-		}
+		x.applySentMessage(v.chatID, v.pendingID, v.msg)
 		x.invalidate()
 		x.scroll = 0
 		x.msgActivityUntil = time.Now().Add(3 * time.Second)
@@ -668,7 +630,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			path := x.pendingAttachmentPath
 			fileName := filepath.Base(path)
-			pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+			pendingID := newOutgoingMessageID()
 			x.msgs[x.active] = append(x.msgs[x.active],
 				optimisticOutgoingMediaMessage(x.active, kind, fileName, txt, pendingID))
 			x.invalidate()
@@ -713,7 +675,11 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.demoMode {
 			return x, demoSend(x.active, wireTxt, replyTo)
 		}
-		pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
+		pendingID := newOutgoingMessageID()
+		if x.pendingSendText == nil {
+			x.pendingSendText = map[string]string{}
+		}
+		x.pendingSendText[pendingID] = txt
 		x.msgs[x.active] = append(x.msgs[x.active], optimisticOutgoingMessage(x.active, wireTxt, pendingID, replyTo))
 		now := time.Now()
 		selectedID := x.selectedChatID()

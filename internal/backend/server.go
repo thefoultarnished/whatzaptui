@@ -301,17 +301,24 @@ func (a *App) startSession() error {
 	a.startMu.Lock()
 	defer a.startMu.Unlock()
 
+	// One snapshot for the whole call (including the Connect goroutine):
+	// a logout can nil a.client while this is running.
+	client := a.getClient()
+	if client == nil {
+		return fmt.Errorf("whatsapp client not initialized")
+	}
+
 	a.mu.RLock()
 	alreadyStarted := a.started
 	connected := a.connected
 	a.mu.RUnlock()
 	if alreadyStarted {
-		if connected && a.client.IsConnected() && a.client.IsLoggedIn() {
+		if connected && client.IsConnected() && client.IsLoggedIn() {
 			return nil
 		}
 		// A connect is already in flight (or failed and will be
 		// retried by the next /start). Re-attaching is enough.
-		if a.client.IsConnected() {
+		if client.IsConnected() {
 			return nil
 		}
 		// Fall through and try again only if nothing is in flight.
@@ -328,7 +335,7 @@ func (a *App) startSession() error {
 
 	a.mu.Lock()
 	a.started = true
-	if a.client.Store.ID == nil {
+	if client.Store.ID == nil {
 		a.connState = "waiting-qr"
 	} else {
 		a.connState = "connecting"
@@ -337,8 +344,8 @@ func (a *App) startSession() error {
 	a.mu.Unlock()
 	a.broadcast(EventEnvelope{Type: "status", Payload: state})
 
-	if a.client.Store.ID == nil {
-		qrChan, err := a.client.GetQRChannel(context.Background())
+	if client.Store.ID == nil {
+		qrChan, err := client.GetQRChannel(context.Background())
 		if err != nil {
 			a.mu.Lock()
 			a.started = false
@@ -364,7 +371,7 @@ func (a *App) startSession() error {
 	// The TUI learns the session is ready via the WS "ready" event,
 	// or the failure via the WS "status" connect-failed event.
 	go func() {
-		if err := a.client.Connect(); err != nil {
+		if err := client.Connect(); err != nil {
 			a.mu.Lock()
 			a.started = false
 			a.connState = "connect-failed: " + err.Error()
@@ -375,12 +382,12 @@ func (a *App) startSession() error {
 		}
 		a.recanonicalizeState()
 		a.mu.RLock()
-		bootstrap := a.needsBootstrapSync && a.client != nil && a.client.IsLoggedIn()
+		bootstrap := a.needsBootstrapSync && client.IsLoggedIn()
 		a.mu.RUnlock()
 		if bootstrap {
 			go a.bootstrapFromStore()
 		}
-		if a.client != nil && a.client.IsLoggedIn() {
+		if client.IsLoggedIn() {
 			go a.refreshGroupMetadata()
 		}
 	}()
@@ -629,26 +636,27 @@ func (a *App) backupPermissions(dbPath string) ([]permissionBackup, bool) {
 }
 
 func (a *App) disconnectAndLogoutClient() []error {
-	if a.client == nil {
+	client := a.getClient()
+	if client == nil {
 		return nil
 	}
 	var errs []error
 	// Remote logout is best-effort. Even if the server is unreachable, we
 	// want to tear down local state. Cap the network call at 5s so a hung
 	// WhatsApp server can't hold logoutMu forever.
-	if a.client.Store != nil && a.client.Store.ID != nil {
+	if client.Store != nil && client.Store.ID != nil {
 		logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := a.client.Logout(logoutCtx); err != nil {
+		if err := client.Logout(logoutCtx); err != nil {
 			errs = append(errs, fmt.Errorf("remote logout failed: %w", err))
 		}
 		logoutCancel()
 	}
-	a.client.Disconnect()
-	if a.client.Store != nil && a.client.Store.ID != nil {
-		if err := a.client.Store.Delete(context.Background()); err != nil {
+	client.Disconnect()
+	if client.Store != nil && client.Store.ID != nil {
+		if err := client.Store.Delete(context.Background()); err != nil {
 			errs = append(errs, fmt.Errorf("store delete failed: %w", err))
 		} else {
-			a.client.Store.ID = nil
+			client.Store.ID = nil
 		}
 	}
 	return errs
@@ -924,6 +932,12 @@ func sanitizeOutgoingText(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// cleanContactName strips control characters (NUL included) and newlines
+// from a user-supplied contact name so it stays searchable and one line.
+func cleanContactName(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(sanitizeOutgoingText(s), "\n", " "))
 }
 
 func hasVisibleText(s string) bool {

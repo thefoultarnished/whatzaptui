@@ -1032,8 +1032,8 @@ func TestDeferredSendCommitsOutgoingMessage(t *testing.T) {
 	if !msgs[0].Key.FromMe {
 		t.Fatalf("optimistic message should be from me: %+v", msgs[0].Key)
 	}
-	if !strings.HasPrefix(msgs[0].Key.ID, "local-") {
-		t.Fatalf("optimistic message id = %q, want local-*", msgs[0].Key.ID)
+	if !isClientMessageID(msgs[0].Key.ID) || !msgs[0].pending {
+		t.Fatalf("optimistic message id = %q pending=%v, want a client-made WhatsApp ID still pending", msgs[0].Key.ID, msgs[0].pending)
 	}
 	if body, _ := msgs[0].Message["conversation"].(string); body != "hello now" {
 		t.Fatalf("optimistic message body = %q, want %q", body, "hello now")
@@ -2300,7 +2300,7 @@ func TestOptimisticWSFirstNoDuplicate(t *testing.T) {
 
 	model := baseModel(chatID)
 	// Seed the optimistic placeholder.
-	placeholder := wireMsg{MessageTimestamp: now}
+	placeholder := wireMsg{MessageTimestamp: now, pending: true}
 	placeholder.Key.ID = pendingID
 	placeholder.Key.RemoteJID = chatID
 	placeholder.Key.FromMe = true
@@ -2334,7 +2334,7 @@ func TestOptimisticHTTPFirstStillWorks(t *testing.T) {
 	pendingID := fmt.Sprintf("local-%d", time.Now().UnixNano())
 
 	model := baseModel(chatID)
-	placeholder := wireMsg{MessageTimestamp: now}
+	placeholder := wireMsg{MessageTimestamp: now, pending: true}
 	placeholder.Key.ID = pendingID
 	placeholder.Key.RemoteJID = chatID
 	placeholder.Key.FromMe = true
