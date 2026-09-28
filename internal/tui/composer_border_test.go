@@ -50,6 +50,9 @@ func TestRenderComposerTopBorderResponsiveTiers(t *testing.T) {
 
 	// Wide (105): contains all 4 shortcuts in label [key] order
 	wide := stripGraphicsSeqs(model.renderComposerTopBorder(105, true, false))
+	if !strings.HasPrefix(wide, "─────── ") {
+		t.Fatalf("wide width should start with '─────── ': %q", wide)
+	}
 	if !strings.Contains(wide, "send emoji [alt+e]") || !strings.Contains(wide, "attach file [alt+f]") ||
 		!strings.Contains(wide, "reply [alt+r]") || !strings.Contains(wide, "edit message [alt+a]") {
 		t.Fatalf("wide width should contain all shortcuts in label [key] order: %q", wide)

@@ -433,3 +433,100 @@ func TestBackupAndRestorePermissions(t *testing.T) {
 		t.Fatalf("restored default = %d, want 1", def)
 	}
 }
+
+func TestMessageHandlersNilDBSafety(t *testing.T) {
+	app := newTestApp(t)
+	// Nil out db to simulate state during teardown / logout
+	app.mu.Lock()
+	_ = app.db.Close()
+	app.db = nil
+	app.mu.Unlock()
+
+	// 1. handleMessages must return 503 rather than panicking on nil db
+	req := httptest.NewRequest(http.MethodGet, "/messages?chatId=15551230001@s.whatsapp.net", nil)
+	rec := httptest.NewRecorder()
+	app.handleMessages(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("handleMessages code = %d, want 503, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 2. handleMessagesAround must return 503 rather than panicking
+	reqAround := httptest.NewRequest(http.MethodGet, "/messages?chatId=15551230001@s.whatsapp.net&around=msg1", nil)
+	recAround := httptest.NewRecorder()
+	app.handleMessages(recAround, reqAround)
+	if recAround.Code != http.StatusServiceUnavailable {
+		t.Fatalf("handleMessagesAround code = %d, want 503, body=%s", recAround.Code, recAround.Body.String())
+	}
+
+	// 3. handleSearch must return 503 rather than panicking
+	reqSearch := httptest.NewRequest(http.MethodGet, "/search?q=hello", nil)
+	recSearch := httptest.NewRecorder()
+	app.handleSearch(recSearch, reqSearch)
+	if recSearch.Code != http.StatusServiceUnavailable {
+		t.Fatalf("handleSearch code = %d, want 503, body=%s", recSearch.Code, recSearch.Body.String())
+	}
+
+	// 4. insertMessageToDB must return error without panicking
+	if err := app.insertMessageToDB("chat1", WireMessage{}); err == nil {
+		t.Fatal("expected error from insertMessageToDB on nil db")
+	}
+
+	// 5. updateReceiptStatus must return false without panicking
+	if updated := app.updateReceiptStatus("chat1", []string{"msg1"}, "read"); updated {
+		t.Fatal("expected false from updateReceiptStatus on nil db")
+	}
+
+	// 6. pollOptionNames must return nil without panicking
+	if names := app.pollOptionNames("chat1", "msg1"); names != nil {
+		t.Fatalf("expected nil from pollOptionNames on nil db, got %v", names)
+	}
+
+	// 7. requireConnectedClient must return 409 without panicking
+	recClient := httptest.NewRecorder()
+	if app.requireConnectedClient(recClient) {
+		t.Fatal("expected requireConnectedClient to return false on nil client")
+	}
+	if recClient.Code != http.StatusConflict {
+		t.Fatalf("requireConnectedClient code = %d, want 409", recClient.Code)
+	}
+}
+
+func TestMessageHandlersConcurrentLogoutSafety(t *testing.T) {
+	app := newTestApp(t)
+	defer func() {
+		app.mu.Lock()
+		if app.db != nil {
+			_ = app.db.Close()
+		}
+		app.mu.Unlock()
+	}()
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/messages?chatId=15551230001@s.whatsapp.net", nil)
+			rec := httptest.NewRecorder()
+			app.handleMessages(rec, req)
+			if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("unexpected status code: %d", rec.Code)
+			}
+		}()
+	}
+
+	// Concurrently nil out db
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(2 * time.Millisecond)
+		app.mu.Lock()
+		if app.db != nil {
+			_ = app.db.Close()
+			app.db = nil
+		}
+		app.mu.Unlock()
+	}()
+
+	wg.Wait()
+}
