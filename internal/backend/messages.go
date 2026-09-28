@@ -28,6 +28,27 @@ import (
 
 var extractSearchableText = whatsapp.ExtractSearchableText
 
+// Caps on how long a WhatsApp server call may wait, so an unanswered call
+// fails instead of hanging its request forever. Uploads get longer because
+// large files on slow links legitimately take minutes. Vars for tests.
+var (
+	waCallTimeout     = 30 * time.Second
+	waUploadTimeout   = 5 * time.Minute
+	waDownloadTimeout = 10 * time.Minute
+)
+
+func waCallCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), waCallTimeout)
+}
+
+func waUploadCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), waUploadTimeout)
+}
+
+func waDownloadCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), waDownloadTimeout)
+}
+
 func (a *App) upsertMessageFTS(chatID, msgID string, fromMe int, body string) {
 	if a.store != nil {
 		_ = a.store.UpsertMessageFTS(chatID, msgID, fromMe == 1, body)
@@ -59,7 +80,13 @@ func (a *App) upsertMessageFTSTx(exec dbExecutor, chatID, msgID string, fromMe i
 }
 
 func (a *App) insertMessageToDB(chatID string, msg WireMessage) error {
-	_, err := a.insertMessageToDBTx(a.db, chatID, msg)
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("no db")
+	}
+	_, err := a.insertMessageToDBTx(db, chatID, msg)
 	return err
 }
 
@@ -229,11 +256,15 @@ func receiptStatusRank(status string) int {
 }
 
 func (a *App) updateReceiptStatus(chatID string, ids []string, status string) bool {
-	if a.store != nil {
-		updated, _ := a.store.UpdateReceiptStatus(chatID, ids, status)
+	a.mu.RLock()
+	store := a.store
+	db := a.db
+	a.mu.RUnlock()
+	if store != nil {
+		updated, _ := store.UpdateReceiptStatus(chatID, ids, status)
 		return updated
 	}
-	if receiptStatusRank(status) == 0 {
+	if db == nil || receiptStatusRank(status) == 0 {
 		return false
 	}
 	idSet := make(map[string]struct{}, len(ids))
@@ -261,7 +292,7 @@ func (a *App) updateReceiptStatus(chatID string, ids []string, status string) bo
 	}
 	args = append(args, receiptStatusRank(status))
 
-	result, err := a.db.Exec(fmt.Sprintf(`
+	result, err := db.Exec(fmt.Sprintf(`
 		UPDATE messages SET receipt = ?
 		WHERE chat_id = ? AND from_me = 1 AND id IN (%s)
 		AND %s < ?
@@ -289,6 +320,14 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database not ready")
+		return
+	}
+
 	const qAll = `SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
 		FROM messages WHERE chat_id = ? ORDER BY ts DESC LIMIT ?`
 	const qBefore = `SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
@@ -301,9 +340,9 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 	)
 	if beforeStr := strings.TrimSpace(r.URL.Query().Get("before")); beforeStr != "" {
 		beforeTS, _ := strconv.ParseInt(beforeStr, 10, 64)
-		rows, err = a.db.Query(qBefore, chatID, beforeTS, fetch)
+		rows, err = db.Query(qBefore, chatID, beforeTS, fetch)
 	} else {
-		rows, err = a.db.Query(qAll, chatID, fetch)
+		rows, err = db.Query(qAll, chatID, fetch)
 	}
 	if err != nil {
 		writeInternalErr(w, err)
@@ -343,10 +382,18 @@ func (a *App) handleMessages(w http.ResponseWriter, r *http.Request) {
 // limit/2 newer messages. The response includes anchorIndex so the TUI can
 // scroll to position the anchor in view.
 func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, limit int) {
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database not ready")
+		return
+	}
+
 	// Look up the anchor message's timestamp.
 	var anchorTS int64
 	var anchorFromMe int
-	err := a.db.QueryRow(
+	err := db.QueryRow(
 		`SELECT ts, from_me FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
 		chatID, msgID,
 	).Scan(&anchorTS, &anchorFromMe)
@@ -358,7 +405,7 @@ func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, 
 	half := limit / 2
 
 	// Older messages (before anchor, exclusive).
-	olderRows, err := a.db.Query(
+	olderRows, err := db.Query(
 		`SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
 		 FROM messages WHERE chat_id = ? AND ts < ?
 		 ORDER BY ts DESC LIMIT ?`,
@@ -382,7 +429,7 @@ func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, 
 		older[i], older[j] = older[j], older[i]
 	}
 
-	anchorRows, err := a.db.Query(
+	anchorRows, err := db.Query(
 		`SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
 		 FROM messages WHERE chat_id = ? AND id = ? AND from_me = ?`,
 		chatID, msgID, anchorFromMe,
@@ -402,7 +449,7 @@ func (a *App) handleMessagesAround(w http.ResponseWriter, chatID, msgID string, 
 	}
 	_ = anchorRows.Close()
 
-	newerRows, err := a.db.Query(
+	newerRows, err := db.Query(
 		`SELECT id, chat_id, from_me, participant, ts, push_name, receipt, message_json, media_proto
 		 FROM messages WHERE chat_id = ? AND ts > ?
 		 ORDER BY ts ASC LIMIT ?`,
@@ -482,14 +529,22 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		WHERE f.body MATCH ? AND f.chat_id = ?
 		ORDER BY ts DESC
 		LIMIT ?`
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database not ready")
+		return
+	}
+
 	var (
 		rows *sql.Rows
 		err  error
 	)
 	if chatID != "" {
-		rows, err = a.db.Query(baseQChat, matchExpr, chatID, limit)
+		rows, err = db.Query(baseQChat, matchExpr, chatID, limit)
 	} else {
-		rows, err = a.db.Query(baseQAll, matchExpr, limit)
+		rows, err = db.Query(baseQAll, matchExpr, limit)
 	}
 	if err != nil {
 		writeInternalErr(w, err)
@@ -521,8 +576,18 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
+func (a *App) getClient() *whatsapp.Client {
+	if a == nil {
+		return nil
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.client
+}
+
 func (a *App) requireConnectedClient(w http.ResponseWriter) bool {
-	if a == nil || a.client == nil || !a.client.IsConnected() || !a.client.IsLoggedIn() {
+	client := a.getClient()
+	if client == nil || !client.IsConnected() || !client.IsLoggedIn() {
 		writeErr(w, http.StatusConflict, "not connected")
 		return false
 	}
@@ -679,7 +744,14 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := whatsapp.BuildTextMessage(req.Text, req.ReplyToMsgID, participant, req.ReplyToText, req.MentionedJIDs)
 
-	resp, err := a.client.SendMessage(context.Background(), jid, msg)
+	client := a.getClient()
+	if client == nil {
+		writeErr(w, http.StatusConflict, "not connected")
+		return
+	}
+	ctx, cancel := waCallCtx()
+	defer cancel()
+	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		writeInternalErr(w, err)
 		return
@@ -797,8 +869,15 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	client := a.getClient()
+	if client == nil {
+		writeErr(w, http.StatusConflict, "not connected")
+		return
+	}
 
-	upload, err := a.client.Upload(context.Background(), data, mediaType)
+	uploadCtx, uploadCancel := waUploadCtx()
+	upload, err := client.Upload(uploadCtx, data, mediaType)
+	uploadCancel()
 	if err != nil {
 		writeInternalErr(w, err)
 		return
@@ -810,7 +889,9 @@ func (a *App) handleSendFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := a.client.SendMessage(context.Background(), jid, msg)
+	ctx, cancel := waCallCtx()
+	defer cancel()
+	resp, err := client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		writeInternalErr(w, err)
 		return
@@ -876,13 +957,18 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 
 	unreadToMark, exists := a.markChatReadInState(req.ChatID)
 
+	a.mu.RLock()
+	db := a.db
+	client := a.client
+	a.mu.RUnlock()
+
 	senderToIDs := make(map[string][]types.MessageID)
-	{
+	if db != nil {
 		limit := 100
 		if unreadToMark > 0 && unreadToMark < limit {
 			limit = unreadToMark
 		}
-		rows, err := a.db.Query(`
+		rows, err := db.Query(`
 			SELECT id, participant, chat_id FROM messages
 			WHERE chat_id = ? AND from_me = 0 AND id != ''
 			ORDER BY ts DESC LIMIT ?
@@ -910,16 +996,20 @@ func (a *App) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	// immediately — MarkRead can be slow and would otherwise trigger the TUI's
 	// 12s client timeout. persistState is called after the API calls complete
 	// so we don't flush the zeroed unread count before WhatsApp confirms it.
-	go func() {
-		chatJID, _ := types.ParseJID(req.ChatID)
-		for senderStr, ids := range senderToIDs {
-			senderJID, _ := types.ParseJID(senderStr)
-			_ = a.client.MarkRead(context.Background(), ids, time.Now(), chatJID, senderJID)
-		}
-		if exists && unreadToMark > 0 {
-			a.persistState()
-		}
-	}()
+	if client != nil {
+		go func() {
+			chatJID, _ := types.ParseJID(req.ChatID)
+			for senderStr, ids := range senderToIDs {
+				senderJID, _ := types.ParseJID(senderStr)
+				ctx, cancel := waCallCtx()
+				_ = client.MarkRead(ctx, ids, time.Now(), chatJID, senderJID)
+				cancel()
+			}
+			if exists && unreadToMark > 0 {
+				a.persistState()
+			}
+		}()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -963,7 +1053,14 @@ func (a *App) handleTyping(w http.ResponseWriter, r *http.Request) {
 	if req.State == "paused" {
 		state = types.ChatPresencePaused
 	}
-	_ = a.client.SendChatPresence(context.Background(), jid, state, types.ChatPresenceMediaText)
+	client := a.getClient()
+	if client == nil {
+		writeErr(w, http.StatusConflict, "not connected")
+		return
+	}
+	ctx, cancel := waCallCtx()
+	defer cancel()
+	_ = client.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -1009,8 +1106,15 @@ func (a *App) handleReact(w http.ResponseWriter, r *http.Request) {
 	if req.Sender != "" {
 		senderJID, _ = types.ParseJID(a.canonicalizeChatID(req.Sender))
 	}
-	msg := a.client.BuildReaction(chatJID, senderJID, types.MessageID(req.MessageID), req.Reaction)
-	resp, err := a.client.SendMessage(context.Background(), chatJID, msg)
+	client := a.getClient()
+	if client == nil {
+		writeErr(w, http.StatusConflict, "not connected")
+		return
+	}
+	msg := client.BuildReaction(chatJID, senderJID, types.MessageID(req.MessageID), req.Reaction)
+	ctx, cancel := waCallCtx()
+	defer cancel()
+	resp, err := client.SendMessage(ctx, chatJID, msg)
 	if err != nil {
 		writeInternalErr(w, err)
 		return
@@ -1095,7 +1199,14 @@ func (a *App) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	// RevokeMessage only works for the user's own messages; an
 	// incoming message can't be revoked.
 	if *req.FromMe {
-		_, err = a.client.RevokeMessage(context.Background(), chatJID, types.MessageID(req.MessageID))
+		client := a.getClient()
+		if client == nil {
+			writeErr(w, http.StatusConflict, "not connected")
+			return
+		}
+		ctx, cancel := waCallCtx()
+		defer cancel()
+		_, err = client.RevokeMessage(ctx, chatJID, types.MessageID(req.MessageID))
 		if err != nil {
 			writeInternalErr(w, err)
 			return
@@ -1205,8 +1316,15 @@ func (a *App) handleEditMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newContent := &waE2E.Message{Conversation: proto.String(req.Text)}
-	editMsg := a.client.BuildEdit(chatJID, types.MessageID(req.MessageID), newContent)
-	if _, err := a.client.SendMessage(context.Background(), chatJID, editMsg); err != nil {
+	client := a.getClient()
+	if client == nil {
+		writeErr(w, http.StatusConflict, "not connected")
+		return
+	}
+	editMsg := client.BuildEdit(chatJID, types.MessageID(req.MessageID), newContent)
+	ctx, cancel := waCallCtx()
+	defer cancel()
+	if _, err := client.SendMessage(ctx, chatJID, editMsg); err != nil {
 		writeInternalErr(w, err)
 		return
 	}
@@ -1315,7 +1433,11 @@ func (a *App) toWireMessage(evt *events.Message) WireMessage {
 // selected option name(s) by matching SHA-256 hashes against the original
 // poll's option list (fetched from our message DB).
 func (a *App) decryptPollVoteOptions(evt *events.Message) []string {
-	vote, err := a.client.DecryptPollVote(context.Background(), evt)
+	client := a.getClient()
+	if client == nil {
+		return nil
+	}
+	vote, err := client.DecryptPollVote(context.Background(), evt)
 	if err != nil || vote == nil {
 		return nil
 	}
@@ -1368,7 +1490,13 @@ func (a *App) pollOptionNames(chatID, msgID string) []string {
 	if chatID == "" || msgID == "" {
 		return nil
 	}
-	row := a.db.QueryRow(
+	a.mu.RLock()
+	db := a.db
+	a.mu.RUnlock()
+	if db == nil {
+		return nil
+	}
+	row := db.QueryRow(
 		`SELECT message_json FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
 		chatID, msgID,
 	)
@@ -1541,9 +1669,12 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 					}
 				}
 				entry["quotedText"] = qText
+				a.mu.RLock()
+				client := a.client
+				a.mu.RUnlock()
 				selfID := ""
-				if a != nil && a.client != nil && a.client.Store != nil && a.client.Store.ID != nil {
-					selfID = a.client.Store.ID.String()
+				if client != nil && client.Store != nil && client.Store.ID != nil {
+					selfID = client.Store.ID.String()
 				}
 				rawParticipant := strings.TrimSpace(ctx.GetParticipant())
 				normalized := normalizeQuotedParticipant(rawParticipant, selfID, func(id string) string {
@@ -1559,9 +1690,9 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 					entry["quotedFromMe"] = quotedMessageFromMe(chatID, rawParticipant, normalized, isGroup)
 				}
 			}
+		}
+		msg["extendedTextMessage"] = entry
 	}
-	msg["extendedTextMessage"] = entry
-}
 	if img := effective.GetImageMessage(); img != nil {
 		msg["imageMessage"] = map[string]any{"caption": img.GetCaption(), "mimetype": img.GetMimetype()}
 	}

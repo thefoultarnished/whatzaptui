@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"context"
 	"encoding/base64"
 	"net/http"
 	"os"
@@ -30,7 +29,9 @@ func (a *App) handleProfilePicture(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid jid")
 		return
 	}
-	info, err := a.client.GetProfilePictureInfo(context.Background(), jid, &whatsmeow.GetProfilePictureParams{})
+	ctx, cancel := waCallCtx()
+	defer cancel()
+	info, err := a.client.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{})
 	if err != nil || info == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"url": nil})
 		return
@@ -71,7 +72,9 @@ func (a *App) handleMediaDownload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "unmarshal error")
 		return
 	}
-	data, err := a.client.DownloadAny(context.Background(), &msg)
+	dlCtx, dlCancel := waDownloadCtx()
+	defer dlCancel()
+	data, err := a.client.DownloadAny(dlCtx, &msg)
 	if err != nil {
 		writeInternalErr(w, err)
 		return

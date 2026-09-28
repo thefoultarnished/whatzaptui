@@ -635,7 +635,9 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 	jid = jid.ToNonAD()
 	log.Printf("handleBlock: canonical=%s parsed=%s server=%s", req.ChatID, jid.String(), jid.Server)
 	var altJID types.JID
-	_, err = a.client.UpdateBlocklist(context.Background(), jid, events.BlocklistChangeActionBlock)
+	blockCtx, blockCancel := waCallCtx()
+	defer blockCancel()
+	_, err = a.client.UpdateBlocklist(blockCtx, jid, events.BlocklistChangeActionBlock)
 	if err != nil {
 		if jid.Server == types.DefaultUserServer && a.client.Store != nil && a.client.Store.LIDs != nil {
 			if l, errAlt := a.client.Store.LIDs.GetLIDForPN(context.Background(), jid); errAlt == nil && l.User != "" {
@@ -647,7 +649,9 @@ func (a *App) handleBlock(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if altJID.User != "" {
-			_, err = a.client.UpdateBlocklist(context.Background(), altJID, events.BlocklistChangeActionBlock)
+			retryCtx, retryCancel := waCallCtx()
+			_, err = a.client.UpdateBlocklist(retryCtx, altJID, events.BlocklistChangeActionBlock)
+			retryCancel()
 		}
 	}
 	if err != nil {

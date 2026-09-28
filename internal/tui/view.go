@@ -1203,7 +1203,7 @@ func (x m) renderComposerTopBorder(borderW int, rightFocused, inputLocked bool) 
 	dotStyle := lipgloss.NewStyle().Foreground(borderCol)
 
 	shortcuts, modeType := x.composerBorderShortcuts(inputLocked)
-	prefix := "── "
+	prefix := "─────── "
 	curW := runeDisplayWidth(prefix)
 	var sb strings.Builder
 	sb.WriteString(ruleStyle.Render(prefix))

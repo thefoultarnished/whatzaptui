@@ -71,9 +71,27 @@ type PersistedState struct {
 	Contacts map[string]Contact `json:"contacts"`
 }
 
+// wsSendQueueSize bounds each client's outbound event queue. broadcast()
+// enqueues into this instead of spawning a goroutine per client per event
+// (the old behavior, which had no cap on concurrent goroutines when many
+// clients were connected or events arrived in a burst). A single writer
+// goroutine per client (started in handleWS) drains the queue in order.
+const wsSendQueueSize = 64
+
 type wsClient struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
+	conn     *websocket.Conn
+	writeMu  sync.Mutex
+	sendCh   chan []byte
+	done     chan struct{}
+	stopOnce sync.Once
+}
+
+func newWSClient(conn *websocket.Conn) *wsClient {
+	return &wsClient{
+		conn:   conn,
+		sendCh: make(chan []byte, wsSendQueueSize),
+		done:   make(chan struct{}),
+	}
 }
 
 func (c *wsClient) write(data []byte) error {
@@ -97,6 +115,53 @@ func (c *wsClient) ping() error {
 	defer c.writeMu.Unlock()
 	_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	return c.conn.WriteMessage(websocket.PingMessage, nil)
+}
+
+// enqueue queues data for delivery by this client's writer goroutine. It
+// never blocks the caller: if the client's outbound queue is full (a slow
+// or stuck peer) or the client has already been torn down, the event is
+// dropped for that one client instead of blocking broadcast or spawning a
+// goroutine. Returns false when the event was dropped.
+func (c *wsClient) enqueue(data []byte) bool {
+	// Checked as its own select first: if both this and the send below were
+	// combined in one select, a closed done alongside room in sendCh would
+	// make Go's random case selection sometimes queue the message anyway.
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	select {
+	case c.sendCh <- data:
+		return true
+	default:
+		return false
+	}
+}
+
+// runWriter drains sendCh and writes each queued message in order, on one
+// dedicated goroutine per client for the client's whole lifetime (started
+// once in handleWS) rather than one goroutine per event. onWriteErr is
+// called exactly once if a write fails, so the caller can tear the client
+// down; runWriter then stops.
+func (c *wsClient) runWriter(onWriteErr func()) {
+	for {
+		select {
+		case data := <-c.sendCh:
+			if err := c.write(data); err != nil {
+				onWriteErr()
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
+}
+
+// stop signals runWriter (and anything else selecting on done) to exit.
+// Safe to call more than once or concurrently.
+func (c *wsClient) stop() {
+	c.stopOnce.Do(func() { close(c.done) })
 }
 
 type App struct {

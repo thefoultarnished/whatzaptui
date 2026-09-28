@@ -413,10 +413,15 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	client := &wsClient{conn: conn}
+	client := newWSClient(conn)
 	a.wsMu.Lock()
 	a.wsClients[conn] = client
 	a.wsMu.Unlock()
+	// One writer goroutine for this client's whole lifetime, draining its
+	// queue in order. broadcast() enqueues into it instead of spawning a
+	// goroutine per event (see wsClient.enqueue).
+	go client.runWriter(func() { a.removeWSClient(conn) })
+
 	a.mu.RLock()
 	connected := a.connected
 	lastQR := a.lastQR
@@ -425,19 +430,13 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 	if connected {
 		if data, err := json.Marshal(EventEnvelope{Type: "ready"}); err == nil {
 			if err := client.write(data); err != nil {
-				a.wsMu.Lock()
-				delete(a.wsClients, conn)
-				a.wsMu.Unlock()
-				_ = conn.Close()
+				a.removeWSClient(conn)
 				return
 			}
 		}
 		if data, err := json.Marshal(EventEnvelope{Type: "chats:loaded"}); err == nil {
 			if err := client.write(data); err != nil {
-				a.wsMu.Lock()
-				delete(a.wsClients, conn)
-				a.wsMu.Unlock()
-				_ = conn.Close()
+				a.removeWSClient(conn)
 				return
 			}
 		}
@@ -455,10 +454,7 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		if data, err := json.Marshal(snapshot); err == nil {
 			if err := client.write(data); err != nil {
-				a.wsMu.Lock()
-				delete(a.wsClients, conn)
-				a.wsMu.Unlock()
-				_ = conn.Close()
+				a.removeWSClient(conn)
 				return
 			}
 		}
@@ -474,7 +470,6 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
 	})
-	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(wsPingPeriod)
 		defer ticker.Stop()
@@ -484,26 +479,40 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 				if err := client.ping(); err != nil {
 					return
 				}
-			case <-done:
+			case <-client.done:
 				return
 			}
 		}
 	}()
 
 	go func() {
-		defer close(done)
-		defer func() {
-			a.wsMu.Lock()
-			delete(a.wsClients, conn)
-			a.wsMu.Unlock()
-			_ = conn.Close()
-		}()
+		defer a.removeWSClient(conn)
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
 		}
 	}()
+}
+
+// removeWSClient deletes conn's entry from wsClients (if still present),
+// stops its writer goroutine, and closes the connection. Safe to call more
+// than once for the same conn (from the read loop, the ping loop's failure
+// path, and a failed write all racing to tear the same client down) — only
+// the caller that actually removes the map entry closes the connection, so
+// the connection is never closed twice.
+func (a *App) removeWSClient(conn *websocket.Conn) {
+	a.wsMu.Lock()
+	client, ok := a.wsClients[conn]
+	if ok {
+		delete(a.wsClients, conn)
+	}
+	a.wsMu.Unlock()
+	if !ok {
+		return
+	}
+	client.stop()
+	_ = conn.Close()
 }
 
 // broadcastLogTypes are the load-path WS events recorded in the action log
@@ -536,19 +545,7 @@ func (a *App) broadcast(evt EventEnvelope) {
 		})
 	}
 	for _, client := range clients {
-		go func() {
-			if err := client.write(data); err != nil {
-				a.wsMu.Lock()
-				_, stillPresent := a.wsClients[client.conn]
-				if stillPresent {
-					delete(a.wsClients, client.conn)
-				}
-				a.wsMu.Unlock()
-				if stillPresent {
-					_ = client.conn.Close()
-				}
-			}
-		}()
+		client.enqueue(data)
 	}
 }
 
