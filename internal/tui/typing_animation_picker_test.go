@@ -121,7 +121,7 @@ func TestAssembleChatLinesTypingSquares(t *testing.T) {
 		chats:       []chat{{ID: "user@s.whatsapp.net", Name: "Alice"}},
 		typingChats: map[string]time.Time{"user@s.whatsapp.net": time.Now()},
 	}
-	out := model.assembleChatLines(80, 20, [][]string{}, []int64{}, []int{})
+	out := model.assembleChatLines(80, 20, [][]string{}, []int64{}, []string{})
 	plain := ansiStripRe.ReplaceAllString(out, "")
 	if !strings.Contains(plain, "Alice is typing...") {
 		t.Fatalf("assembleChatLines missing 'Alice is typing...':\n%s", plain)

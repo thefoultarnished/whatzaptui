@@ -447,16 +447,10 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, tea.Batch(setTerminalTitleCmd("WhatZap"), x.setTopBar(v.msg), tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg { return tea.QuitMsg{} }))
 	case tea.MouseMsg:
 		if v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft && x.mode == "chat" && x.active != "" {
-			sidePad := max(2, x.w/20)
-			contentW := x.w - sidePad*2
-			leftW := min(28, max(24, contentW/3))
-			msgPaneX := sidePad + 1 + leftW + 1
-			msgPaneTopY := 3
-			msgPaneH := x.h - 6
-			if v.X >= msgPaneX && v.Y >= msgPaneTopY && v.Y < msgPaneTopY+msgPaneH {
-				lineIdx := v.Y - msgPaneTopY
-				rightW := contentW - leftW
-				if id := x.msgIDAtLine(lineIdx, rightW, msgPaneH); id != "" {
+			g := x.chatPaneGeometry()
+			if v.X > g.paneX && v.Y >= g.paneY && v.Y < g.paneY+g.mainH {
+				lineIdx := v.Y - g.paneY
+				if id := x.msgIDAtLine(lineIdx, g.rightW, g.mainH); id != "" {
 					isDouble := v.Y == x.lastClickY && time.Since(x.lastClickTime) < 350*time.Millisecond
 					x.lastClickY = v.Y
 					x.lastClickTime = time.Now()
