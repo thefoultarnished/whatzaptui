@@ -310,6 +310,8 @@ func (x m) pendingAttachmentLabel() string {
 		return "[image attached] " + x.pendingAttachmentName
 	case "video":
 		return "[video attached] " + x.pendingAttachmentName
+	case "audio":
+		return "[audio attached] " + x.pendingAttachmentName
 	case "document":
 		return "[file attached] " + x.pendingAttachmentName
 	default:

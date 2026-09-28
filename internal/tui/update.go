@@ -95,7 +95,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x.status = "Reconnecting…"
 			return x, tea.Tick(delay, func(time.Time) tea.Msg { return reconnectMsg{} })
 		}
-		// Successful (re)connect — reset backoff and clear disconnect state.
+		// Successful (re)connect - reset backoff and clear disconnect state.
 		x.wsDisconnected = false
 		x.wsReconnectDelay = 0
 		if x.ws != nil {
@@ -340,7 +340,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// We don't know if there are more older pages without another query;
 		// allow lazy-load to discover by clearing noMoreOlder.
 		delete(x.noMoreOlder, v.chatID)
-		// Set scroll so anchor is roughly centred — messages after anchor are
+		// Set scroll so anchor is roughly centred - messages after anchor are
 		// newer (lower index from bottom), each ~2 rows on average.
 		newerCount := len(v.msgs) - v.anchorIndex - 1
 		if newerCount < 0 {
@@ -382,7 +382,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if v.err != nil {
 			// WhatsApp's own copy may have arrived (and confirmed the
-			// placeholder) even though the send response failed — the
+			// placeholder) even though the send response failed - the
 			// message really went out, so keep it and don't hand the text
 			// back for a duplicate resend.
 			if x.pendingPlaceholderIndex(v.chatID, v.pendingID) < 0 && x.messageIndex(v.chatID, v.pendingID) >= 0 {
@@ -526,7 +526,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Nominal length reached, but whole-second durations run
 			// slightly short of the real audio: pin the bar at full and
 			// wait for the player process to exit instead of clearing
-			// early. No further ticks needed — the display is static.
+			// early. No further ticks needed - the display is static.
 			x.audioElapsed = x.audioDuration
 			x.invalidate()
 			return x, nil

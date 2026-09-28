@@ -32,7 +32,7 @@ func TestWipeCacheDirExceptLogsPreservesLogsDir(t *testing.T) {
 }
 
 // A missing cache dir (never initialized, or already gone) is a no-op, not
-// an error — matches the old os.RemoveAll behavior callers relied on.
+// an error - matches the old os.RemoveAll behavior callers relied on.
 func TestWipeCacheDirExceptLogsMissingDirIsNoop(t *testing.T) {
 	if err := wipeCacheDirExceptLogs(filepath.Join(t.TempDir(), "does-not-exist")); err != nil {
 		t.Fatalf("missing dir should be a no-op, got: %v", err)
@@ -43,7 +43,7 @@ func TestWipeCacheDirExceptLogsMissingDirIsNoop(t *testing.T) {
 // (no FILE_SHARE_DELETE), and the actionLog keeps its file open for the
 // life of the backend process. A whole-directory RemoveAll that includes
 // logs/ therefore fails the instant a real session has generated any log
-// output — which is every session, since session.start is written
+// output - which is every session, since session.start is written
 // immediately at boot. wipeCacheDirExceptLogs must succeed regardless of
 // what's held open under logs/.
 func TestWipeCacheDirExceptLogsSurvivesOpenLogFile(t *testing.T) {

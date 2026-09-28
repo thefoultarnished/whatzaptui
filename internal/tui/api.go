@@ -262,6 +262,14 @@ func openWS(ctx context.Context, url, apiToken string) tea.Cmd {
 			for {
 				_, b, err := conn.ReadMessage()
 				if err != nil {
+					// Pass the backend's close reason on so the disconnect
+					// notice can say why, not just "disconnected".
+					if e, ok := wsCloseEnv(err); ok {
+						select {
+						case ch <- e:
+						default:
+						}
+					}
 					return
 				}
 				var e env
@@ -277,6 +285,20 @@ func openWS(ctx context.Context, url, apiToken string) tea.Cmd {
 		return wsOpenMsg{conn: conn, ch: ch}
 	}
 }
+// wsCloseEvent is a TUI-local event carrying the backend's close reason. It
+// is sent just before the event channel closes.
+const wsCloseEvent = "ws:closed"
+
+// wsCloseEnv turns a close-frame error with a reason into a wsCloseEvent.
+func wsCloseEnv(err error) (env, bool) {
+	var ce *websocket.CloseError
+	if !errors.As(err, &ce) || strings.TrimSpace(ce.Text) == "" {
+		return env{}, false
+	}
+	payload, _ := json.Marshal(strings.TrimSpace(ce.Text))
+	return env{Type: wsCloseEvent, Payload: payload}, true
+}
+
 func readWS(ch <-chan env) tea.Cmd {
 	return func() tea.Msg { e, ok := <-ch; return wsEvtMsg{evt: e, ok: ok} }
 }
@@ -659,7 +681,7 @@ func sendFile(ctx context.Context, c *http.Client, base, chatID, kind, path, cap
 			}
 		}()
 
-		// Per-call client with no timeout — 150MB uploads over slow links can
+		// Per-call client with no timeout - 150MB uploads over slow links can
 		// easily exceed the shared 12s default.
 		uploadClient := &http.Client{Timeout: 0}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/messages/send-file", pr)

@@ -92,7 +92,7 @@ func (x m) selectedChatID() string {
 
 // resortChats re-sorts x.chats by ConversationTimestamp (most recent first)
 // and, if selectedID is non-empty, moves x.sel so it keeps pointing at that
-// chat — otherwise the sidebar highlight (and anything that targets it, like
+// chat - otherwise the sidebar highlight (and anything that targets it, like
 // Alt+B/Alt+W) would silently jump to whatever chat ends up at the old index
 // when an incoming message reorders the list.
 func (x *m) resortChats(selectedID string) {

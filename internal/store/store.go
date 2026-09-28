@@ -71,7 +71,7 @@ func (s *Store) DB() *sql.DB {
 // background goroutine, unsynchronized with Close, so a Close racing ahead
 // of it (e.g. an immediate shutdown, or /logout moments after a fresh
 // login) used to nil s.db out from under that goroutine's next s.db.Query
-// call — a nil *sql.DB dereference panics, whereas a closed-but-non-nil
+// call - a nil *sql.DB dereference panics, whereas a closed-but-non-nil
 // one just returns a "sql: database is closed" error that BackfillFTS
 // already handles via its normal err-return path. sql.DB.Close is
 // documented idempotent, so a second Close() (e.g. this store's App-level

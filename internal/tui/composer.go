@@ -154,6 +154,8 @@ func optimisticOutgoingMediaMessage(chatID, kind, fileName, caption, pendingID s
 		message["imageMessage"] = payload
 	case "video":
 		message["videoMessage"] = payload
+	case "audio":
+		message["audioMessage"] = payload
 	default:
 		message["documentMessage"] = payload
 	}

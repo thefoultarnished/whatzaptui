@@ -15,7 +15,7 @@ import (
 // goroutine's next s.db.Query call, which panics on a nil *sql.DB. A
 // closed-but-non-nil db instead makes that call return a normal
 // "sql: database is closed" error, which BackfillFTS already returns
-// through its ordinary err path — no panic either way.
+// through its ordinary err path - no panic either way.
 func TestCloseThenBackfillFTSReturnsErrorNotPanic(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Close(); err != nil {

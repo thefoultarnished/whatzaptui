@@ -9,7 +9,7 @@ import (
 
 // Tests for the action log file writer and its redactors. These tests
 // are about the log structure and redaction guarantees, not about the
-// wider app — they never touch the DB or the whatsmeow client.
+// wider app - they never touch the DB or the whatsmeow client.
 
 func TestActionLogRedactsBearerToken(t *testing.T) {
 	dir := t.TempDir()

@@ -20,6 +20,8 @@ func MediaTypeForSendKind(kind string) (whatsmeow.MediaType, error) {
 		return whatsmeow.MediaVideo, nil
 	case "document":
 		return whatsmeow.MediaDocument, nil
+	case "audio":
+		return whatsmeow.MediaAudio, nil
 	default:
 		return "", fmt.Errorf("unsupported media kind: %s", kind)
 	}
@@ -49,6 +51,11 @@ func ValidateSendFileInput(filename string, data []byte, kind string) error {
 			return nil
 		}
 		return fmt.Errorf("kind=video but file does not appear to be a video")
+	case "audio":
+		if audioMIMEType(filename, data) != "" {
+			return nil
+		}
+		return fmt.Errorf("kind=audio but file does not appear to be audio")
 	default:
 		return fmt.Errorf("unsupported media kind: %s", kind)
 	}
@@ -76,6 +83,34 @@ var isoBMFFTypes = map[string]string{
 	".mov":  "video/quicktime",
 	".3gp":  "video/3gpp",
 	".3g2":  "video/3gpp2",
+}
+
+// audioMIMEType returns the MIME type for an audio upload, judged by
+// content, or "" when the content isn't a format WhatsApp plays (MP3, AAC,
+// M4A, Ogg/Opus). Go's sniffer only knows some of these, so MPEG/ADTS frame
+// headers and M4A containers are checked by hand, with the extension used
+// only to tell look-alike formats apart.
+func audioMIMEType(filename string, data []byte) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch http.DetectContentType(data) {
+	case "audio/mpeg":
+		return "audio/mpeg"
+	case "application/ogg":
+		return "audio/ogg; codecs=opus"
+	}
+	if isISOBMFF(data) && (ext == ".m4a" || ext == ".aac" || ext == ".mp4") {
+		return "audio/mp4"
+	}
+	// MPEG audio / ADTS AAC frame sync: 11 set bits.
+	if len(data) >= 2 && data[0] == 0xFF && data[1]&0xE0 == 0xE0 {
+		switch ext {
+		case ".mp3":
+			return "audio/mpeg"
+		case ".aac":
+			return "audio/aac"
+		}
+	}
+	return ""
 }
 
 // mediaMIMEType returns the MIME type for an image ("image/") or video
@@ -119,6 +154,10 @@ func BuildOutgoingMediaMessage(kind, filename, caption string, upload whatsmeow.
 		if t := mediaMIMEType("video/", filename, data); t != "" {
 			mimeType = t
 		}
+	case "audio":
+		if t := audioMIMEType(filename, data); t != "" {
+			mimeType = t
+		}
 	}
 	fileName := filepath.Base(filename)
 	switch kind {
@@ -144,6 +183,14 @@ func BuildOutgoingMediaMessage(kind, filename, caption string, upload whatsmeow.
 			FileLength: proto.Uint64(upload.FileLength),
 		}}
 		return msg, map[string]any{"documentMessage": map[string]any{"caption": caption, "fileName": fileName, "mimetype": mimeType}}, nil
+	case "audio":
+		// WhatsApp audio messages have no caption field; any caption is dropped.
+		msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+			Mimetype: proto.String(mimeType), URL: proto.String(upload.URL), DirectPath: proto.String(upload.DirectPath),
+			MediaKey: upload.MediaKey, FileEncSHA256: upload.FileEncSHA256, FileSHA256: upload.FileSHA256,
+			FileLength: proto.Uint64(upload.FileLength),
+		}}
+		return msg, map[string]any{"audioMessage": map[string]any{"fileName": fileName, "mimetype": mimeType}}, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported media kind: %s", kind)
 	}

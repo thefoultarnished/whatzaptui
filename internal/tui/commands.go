@@ -11,7 +11,7 @@ import (
 
 func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.status != "ready" {
-		return x.setTopBar("Not ready — wait for the chat to load")
+		return x.setTopBar("Not ready, wait for the chat to load")
 	}
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")

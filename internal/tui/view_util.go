@@ -64,7 +64,7 @@ func padRight(s string, n int) string {
 // received message. Pipe-like icons use half-height box-drawing chars so each
 // message forms a self-contained capsule: ╷ on the first line (open at top),
 // │ on middle lines, ╵ on the last body line (open at bottom). Single-line
-// messages use ╷ only — adjacent ╷ chars don't visually connect because each
+// messages use ╷ only - adjacent ╷ chars don't visually connect because each
 // leaves the cell's top half empty, creating a gap between messages.
 func incomingLeftIcon(lineIdx int, isLastLine bool) string {
 	switch receivedMsgIcon {

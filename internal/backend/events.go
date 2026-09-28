@@ -106,7 +106,7 @@ func (a *App) bindEvents() {
 			}
 			// Sync plumbing (history sync notifications, key shares, ...) is
 			// not chat content: drop it before it reaches storage or the UI.
-			// Check both the raw envelope and the unwrapped effective message —
+			// Check both the raw envelope and the unwrapped effective message -
 			// some protocol messages arrive nested inside DeviceSentMessage.
 			if isInvisibleProtocolMessage(v.Message) || isInvisibleProtocolMessage(effectiveMessage(v.Message)) {
 				a.actionLog.Event("message.protocol.dropped", map[string]string{
@@ -399,7 +399,7 @@ func (a *App) syncPushnamesAndConversations(data *waHistorySync.HistorySync) boo
 		// who has ever appeared in a synced group or chat, most of whom
 		// you have no real 1:1 conversation with (a batch of 2000
 		// pushnames is normal for one history-sync chunk). This must
-		// only touch Contacts — writing a Chats entry here used to turn
+		// only touch Contacts - writing a Chats entry here used to turn
 		// every one of those names into a phantom zero-message "chat"
 		// (reported: 943 of 1000 chats had conv_ts=0). A real chat's
 		// name is already filled in from Contacts at serve time

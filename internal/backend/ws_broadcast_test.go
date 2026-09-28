@@ -60,7 +60,7 @@ func TestWSClientEnqueuePreservesOrder(t *testing.T) {
 }
 
 // Edge: once the queue is full, further enqueues are dropped (return
-// false) instead of blocking the caller — this is the core of the fix,
+// false) instead of blocking the caller - this is the core of the fix,
 // since the old code spawned an unbounded goroutine per event instead of
 // ever exerting backpressure.
 func TestWSClientEnqueueDropsWhenQueueFull(t *testing.T) {
@@ -204,7 +204,7 @@ func TestBroadcastSlowClientDoesNotBlockOthers(t *testing.T) {
 	defer active.Close()
 
 	// Drain "active" concurrently with the broadcast loop below, the same
-	// way a real, healthy TUI client would — otherwise "active" would fill
+	// way a real, healthy TUI client would - otherwise "active" would fill
 	// its own bounded queue just as "slow" does and this test would prove
 	// nothing about the slow client's effect on it.
 	const events = 200
@@ -294,4 +294,115 @@ func TestBroadcastAfterClientGoneDoesNotPanic(t *testing.T) {
 	}()
 	app.broadcast(EventEnvelope{Type: "test"})
 	app.broadcast(EventEnvelope{Type: "test"})
+}
+
+// Regression: on shutdown every WS client gets a "going away" close frame
+// (not just a dropped socket) and is removed from wsClients.
+func TestCloseAllWSClientsSendsCloseFrame(t *testing.T) {
+	app := newTestApp(t)
+	app.connected = true
+	srv := httptest.NewServer(app.handler())
+	defer srv.Close()
+
+	connA := dialTestWS(t, app, srv)
+	defer connA.Close()
+	connB := dialTestWS(t, app, srv)
+	defer connB.Close()
+
+	app.closeAllWSClients()
+
+	for name, c := range map[string]*websocket.Conn{"A": connA, "B": connB} {
+		_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var err error
+		for err == nil {
+			_, _, err = c.ReadMessage() // skip the initial "ready" event
+		}
+		if !websocket.IsCloseError(err, websocket.CloseGoingAway) {
+			t.Fatalf("client %s: want going-away close, got %v", name, err)
+		}
+		if ce, ok := err.(*websocket.CloseError); !ok || ce.Text != wsShutdownReason {
+			t.Fatalf("client %s: close reason = %v, want %q", name, err, wsShutdownReason)
+		}
+	}
+	app.wsMu.Lock()
+	left := len(app.wsClients)
+	app.wsMu.Unlock()
+	if left != 0 {
+		t.Fatalf("wsClients has %d entries after close, want 0", left)
+	}
+
+	// Safe to call again with nothing connected.
+	app.closeAllWSClients()
+}
+
+// Regression: connections above maxWSClients are refused with a
+// "try again later" close, and a slot frees up once a client leaves.
+func TestHandleWSCapsConnections(t *testing.T) {
+	saved := maxWSClients
+	maxWSClients = 2
+	t.Cleanup(func() { maxWSClients = saved })
+
+	app := newTestApp(t)
+	app.connected = true
+	srv := httptest.NewServer(app.handler())
+	defer srv.Close()
+
+	connA := dialTestWS(t, app, srv)
+	defer connA.Close()
+	connB := dialTestWS(t, app, srv)
+	defer connB.Close()
+
+	// Dial the third directly: dialTestWS waits for the welcome messages,
+	// which a refused connection never sends.
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	connC, _, err := websocket.DefaultDialer.Dial(wsURL, map[string][]string{
+		authHeaderName: {"Bearer " + app.apiToken},
+		"Origin":       {allowedBackendOrigin},
+	})
+	if err != nil {
+		t.Fatalf("dial third: %v", err)
+	}
+	defer connC.Close()
+	_ = connC.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for err == nil {
+		_, _, err = connC.ReadMessage()
+	}
+	if !websocket.IsCloseError(err, websocket.CloseTryAgainLater) {
+		t.Fatalf("third connection: want try-again-later close, got %v", err)
+	}
+	if ce, ok := err.(*websocket.CloseError); !ok || ce.Text != wsTooManyReason {
+		t.Fatalf("third connection: close reason = %v, want %q", err, wsTooManyReason)
+	}
+	if len(wsTooManyReason) > 123 {
+		t.Fatalf("close reason is %d bytes; WebSocket allows at most 123", len(wsTooManyReason))
+	}
+	app.wsMu.Lock()
+	n := len(app.wsClients)
+	app.wsMu.Unlock()
+	if n != 2 {
+		t.Fatalf("wsClients = %d, want 2", n)
+	}
+
+	// Free a slot: a new connection is accepted again.
+	_ = connA.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		app.wsMu.Lock()
+		n = len(app.wsClients)
+		app.wsMu.Unlock()
+		if n < 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n >= 2 {
+		t.Fatal("closed client was never removed")
+	}
+	connD := dialTestWS(t, app, srv)
+	defer connD.Close()
+	app.broadcast(EventEnvelope{Type: "test", Payload: "hi"})
+	_ = connD.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := connD.ReadMessage(); err != nil {
+		t.Fatalf("connection after freeing a slot should work: %v", err)
+	}
 }

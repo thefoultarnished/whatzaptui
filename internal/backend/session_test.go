@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// processAlive(os.Getpid()) must be true — this test process is, by
+// processAlive(os.Getpid()) must be true - this test process is, by
 // definition, alive. Covers the cross-platform liveness check used by
 // A-1's token-rotation logic.
 func TestProcessAliveCurrentProcess(t *testing.T) {
@@ -109,7 +109,7 @@ func TestRotateTokenIfSessionDeadNoopWhileAlive(t *testing.T) {
 
 // When the registered TUI process is gone and the grace period has
 // elapsed, rotateTokenIfSessionDead generates a fresh token, writes it to
-// disk, and updates a.apiToken — so a leaked copy of the old token stops
+// disk, and updates a.apiToken - so a leaked copy of the old token stops
 // working (A-1).
 func TestRotateTokenIfSessionDeadRotates(t *testing.T) {
 	app := newTestApp(t)

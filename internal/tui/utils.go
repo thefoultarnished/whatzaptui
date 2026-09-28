@@ -174,7 +174,7 @@ func hasVisibleText(s string) bool {
 }
 
 // sanitizeIncomingText strips Unicode Cc-category control characters
-// (ESC, BEL, DEL, C0/C1 controls — the bytes needed to start ANSI/OSC/CSI
+// (ESC, BEL, DEL, C0/C1 controls - the bytes needed to start ANSI/OSC/CSI
 // terminal escape sequences) from wire-derived text, while preserving all
 // printable Unicode (emoji, ZWJ joiners, variation selectors, combining
 // marks, RTL text). Newlines are preserved; \r\n and lone \r are normalized
@@ -358,7 +358,7 @@ func isEmojiRune(r rune) bool {
 }
 
 // isEmojiBase reports whether r can be the base of an emoji modifier
-// sequence — either a standard emoji codepoint or a dingbat/symbol
+// sequence - either a standard emoji codepoint or a dingbat/symbol
 // (0x2600-0x27BF) that only turns into a wide emoji glyph when followed
 // by a skin-tone modifier or variation selector-16.
 func isEmojiBase(r rune) bool {
@@ -920,7 +920,7 @@ func renderUnknownTag(label string) string {
 
 // mediaIconLabel returns the tag text for a given media kind. With
 // MediaIconStyle == "nerd" it returns a Nerd Font glyph followed by the
-// kind name (e.g. "<image-glyph> image") — the icon is too small to read on
+// kind name (e.g. "<image-glyph> image") - the icon is too small to read on
 // its own at terminal cell sizes, so the kind name carries the meaning and
 // the glyph is a visual marker. In the default text mode it returns the
 // plain bracketed text (e.g. "[image]").
@@ -1343,8 +1343,11 @@ func detectMediaSendKind(path string) (string, error) {
 		return "image", nil
 	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp", ".m4v":
 		return "video", nil
-	case ".mp3", ".m4a", ".ogg", ".wav", ".aac", ".flac", ".opus":
+	case ".mp3", ".m4a", ".ogg", ".aac", ".opus":
 		return "audio", nil
+	case ".wav", ".flac":
+		// Phones don't reliably play these as WhatsApp audio; send as a file.
+		return "document", nil
 	}
 
 	f, err := os.Open(path)

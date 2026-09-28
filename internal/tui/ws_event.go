@@ -23,9 +23,14 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 	if !v.ok {
 		x.wsDisconnected = true
 		delay := x.nextReconnectDelay()
+		notice := fmt.Sprintf("Disconnected, reconnecting in %s…", delay.Round(time.Second))
+		if x.wsCloseReason != "" {
+			notice = fmt.Sprintf("%s, retrying in %s…", x.wsCloseReason, delay.Round(time.Second))
+			x.wsCloseReason = ""
+		}
 		if x.status == "ready" {
 			return x, tea.Batch(
-				x.setTopBar(fmt.Sprintf("Disconnected — reconnecting in %s…", delay.Round(time.Second))),
+				x.setTopBar(notice),
 				tea.Tick(delay, func(time.Time) tea.Msg { return reconnectMsg{} }),
 			)
 		}
@@ -33,6 +38,11 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 	}
 	cmds := []tea.Cmd{readWS(x.wsCh)}
 	switch v.evt.Type {
+	case wsCloseEvent:
+		var reason string
+		_ = json.Unmarshal(v.evt.Payload, &reason)
+		x.wsCloseReason = sanitizeIncomingText(reason)
+		return x, tea.Batch(cmds...)
 	case "qr":
 		var qr string
 		if err := json.Unmarshal(v.evt.Payload, &qr); err != nil {
@@ -115,7 +125,7 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 		}
 	case "disconnected":
 		if x.status == "ready" {
-			cmds = append(cmds, x.setTopBar("Disconnected — waiting for backend…"))
+			cmds = append(cmds, x.setTopBar("Disconnected, waiting for backend…"))
 		} else {
 			x.status = "Reconnecting…"
 		}

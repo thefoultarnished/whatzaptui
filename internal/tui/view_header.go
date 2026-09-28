@@ -116,7 +116,7 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 
 func renderHeaderAvatar(name, id string) string {
 	initials := headerAvatarInitials(name, id)
-	// V2: the avatar is "them" — Emphasis for 1:1, the group's own colour.
+	// V2: the avatar is "them" - Emphasis for 1:1, the group's own colour.
 	fill := brand
 	if themeV2 {
 		fill = purple

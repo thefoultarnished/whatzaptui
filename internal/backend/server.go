@@ -27,7 +27,7 @@ var maxHeaderBytes = 64 * 1024
 
 // S-4: the backend's own listen address. Used in two places: the
 // http.Server bind address (line ~174) and the CORS allowlist
-// (allowedBackendOrigin below). Keep them in lockstep — if you
+// (allowedBackendOrigin below). Keep them in lockstep - if you
 // change the bind address, the CORS allowlist changes too, so a
 // browser pointed at the new address still works.
 const backendHost = "127.0.0.1"
@@ -44,7 +44,7 @@ func backendListenPort() string {
 
 // allowedBackendOrigin is the single browser origin allowed to
 // drive the backend. Pre-fix, any loopback origin was allowed
-// (any port, any hostname resolving to 127.0.0.0/8 or ::1) — a
+// (any port, any hostname resolving to 127.0.0.0/8 or ::1) - a
 // malicious local page on localhost:3000 could do a CORS
 // preflight against the backend and learn that the API was alive.
 // Now only the backend's own URL is allowed.
@@ -53,7 +53,7 @@ var allowedBackendOrigin = "http://" + backendHost + ":" + backendPort
 // A-2: HTTP server timeouts. ReadHeaderTimeout defends against
 // slowloris (a client that opens a connection and dribbles bytes
 // forever to hold a server goroutine). ReadTimeout caps the total
-// request-read time — generous enough for 150MB uploads on
+// request-read time - generous enough for 150MB uploads on
 // localhost (which finish in <10s on LAN) but tight enough that
 // a stalled body can't pin a goroutine for minutes. WriteTimeout
 // caps a stuck response. IdleTimeout caps how long a keep-alive
@@ -80,6 +80,17 @@ var sessionGraceDuration = 60 * time.Second
 var wsPongWait = 60 * time.Second
 var wsPingPeriod = 54 * time.Second
 var wsReadLimit int64 = 64 << 10
+
+// maxWSClients caps concurrent WebSocket connections. The TUI needs one;
+// the headroom covers a quick reconnect while old sockets are still
+// closing. Extra connections get a "try again later" close. Var so tests
+// can shrink it.
+var maxWSClients = 8
+
+// Close-frame reasons, shown as-is in the TUI's top bar, so keep them short.
+const wsTooManyReason = "Too many windows open"
+
+const wsShutdownReason = "Backend shut down"
 
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
@@ -248,7 +259,7 @@ func (a *App) handleSessionRegister(w http.ResponseWriter, r *http.Request) {
 // rotateTokenIfSessionDead is called from the 30s ticker in main(). If a
 // TUI session was registered and the grace period has elapsed without it
 // being re-registered, and that PID is no longer running, a fresh token is
-// generated, written to disk (S-1), and swapped into a.apiToken — so any
+// generated, written to disk (S-1), and swapped into a.apiToken - so any
 // copy of the old token (e.g. from a leaked log or a crashed process'
 // memory) stops working.
 func (a *App) rotateTokenIfSessionDead() {
@@ -421,7 +432,16 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := newWSClient(conn)
+	// Count check and insert under one lock so concurrent upgrades can't
+	// both slip past the cap.
 	a.wsMu.Lock()
+	if len(a.wsClients) >= maxWSClients {
+		a.wsMu.Unlock()
+		msg := websocket.FormatCloseMessage(websocket.CloseTryAgainLater, wsTooManyReason)
+		_ = conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(time.Second))
+		_ = conn.Close()
+		return
+	}
 	a.wsClients[conn] = client
 	a.wsMu.Unlock()
 	// One writer goroutine for this client's whole lifetime, draining its
@@ -505,7 +525,7 @@ func (a *App) handleWS(w http.ResponseWriter, r *http.Request) {
 // removeWSClient deletes conn's entry from wsClients (if still present),
 // stops its writer goroutine, and closes the connection. Safe to call more
 // than once for the same conn (from the read loop, the ping loop's failure
-// path, and a failed write all racing to tear the same client down) — only
+// path, and a failed write all racing to tear the same client down) - only
 // the caller that actually removes the map entry closes the connection, so
 // the connection is never closed twice.
 func (a *App) removeWSClient(conn *websocket.Conn) {
@@ -520,6 +540,24 @@ func (a *App) removeWSClient(conn *websocket.Conn) {
 	}
 	client.stop()
 	_ = conn.Close()
+}
+
+// closeAllWSClients sends every connected client a close frame and removes
+// it. Called on shutdown: srv.Shutdown doesn't touch upgraded (hijacked)
+// connections, so without this clients just see the socket drop.
+func (a *App) closeAllWSClients() {
+	a.wsMu.Lock()
+	conns := make([]*websocket.Conn, 0, len(a.wsClients))
+	clients := make([]*wsClient, 0, len(a.wsClients))
+	for conn, client := range a.wsClients {
+		conns = append(conns, conn)
+		clients = append(clients, client)
+	}
+	a.wsMu.Unlock()
+	for i, client := range clients {
+		_ = client.closeGoingAway()
+		a.removeWSClient(conns[i])
+	}
 }
 
 // broadcastLogTypes are the load-path WS events recorded in the action log
@@ -803,7 +841,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// Block new DB writers by holding the write lock briefly just to set
 	// shuttingDown. This unblocks active readers quickly so they finish and
 	// exit cleanly. Don't hold the lock during slow WhatsApp logout or file
-	// teardown — that causes deadlock if any reader was in flight.
+	// teardown - that causes deadlock if any reader was in flight.
 	// shuttingDown itself is guarded by a.mu (same as every other read site);
 	// dbLifecycleMu is held alongside it purely as the synchronization
 	// barrier against concurrent dbLifecycleMu.RLock() holders.

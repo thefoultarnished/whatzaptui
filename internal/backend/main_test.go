@@ -118,7 +118,7 @@ func authorizedRequest(req *http.Request, app *App) *http.Request {
 }
 
 // S-3: with no env var, the helper returns "WARN". This is the
-// default that production users will see — guards against an
+// default that production users will see - guards against an
 // accidental revert to the pre-fix hardcoded "DEBUG".
 func TestResolveWhatsmeowLogLevelDefaultsToWarn(t *testing.T) {
 	// Ensure no env var is set for the duration of this test.
@@ -162,7 +162,7 @@ func TestResolveWhatsmeowLogLevelRespectsEnv(t *testing.T) {
 
 // S-3: the package-level default is "WARN", not the pre-fix
 
-// A-13: pure-string tests for the generic cappedEvict helper —
+// A-13: pure-string tests for the generic cappedEvict helper -
 // no handler, no DB, no goroutine needed. Each sub-test seeds a
 // map with n entries and asserts the size after calling cappedEvict.
 func TestCappedEvict(t *testing.T) {
@@ -254,7 +254,7 @@ func TestUpdateReceiptStatus(t *testing.T) {
 	}
 }
 
-// Timestamp check — now uses DB-backed reconciliation.
+// Timestamp check - now uses DB-backed reconciliation.
 func TestReconcileChatTimestamps(t *testing.T) {
 	app := newTestApp(t)
 	app.state.Chats = map[string]Chat{
@@ -419,7 +419,7 @@ func TestUpsertMessageSkipsPersistDuringHistorySync(t *testing.T) {
 		t.Fatalf("chat was persisted to DB during history sync")
 	}
 
-	// Manually flush — must now write the in-memory chat to DB.
+	// Manually flush - must now write the in-memory chat to DB.
 	app.historySyncing = false
 	if err := app.persistStateWithErr(); err != nil {
 		t.Fatalf("persistStateWithErr: %v", err)
@@ -595,7 +595,7 @@ func TestHandlerAllowsAuthorizedRequests(t *testing.T) {
 // any handler can fully process it. A 2 MB body POSTed to an authenticated
 // endpoint must not return 200 OK (would mean the body was fully parsed
 // and the giant JSON made it into the handler's logic). The actual status
-// depends on which handler — `json.NewDecoder` returns an error on the
+// depends on which handler - `json.NewDecoder` returns an error on the
 // cap and the handler responds with 400, which is the correct outcome
 // for "the request was rejected, the body did not get processed."
 func TestWithAuthRejectsOversizedBody(t *testing.T) {
@@ -610,7 +610,7 @@ func TestWithAuthRejectsOversizedBody(t *testing.T) {
 	app.handler().ServeHTTP(rec, req)
 	// The cap is enforced at read time inside the handler. JSON
 	// decode fails, handler returns 400. The crucial property is
-	// that the giant body was NOT processed — it can't have been,
+	// that the giant body was NOT processed - it can't have been,
 	// because the cap fired before the body finished streaming in.
 	if rec.Code == http.StatusOK {
 		t.Fatalf("2 MB body was accepted as 200 OK: %s", rec.Body.String())
@@ -642,7 +642,7 @@ func TestWithAuthAllowsSmallBody(t *testing.T) {
 // S-2 regression: http.MaxBytesReader wraps r.Body, so an outer cap can't
 // loosen an inner one. /messages/send-file applies its own 150 MB+ cap
 // inside the handler, so withAuth's 256 KB JSON cap must not also apply
-// to that route — otherwise every file over 256 KB would fail with
+// to that route - otherwise every file over 256 KB would fail with
 // "http: request body too large" despite the 150 MB limit.
 func TestWithAuthExemptsSendFileFromBodyCap(t *testing.T) {
 	app := newTestApp(t)
@@ -700,7 +700,7 @@ func TestWithAuthRejectsOversizedHeader(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	// 100 KB custom header — far over the 64 KB cap.
+	// 100 KB custom header - far over the 64 KB cap.
 	req, err := http.NewRequest(http.MethodGet, srv.URL+"/contacts", nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
@@ -721,7 +721,7 @@ func TestWithAuthRejectsOversizedHeader(t *testing.T) {
 }
 
 
-// Security A-2: ReadHeaderTimeout is the slowloris defense — a
+// Security A-2: ReadHeaderTimeout is the slowloris defense - a
 // client that opens a connection and dribbles bytes forever must be
 // cut off. We override the production 10s value to 100ms for the
 // test (same mechanism, faster runtime). Uses a raw TCP conn so we
@@ -748,7 +748,7 @@ func TestReadHeaderTimeoutRejectsSlowClient(t *testing.T) {
 	}
 	time.Sleep(500 * time.Millisecond)
 	// The server may have closed the conn (we want it to). Try to
-	// finish the request — write should fail or the subsequent read
+	// finish the request - write should fail or the subsequent read
 	// should return EOF / error.
 	_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	if _, err := conn.Write([]byte("\r\n")); err != nil {
@@ -761,7 +761,7 @@ func TestReadHeaderTimeoutRejectsSlowClient(t *testing.T) {
 	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	buf := make([]byte, 16)
 	if _, err := conn.Read(buf); err == nil {
-		t.Fatal("server sent a response to a stalled request — ReadHeaderTimeout did not fire")
+		t.Fatal("server sent a response to a stalled request: ReadHeaderTimeout did not fire")
 	}
 }
 
@@ -799,7 +799,7 @@ func TestCORSAllowsBackendOwnOrigin(t *testing.T) {
 }
 
 // Security S-4: every other loopback origin must be rejected. This
-// is the S-4 fix's main assertion — the core threat is a malicious
+// is the S-4 fix's main assertion - the core threat is a malicious
 // local page on, say, localhost:3000 doing a CORS preflight against
 // the backend. Pre-fix, the preflight would have succeeded; now it
 // gets 403.
@@ -885,7 +885,7 @@ func TestWebSocketRequiresAuthAndAllowedOrigin(t *testing.T) {
 	t.Run("other loopback origin is rejected (S-4)", func(t *testing.T) {
 		header := http.Header{}
 		header.Set(authHeaderName, "Bearer "+app.apiToken)
-		// A different port on the same host — pre-fix this would have
+		// A different port on the same host - pre-fix this would have
 		// been allowed because it was loopback. Now rejected.
 		header.Set("Origin", "http://127.0.0.1:3000")
 		_, _, err := websocket.DefaultDialer.Dial(wsURL, header)
@@ -919,7 +919,7 @@ func TestHandleLogoutFailsWhenCacheDirCannotBeRecreated(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
 	// S-7: the response must not leak the underlying "state cleanup failed: ..."
-	// error text — only an opaque ref ID.
+	// error text - only an opaque ref ID.
 	if strings.Contains(rec.Body.String(), "state cleanup failed") {
 		t.Fatalf("response leaked internal error text: %s", rec.Body.String())
 	}
@@ -1073,7 +1073,7 @@ func TestCopyDirContentsSkipsSymlink(t *testing.T) {
 		t.Errorf("symlink target was copied as a file: err=%v", err)
 	}
 	// The good file MUST be copied (regression guard for the
-	// positive case — we don't want the symlink check to break
+	// positive case - we don't want the symlink check to break
 	// normal migration).
 	copied, err := os.ReadFile(filepath.Join(dst, "good.txt"))
 	if err != nil {
@@ -1084,7 +1084,7 @@ func TestCopyDirContentsSkipsSymlink(t *testing.T) {
 	}
 }
 
-// Security S-8 regression guard: the positive case — regular files
+// Security S-8 regression guard: the positive case - regular files
 // and subdirs (with their own regular files) must still be copied.
 // Without this, an overzealous symlink check could break normal
 // migration of the legacy cache.
@@ -1502,7 +1502,7 @@ func TestWhitelistHandlersRejectDuringShutdown(t *testing.T) {
 	}
 }
 
-// A-25: pure-string tests for normalizeWhitelistPhone — no handler
+// A-25: pure-string tests for normalizeWhitelistPhone - no handler
 // or DB needed. Each case asserts the expected normalized output
 // (for valid inputs) or error message substring (for invalid).
 func TestNormalizeWhitelistPhone(t *testing.T) {
@@ -1596,7 +1596,7 @@ func TestHandleSetWhitelistRejectsInvalidPhone(t *testing.T) {
 	}
 }
 
-// A-9: /whitelist/set must reject group JIDs (@g.us) — the whitelist is a
+// A-9: /whitelist/set must reject group JIDs (@g.us) - the whitelist is a
 // phone-number allowlist, not a group allowlist.
 func TestHandleSetWhitelistRejectsGroupJID(t *testing.T) {
 	app := newTestApp(t)
@@ -1922,7 +1922,7 @@ func TestHandleSendFileRejectsMissingFile(t *testing.T) {
 	// A client is required for handleSendFile to reach the multipart parse,
 	// so set a non-nil placeholder. requireConnectedClient is gated on
 	// a.client being set AND the connection being live; the test app has no
-	// real client, so we expect 409 "not connected" — this still proves
+	// real client, so we expect 409 "not connected" - this still proves
 	// the route is reachable and the body is consumed. To test the missing
 	// file case directly we mock the client path by sending a request
 	// without a client and assert 409, then move on.
@@ -2004,7 +2004,7 @@ func TestHandleSendFileRejectsNonWhitelistedChat(t *testing.T) {
 // These tests call app.handleSendFile directly so they can exercise the
 // multipart logic without needing a real whatsmeow client connection. They
 // run against an app with no client and assert the handler returns
-// http.StatusConflict before reaching the upload — which is the correct
+// http.StatusConflict before reaching the upload - which is the correct
 // behavior in production when the WhatsApp client is disconnected.
 
 func TestHandleSendFileRejectsMissingFilePart(t *testing.T) {
@@ -2388,7 +2388,7 @@ func TestDeleteMessageFromDBRemovesMatchingFTSRow(t *testing.T) {
 
 // Security A-16: the handler must reject a request body that's
 // missing the fromMe field. A missing field is the dangerous case
-// — it would silently default to false (delete the incoming row,
+// - it would silently default to false (delete the incoming row,
 // which doesn't exist for the user's own messages → no-op → the
 // user's outgoing message stays). 400 on missing makes the
 // contract loud and forces the TUI to be rebuilt in lockstep.
@@ -3210,7 +3210,7 @@ func TestIsChatAllowed(t *testing.T) {
 	}
 }
 
-// #9: INSERT OR IGNORE + UPDATE — mutable fields update but receipt is not downgraded.
+// #9: INSERT OR IGNORE + UPDATE - mutable fields update but receipt is not downgraded.
 func TestInsertMessageUpdatesMutableFieldsButPreservesReceipt(t *testing.T) {
 	app := newTestApp(t)
 	chatID := "15551230001@s.whatsapp.net"
@@ -3381,7 +3381,7 @@ func TestHandleReactNotConnected(t *testing.T) {
 // A-10: /messages/react must be gated by the whitelist, same as
 // /messages/send. With no real client connected, requireConnectedClient
 // fires first (409); both 409 and 403 are correct rejections for a
-// non-whitelisted chat — anything else is a regression.
+// non-whitelisted chat - anything else is a regression.
 func TestHandleReactRejectsNonWhitelistedChat(t *testing.T) {
 	app := newTestApp(t)
 	req := authorizedRequest(httptest.NewRequest(http.MethodPost, "/messages/react", bytes.NewBufferString(`{"chatId":"15551239999@s.whatsapp.net","messageId":"m1","reaction":"🔥"}`)), app)
@@ -3394,7 +3394,7 @@ func TestHandleReactRejectsNonWhitelistedChat(t *testing.T) {
 
 // A-11: /typing must be gated by the whitelist, same as /messages/send.
 // With no real client connected, requireConnectedClient fires first (409);
-// both 409 and 403 are correct rejections for a non-whitelisted chat —
+// both 409 and 403 are correct rejections for a non-whitelisted chat -
 // anything else is a regression.
 func TestHandleTypingRejectsNonWhitelistedChat(t *testing.T) {
 	app := newTestApp(t)
@@ -3466,7 +3466,7 @@ func TestUpsertMessageConcurrentSameIDOnlyIncrementsUnreadOnce(t *testing.T) {
 	}
 }
 
-// #1: isNew must come from INSERT RowsAffected, not a separate SELECT —
+// #1: isNew must come from INSERT RowsAffected, not a separate SELECT -
 // re-upserting an existing message must not increment UnreadCount.
 func TestUpsertMessageReupsertDoesNotIncrementUnread(t *testing.T) {
 	app := newTestApp(t)
@@ -3485,7 +3485,7 @@ func TestUpsertMessageReupsertDoesNotIncrementUnread(t *testing.T) {
 	}
 }
 
-// #8: backfillFTS must populate FTS synchronously — no async gap.
+// #8: backfillFTS must populate FTS synchronously - no async gap.
 func TestBackfillFTSPopulatesSynchronously(t *testing.T) {
 	app := newTestApp(t)
 	chatID := "15551230001@s.whatsapp.net"
@@ -3506,7 +3506,7 @@ func TestBackfillFTSPopulatesSynchronously(t *testing.T) {
 
 	app.backfillFTS()
 
-	// FTS must be populated immediately — no sleep, no goroutine wait.
+	// FTS must be populated immediately - no sleep, no goroutine wait.
 	if hits := searchHits(t, app, "apple", ""); len(hits) != 1 {
 		t.Fatalf("after backfill: apple hits = %d, want 1", len(hits))
 	}
@@ -3527,7 +3527,7 @@ func TestBackfillFTSIsNoOpWhenFTSAlreadyPopulated(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// FTS already has a row from insertMessageToDB — backfill should not add duplicates.
+	// FTS already has a row from insertMessageToDB - backfill should not add duplicates.
 	app.backfillFTS()
 
 	var count int
@@ -3695,7 +3695,7 @@ func TestApplyHistorySyncPushnamePopulatesChatName(t *testing.T) {
 // thousands), and only a fraction of those are people you actually have a
 // 1:1 conversation with. Before this fix, every pushname turned into a
 // zero-message "chat" (reported symptom: 943 of 1000 served chats had
-// conv_ts=0) — a saved contact name must only update Contacts.
+// conv_ts=0) - a saved contact name must only update Contacts.
 func TestApplyHistorySyncPushnameAloneDoesNotCreatePhantomChat(t *testing.T) {
 	app := newTestApp(t)
 	chatID := "15551230002@s.whatsapp.net"
@@ -3823,7 +3823,7 @@ func TestBroadcastDoesNotDoubleClose(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 
-	// Close the connection from the client side — the reader goroutine in
+	// Close the connection from the client side - the reader goroutine in
 	// handleWS will remove it from wsClients and close it on the server side.
 	conn.Close()
 	time.Sleep(100 * time.Millisecond)
@@ -3876,7 +3876,7 @@ func TestWithPermissionDBReturnsErrorWhenDBNil(t *testing.T) {
 	}
 }
 
-// Bug #9: isChatAllowed must use withPermissionDB — verify it works correctly.
+// Bug #9: isChatAllowed must use withPermissionDB - verify it works correctly.
 func TestIsChatAllowedUsesWithPermissionDB(t *testing.T) {
 	app := newTestApp(t)
 	if _, err := app.db.Exec(`INSERT INTO chat_permissions (phone, name, allowed) VALUES ('15551230001', 'Test', 1)`); err != nil {
@@ -3946,7 +3946,7 @@ func TestUpsertMessageReupsertKeepsFTSInSync(t *testing.T) {
 	}
 }
 
-// Bug #13: vacuumDB must not run immediately — it should delay 30s.
+// Bug #13: vacuumDB must not run immediately - it should delay 30s.
 func TestVacuumDBDoesNotRunImmediately(t *testing.T) {
 	app := newTestApp(t)
 	// Seed a message so the DB has real content.
@@ -3968,7 +3968,7 @@ func TestVacuumDBDoesNotRunImmediately(t *testing.T) {
 	}
 }
 
-// Bug #22: upsertMessageFTS must snapshot a.db under lock — nil db must be handled gracefully.
+// Bug #22: upsertMessageFTS must snapshot a.db under lock - nil db must be handled gracefully.
 func TestUpsertMessageFTSHandlesNilDB(t *testing.T) {
 	app := newTestApp(t)
 	// Close and nil out the DB to simulate post-logout state.
@@ -4000,7 +4000,7 @@ func TestHandleMarkReadPersistIsAsyncAfterMarkRead(t *testing.T) {
 	app.mu.Unlock()
 
 	// Immediately after the optimistic zero, the DB row must still show 5
-	// (persist has not been called yet — it lives inside the goroutine).
+	// (persist has not been called yet - it lives inside the goroutine).
 	var dbUnread int
 	_ = app.db.QueryRow(`SELECT unread_count FROM chats WHERE id = ?`, chatID).Scan(&dbUnread)
 	if dbUnread != 5 {
@@ -4161,7 +4161,7 @@ func TestBackfillReceiptUpgradesFromMeRows(t *testing.T) {
 }
 
 // Bug Audit #6: handleLogout must tear down ALL of {a.state, a.db,
-// a.storeContainer, cacheDir} on a single call — no early return on a
+// a.storeContainer, cacheDir} on a single call - no early return on a
 // non-fatal failure. With a nil client (no Store.Delete to fail), the full
 // teardown path runs; we assert every step completed.
 func TestHandleLogoutTearsDownEverything(t *testing.T) {
@@ -4285,7 +4285,7 @@ func TestHandleLogoutReturns409WhenAnotherIsInFlight(t *testing.T) {
 	}
 	// Conflict path never runs the teardown; leftover file must be
 	// exactly as we left it. This is the property the pre-fix code
-	// violated — two callers would both pass the cacheDir-delete
+	// violated - two callers would both pass the cacheDir-delete
 	// step and the second one would race the first's DB reopen.
 	if _, err := os.Stat(leftover); err != nil {
 		t.Errorf("leftover file should still exist (no teardown ran): %v", err)
@@ -4373,7 +4373,7 @@ func TestWriteErrSetsNoStoreCacheControl(t *testing.T) {
 	}
 }
 
-// S-7: writeInternalErr must never put the raw error text in the response —
+// S-7: writeInternalErr must never put the raw error text in the response -
 // only an opaque "ref: err-N" ID that can be correlated with the server log.
 func TestWriteInternalErrReturnsOpaqueID(t *testing.T) {
 	rec := httptest.NewRecorder()
@@ -4564,7 +4564,7 @@ func TestRedactingWriterMultipleOccurrences(t *testing.T) {
 
 
 // TestRedactingWriterCleanLineUnchanged confirms a log line with no secret
-// in it is written through untouched (the common case — most log lines).
+// in it is written through untouched (the common case - most log lines).
 func TestRedactingWriterCleanLineUnchanged(t *testing.T) {
 	var buf bytes.Buffer
 	w := newRedactingWriter(&buf, func() string { return "secret" })
