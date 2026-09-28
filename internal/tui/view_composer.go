@@ -336,7 +336,7 @@ func (x m) renderReplyBar(contentW, rightW int) string {
 		quoteTextColor = quotedSentText
 		nameColor = sentName
 	}
-	prefixText := " â•­â”€ "
+	prefixText := " ╭─ "
 	senderText := rSender + ": "
 	suffixText := "  Esc cancel"
 	textWidth := rightW - runeDisplayWidth(prefixText) - runeDisplayWidth(senderText) - runeDisplayWidth(suffixText)
@@ -344,7 +344,7 @@ func (x m) renderReplyBar(contentW, rightW int) string {
 		textWidth = 0
 	}
 	rText = truncateDisplayWidth(rText, textWidth)
-	bar := lipgloss.NewStyle().Foreground(accent).Render(" ╭─ ") +
+	bar := lipgloss.NewStyle().Foreground(accent).Render(prefixText) +
 		lipgloss.NewStyle().Foreground(nameColor).Bold(true).Render(senderText) +
 		lipgloss.NewStyle().Foreground(quoteTextColor).Render(rText) +
 		lipgloss.NewStyle().Foreground(muted).Render(suffixText)

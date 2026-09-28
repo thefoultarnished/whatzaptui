@@ -3179,3 +3179,34 @@ func TestOpenSelectedChatSavesAndRestoresPerChatDraft(t *testing.T) {
 		t.Fatalf("input for chat1 = %q, want restored draft %q", final.input, "hello from chat1")
 	}
 }
+
+// Regression: the reply bar's width math used a mojibake copy of the " ╭─ "
+// prefix (8 runes instead of 4), so the quoted text was cut 4 columns short
+// and left a gap before "Esc cancel".
+func TestRenderReplyBarUsesFullWidthForQuotedText(t *testing.T) {
+	setTestTheme(t, Monokai)
+
+	reply := &wireMsg{Message: map[string]any{
+		"conversation": "Are you planning to attend tomorrow? The first lecture?",
+	}}
+	reply.Key.ID = "q3"
+	reply.Key.RemoteJID = "15551230001@s.whatsapp.net"
+	model := m{
+		replyTo:          reply,
+		contacts:         map[string]contact{"15551230001@s.whatsapp.net": {ID: "15551230001@s.whatsapp.net", Notify: "Shadu"}},
+		contactsByNumber: map[string]contact{"15551230001": {ID: "15551230001@s.whatsapp.net", Notify: "Shadu"}},
+	}
+
+	const width = 40
+	plain := strings.TrimRight(ansiStripRe.ReplaceAllString(model.renderReplyBar(140, width), ""), " ")
+	if strings.Contains(plain, "\u00e2") {
+		t.Fatalf("reply bar contains mojibake: %q", plain)
+	}
+	// Bar is: " ╭─ " + "Shadu: " + quoted text + "  Esc cancel". Every column
+	// not used by the fixed parts must go to the quoted text.
+	fixed := runeDisplayWidth(" ╭─ ") + runeDisplayWidth("Shadu: ") + runeDisplayWidth("  Esc cancel")
+	quoted := strings.TrimSuffix(strings.TrimPrefix(plain, " ╭─ Shadu: "), "  Esc cancel")
+	if got := runeDisplayWidth(quoted); got != width-fixed {
+		t.Fatalf("quoted text is %d columns, want %d (the whole free space); bar=%q", got, width-fixed, plain)
+	}
+}

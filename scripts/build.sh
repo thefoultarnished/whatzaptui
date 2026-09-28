@@ -12,7 +12,7 @@ case "${1:-build}" in
     build)
         mkdir -p dist
         rm -f "dist/backend$exe"
-        go build -o "dist/whatzap$exe" ./cmd/whatzap
+        go build -ldflags="-s -w" -trimpath -o "dist/whatzap$exe" ./cmd/whatzap
         ;;
     test)
         go test ./...

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -4829,5 +4830,102 @@ func TestPurgeEmptyPhantomChats(t *testing.T) {
 	}
 	if validCount != 1 {
 		t.Fatalf("expected valid chat to be preserved, got %d", validCount)
+	}
+}
+
+// Regression: several /logout calls at once must not crash or corrupt state.
+// They are serialized by logoutMu, so each either completes (200) or is
+// refused as already in progress (409), at least one succeeds, and the app
+// is left logged out and ready for the next login.
+func TestHandleLogoutConcurrentCallsAreIdempotent(t *testing.T) {
+	app := newTestApp(t)
+	app.started = true
+	app.connected = true
+	app.state = PersistedState{
+		Chats:    map[string]Chat{"chat-1": {ID: "chat-1"}},
+		Contacts: map[string]Contact{"chat-1": {ID: "chat-1"}},
+	}
+
+	const callers = 8
+	codes := make(chan int, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			app.handleLogout(rec, httptest.NewRequest(http.MethodPost, "/logout", nil))
+			codes <- rec.Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+
+	ok := 0
+	for code := range codes {
+		switch code {
+		case http.StatusOK:
+			ok++
+		case http.StatusConflict:
+		default:
+			t.Fatalf("concurrent logout returned %d, want 200 or 409", code)
+		}
+	}
+	if ok == 0 {
+		t.Fatal("no concurrent logout call succeeded")
+	}
+
+	app.mu.RLock()
+	started, connected, shuttingDown := app.started, app.connected, app.shuttingDown
+	chats, contacts := len(app.state.Chats), len(app.state.Contacts)
+	app.mu.RUnlock()
+	if started || connected {
+		t.Fatal("app flags not cleared after concurrent logouts")
+	}
+	if shuttingDown {
+		t.Fatal("shuttingDown left set after concurrent logouts; later requests would be refused")
+	}
+	if chats != 0 || contacts != 0 {
+		t.Fatalf("state not cleared: %d chats, %d contacts", chats, contacts)
+	}
+
+	// The app must still be usable: one more logout succeeds cleanly.
+	rec := httptest.NewRecorder()
+	app.handleLogout(rec, httptest.NewRequest(http.MethodPost, "/logout", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logout after the concurrent burst = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Regression: logoutMu really serializes /logout. While one logout holds the
+// lock, a second call must wait instead of tearing storage down underneath it.
+func TestHandleLogoutWaitsForLogoutInProgress(t *testing.T) {
+	app := newTestApp(t)
+	app.started = true
+	app.connected = true
+
+	app.logoutMu.Lock() // stands in for a logout that is mid-teardown
+	done := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		app.handleLogout(rec, httptest.NewRequest(http.MethodPost, "/logout", nil))
+		done <- rec.Code
+	}()
+
+	select {
+	case code := <-done:
+		app.logoutMu.Unlock()
+		t.Fatalf("logout ran (status %d) while another logout held logoutMu", code)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	app.logoutMu.Unlock()
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("waiting logout returned %d, want 200", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiting logout never finished after logoutMu was released")
 	}
 }

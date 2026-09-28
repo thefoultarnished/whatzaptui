@@ -7,7 +7,7 @@ endif
 build:
 	mkdir -p dist
 	rm -f dist/backend$(EXE)
-	go build -o dist/whatzap$(EXE) ./cmd/whatzap
+	go build -ldflags="-s -w" -trimpath -o dist/whatzap$(EXE) ./cmd/whatzap
 
 test:
 	go test ./...
