@@ -153,8 +153,8 @@ var helpCommands = []struct {
 	{"/mouseoff", "Disable mouse"},
 	// Contacts
 	{"/pin", "Pin or unpin a chat (synced with phone)"},
-	{"/archive", "Archive or unarchive a chat (synced with phone)"},
-	{"/archived", "Show archived chats, again to go back"},
+	{"/archive", "Archive a chat (synced with phone)"},
+	{"/unarchive", "Unarchive a chat (synced with phone)"},
 	{"/rename", "Rename a contact"},
 	{"/whitelist", "Allow a contact"},
 	{"/whitelistall", "Allow all"},
@@ -166,6 +166,8 @@ var helpCommands = []struct {
 	{"/synchistory", "Sync chat history"},
 	{"/allcontacts", "Toggle stored-only People"},
 	{"Alt+B / Alt+W", "Toggle whitelist for selected contact"},
+	{"Alt+D", "Archived chats, again to go back"},
+	{"Alt+G", "Who reacted to the selected message"},
 	// Sounds
 	{"/soundon", "Enable sounds"},
 	{"/soundoff", "Disable sounds"},
@@ -182,7 +184,7 @@ var helpCommands = []struct {
 
 var helpGroupDefs = []picker.Group{
 	{Name: "Interface", Count: 8},
-	{Name: "Contacts", Count: 10},
+	{Name: "Contacts", Count: 16},
 	{Name: "Sounds", Count: 7},
 	{Name: "Session", Count: 3},
 }

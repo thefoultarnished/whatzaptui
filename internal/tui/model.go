@@ -319,6 +319,7 @@ type m struct {
 	themePicker           picker.Picker
 	pointerPicker         picker.Picker
 	helpPicker            picker.Picker
+	reactionPicker        picker.Picker // who reacted to the selected message
 	settingsPicker        picker.Picker
 	typingAnimationPicker picker.Picker
 	mediaIconPicker       picker.Picker

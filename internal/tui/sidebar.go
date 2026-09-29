@@ -171,7 +171,7 @@ func (x m) sideViewRows() int {
 		return 1
 	}
 	sideH := outerH - 5
-	return max(1, sideH-3)
+	return max(1, sideH-3-x.archiveFooterHeight())
 }
 
 func (x m) sidePaneWidth() int {

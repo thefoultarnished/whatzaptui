@@ -181,6 +181,9 @@ func (x m) renderRightMain(rightW, mainH int) string {
 	if x.helpPicker.IsOpen {
 		return x.helpPicker.RenderHelp(pickerStyle(), rightW, mainH)
 	}
+	if x.reactionPicker.IsOpen {
+		return x.reactionPicker.RenderReactions(pickerStyle(), rightW, mainH)
+	}
 	if x.settingsPicker.IsOpen {
 		return x.settingsPicker.RenderSettings(pickerStyle(), rightW, mainH)
 	}
