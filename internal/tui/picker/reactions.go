@@ -57,9 +57,11 @@ func wrapList(s string, width int) []string {
 	return lines
 }
 
-// RenderReactions draws who reacted to a message: one entry per emoji, with
+// RenderReactionsBox draws who reacted to a message: one entry per emoji, with
 // Key (emoji and count) on the left and Desc (the people) wrapped on the right.
-func (p *Picker) RenderReactions(s Style, w, h int) string {
+// It returns just the box so the caller can draw it over the chat instead of
+// replacing it.
+func (p *Picker) RenderReactionsBox(s Style, w, h int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 60)
@@ -117,5 +119,5 @@ func (p *Picker) RenderReactions(s Style, w, h int) string {
 	}
 	hint := ln(s.hintRow(bg, "↑↓", "scroll", "Esc", "close"))
 	lines = append(lines, ln(""), divLine, hint)
-	return s.placePanel(lines, pickerW, padH, w, h)
+	return s.panelBox(lines, pickerW, padH, w, h)
 }

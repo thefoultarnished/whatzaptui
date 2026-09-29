@@ -71,15 +71,21 @@ func (s Style) panelFrame(title string, innerW int) (bg func(lipgloss.Style) lip
 	return bg, ln, divLine, titleRow
 }
 
-// placePanel wraps lines in the raised panel, adds the outline and centres
-// it in the w×h pane.
-func (s Style) placePanel(lines []string, pickerW, padH, w, h int) string {
+// panelBox wraps lines in the raised panel and adds the outline, without
+// placing it anywhere.
+func (s Style) panelBox(lines []string, pickerW, padH, w, h int) string {
 	box := lipgloss.NewStyle().
 		Background(s.PanelBg).
 		Padding(1, padH).
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
-	box = s.outline(box, w, h)
+	return s.outline(box, w, h)
+}
+
+// placePanel wraps lines in the raised panel, adds the outline and centres
+// it in the w×h pane.
+func (s Style) placePanel(lines []string, pickerW, padH, w, h int) string {
+	box := s.panelBox(lines, pickerW, padH, w, h)
 	return lipgloss.NewStyle().
 		Width(w).Height(max(1, h)).
 		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
