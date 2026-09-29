@@ -82,6 +82,15 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.invalidate()
 		x.ensureSideVisible(x.sideViewRows())
 		return x, nil
+	case "alt+d":
+		if x.status != "ready" {
+			return x, nil
+		}
+		x.replyPickMode = false
+		x.selectedMsgID = ""
+		x.scroll = 0
+		x.toggleArchivedView()
+		return x, nil
 	case "alt+p":
 		x.replyPickMode = false
 		x.selectedMsgID = ""
@@ -159,6 +168,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+e":
 		if x.status == "ready" && x.mode == "chat" && x.active != "" && !x.chatInputLocked() {
 			x.openEmojiPicker()
+		}
+		return x, nil
+	case "alt+g":
+		if x.status == "ready" && x.mode == "chat" && x.active != "" {
+			cmd := x.openReactionList()
+			return x, cmd
 		}
 		return x, nil
 	case "alt+a":
@@ -298,6 +313,14 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			saveConfig()
 		} else {
 			receivedMsgIcon = x.pointerPicker.Close(false)
+			x.invalidate()
+		}
+		return x, nil
+	}
+	if x.reactionPicker.IsOpen {
+		if x.reactionPicker.HandleReactions(k) {
+			x.closeReactionList()
+		} else {
 			x.invalidate()
 		}
 		return x, nil

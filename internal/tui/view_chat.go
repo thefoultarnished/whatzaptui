@@ -772,34 +772,66 @@ func reactorShortName(full string) string {
 type reactionRender struct {
 	emoji     string
 	name      string
+	full      string // full display name, for the who-reacted list
+	key       string // who reacted: one live reaction per person
 	isMe      bool
 	isContact bool
 }
 
+// collectReactions gathers the reactions on each message. A person has one
+// live reaction per message: a newer one replaces their older one, and an empty
+// one (WhatsApp's "remove reaction") takes it away. items must be oldest first.
 func (x m) collectReactions(items []wireMsg) map[string][]reactionRender {
 	reactionsFor := map[string][]reactionRender{}
 	for _, msg := range items {
-		if rxn, ok := msg.Message["reactionMessage"].(map[string]any); ok {
-			targetID, _ := rxn["targetMsgID"].(string)
-			emoji, _ := rxn["emoji"].(string)
-			if targetID != "" && emoji != "" {
-				rSender := "Me"
-				rIsMe := msg.Key.FromMe
-				sid := x.senderIDForMsg(msg)
-				fullName := x.senderNameForMsg(msg)
-				senderNum := num(sid)
-				isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
-				if !msg.Key.FromMe {
-					rSender = reactorShortName(fullName)
-				}
-				reactionsFor[targetID] = append(reactionsFor[targetID], reactionRender{
-					emoji:     emoji,
-					name:      rSender,
-					isMe:      rIsMe,
-					isContact: isKnown,
-				})
+		rxn, ok := msg.Message["reactionMessage"].(map[string]any)
+		if !ok {
+			continue
+		}
+		targetID, _ := rxn["targetMsgID"].(string)
+		emoji, _ := rxn["emoji"].(string)
+		if targetID == "" {
+			continue
+		}
+		sid := x.senderIDForMsg(msg)
+		key := "me"
+		if !msg.Key.FromMe {
+			key = num(sid)
+			if key == "" {
+				key = msg.Key.ID
 			}
 		}
+		kept := make([]reactionRender, 0, len(reactionsFor[targetID])+1)
+		for _, r := range reactionsFor[targetID] {
+			if r.key != key {
+				kept = append(kept, r)
+			}
+		}
+		reactionsFor[targetID] = kept
+		if emoji == "" {
+			continue
+		}
+		rSender := "Me"
+		rFull := "You"
+		rIsMe := msg.Key.FromMe
+		fullName := x.senderNameForMsg(msg)
+		senderNum := num(sid)
+		isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
+		if !msg.Key.FromMe {
+			rSender = reactorShortName(fullName)
+			rFull = strings.TrimSpace(fullName)
+			if rFull == "" {
+				rFull = senderNum
+			}
+		}
+		reactionsFor[targetID] = append(reactionsFor[targetID], reactionRender{
+			emoji:     emoji,
+			name:      rSender,
+			full:      rFull,
+			key:       key,
+			isMe:      rIsMe,
+			isContact: isKnown,
+		})
 	}
 	return reactionsFor
 }

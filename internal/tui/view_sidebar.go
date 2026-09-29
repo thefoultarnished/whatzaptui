@@ -78,7 +78,8 @@ func (x m) renderSide(w, h int) string {
 	tabsDivider := lipgloss.NewStyle().Foreground(borderSubtle).Render(strings.Repeat("─", w) + "┤")
 	searchDivider := lipgloss.NewStyle().Foreground(underlineColor).Render(strings.Repeat("─", w) + "┤")
 
-	viewRows := max(1, h-4)
+	footerH := x.archiveFooterHeight()
+	viewRows := max(1, h-4-footerH)
 	maxStart := max(0, len(f)-viewRows)
 	start := x.sideScroll
 	if start > maxStart {
@@ -97,7 +98,11 @@ func (x m) renderSide(w, h int) string {
 	}
 	listBlock := sideStyle.Height(viewRows).Render(strings.Join(listLines, "\n"))
 
-	return lipgloss.JoinVertical(lipgloss.Left, tabsRow, tabsDivider, searchRow, searchDivider, listBlock)
+	parts := []string{tabsRow, tabsDivider, searchRow, searchDivider, listBlock}
+	if footerH > 0 {
+		parts = append(parts, sideStyle.Height(1).Render(x.renderArchiveFooter(w)))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (x m) renderSearchBox() string {

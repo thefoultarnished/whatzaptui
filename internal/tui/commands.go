@@ -16,7 +16,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.IsOpen || x.pointerPicker.IsOpen || x.helpPicker.IsOpen || x.settingsPicker.IsOpen || x.typingAnimationPicker.IsOpen || x.mediaIconPicker.IsOpen || x.mediaViewPicker.IsOpen || x.userlistIconPicker.IsOpen || x.splashSpeedPicker.IsOpen || x.fontTestOpen {
+	if x.themePicker.IsOpen || x.pointerPicker.IsOpen || x.helpPicker.IsOpen || x.reactionPicker.IsOpen || x.settingsPicker.IsOpen || x.typingAnimationPicker.IsOpen || x.mediaIconPicker.IsOpen || x.mediaViewPicker.IsOpen || x.userlistIconPicker.IsOpen || x.splashSpeedPicker.IsOpen || x.fontTestOpen {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -184,8 +184,6 @@ func (x *m) runGlobalCommand(txt string) (tea.Cmd, bool) {
 		}
 		x.syncingHistory = true
 		return tea.Batch(x.setTopBar("Syncing history..."), syncHistory(x.reqCtx(), x.client, x.baseURL)), true
-	case "/archived":
-		return x.toggleArchivedView(), true
 	case "/allcontacts":
 		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
 		saveConfig()
@@ -284,7 +282,9 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 	case txt == "/pin":
 		return x.togglePin(includeGlobal), true
 	case txt == "/archive":
-		return x.toggleArchive(includeGlobal), true
+		return x.archiveChat(includeGlobal, true), true
+	case txt == "/unarchive":
+		return x.archiveChat(includeGlobal, false), true
 	case strings.HasPrefix(txt, "/rename "):
 		name := strings.TrimSpace(strings.TrimPrefix(txt, "/rename "))
 		if name == "" {
