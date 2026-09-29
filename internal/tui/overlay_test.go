@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -118,5 +119,138 @@ func TestReactionListLeavesChatVisibleBehindIt(t *testing.T) {
 		if w := ansi.StringWidth(l); w != 90 {
 			t.Fatalf("row %d width = %d, want 90", i, w)
 		}
+	}
+}
+
+// useTokyoNight selects a named theme and restores the config afterwards.
+func useTokyoNight(t *testing.T) {
+	t.Helper()
+	setTestTheme(t, TokyoNight)
+	old := currentConfig
+	t.Cleanup(func() { currentConfig = old })
+	currentConfig.ThemeName = "tokyonight"
+}
+
+func TestThemePickerLeavesChatVisibleBehindIt(t *testing.T) {
+	useTokyoNight(t)
+	x := reactModel(reactMsg("r1", "m1", "fire", "1", 101))
+	x.w, x.h = 120, 40
+	x.themePicker = newThemePicker()
+	x.themePicker.Open(currentConfig.ThemeName)
+
+	out := x.renderRightMain(90, 60)
+	plain := ansiStripRe.ReplaceAllString(out, "")
+	for _, want := range []string{"lunch?", "Select Theme", "Tokyo Night"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("expected %q with the chat visible behind the theme picker:\n%s", want, plain)
+		}
+	}
+	for i, l := range strings.Split(out, "\n") {
+		if w := ansi.StringWidth(l); w != 90 {
+			t.Fatalf("row %d width = %d, want 90", i, w)
+		}
+	}
+	if got := len(strings.Split(plain, "\n")); got != 60 {
+		t.Fatalf("pane height = %d, want 60", got)
+	}
+}
+
+func TestThemePickerPreviewsThemeOnTheChatBehindIt(t *testing.T) {
+	useTokyoNight(t)
+	x := reactModel(reactMsg("r1", "m1", "fire", "1", 101))
+	x.w, x.h = 120, 40
+	x.themePicker = newThemePicker()
+	x.themePicker.Open(currentConfig.ThemeName)
+	original := currentConfig.ThemeName
+	before := x.renderRightMain(90, 60)
+
+	next, _ := x.key(tea.KeyMsg{Type: tea.KeyDown})
+	moved := next.(m)
+	if currentConfig.ThemeName == original {
+		t.Fatal("moving the selection should apply the highlighted theme")
+	}
+	after := moved.renderRightMain(90, 60)
+	if before == after {
+		t.Fatal("the chat behind the picker should be redrawn in the previewed theme")
+	}
+	if !strings.Contains(ansiStripRe.ReplaceAllString(after, ""), "lunch?") {
+		t.Fatal("the chat must stay visible while previewing")
+	}
+
+	next, _ = moved.key(tea.KeyMsg{Type: tea.KeyEsc})
+	if next.(m).themePicker.IsOpen || currentConfig.ThemeName != original {
+		t.Fatalf("Esc should close and restore %q, got open=%v theme=%q", original, next.(m).themePicker.IsOpen, currentConfig.ThemeName)
+	}
+}
+
+// Every popup is drawn over the chat, not instead of it, and keeps the pane
+// exactly w x h.
+func TestEveryPopupLeavesChatVisibleBehindIt(t *testing.T) {
+	useTokyoNight(t)
+	const w, h = 100, 60
+	popups := []struct {
+		name  string
+		open  func(x *m)
+		title string
+	}{
+		{"theme", func(x *m) { x.themePicker = newThemePicker(); x.themePicker.Open("tokyonight") }, "Select Theme"},
+		{"pointer", func(x *m) { x.pointerPicker = newPointerPicker(); x.pointerPicker.Open("") }, newPointerPicker().Title},
+		{"typing style", func(x *m) { x.typingAnimationPicker = newTypingAnimationPicker(); x.typingAnimationPicker.Open("") }, newTypingAnimationPicker().Title},
+		{"media icons", func(x *m) { x.mediaIconPicker = newMediaIconPicker(); x.mediaIconPicker.Open("") }, newMediaIconPicker().Title},
+		{"media preview", func(x *m) { x.mediaViewPicker = newMediaViewPicker(); x.mediaViewPicker.Open("") }, newMediaViewPicker().Title},
+		{"chat list icons", func(x *m) { x.userlistIconPicker = newUserlistIconPicker(); x.userlistIconPicker.Open("") }, newUserlistIconPicker().Title},
+		{"startup speed", func(x *m) { x.splashSpeedPicker = newSplashSpeedPicker(); x.splashSpeedPicker.Open("") }, newSplashSpeedPicker().Title},
+		{"help", func(x *m) { x.helpPicker = newHelpPicker(); x.helpPicker.Open("") }, "Commands"},
+		{"settings", func(x *m) { x.settingsPicker = newSettingsPicker(); x.settingsPicker.Open("") }, "Settings"},
+		{"confirm", func(x *m) { x.confirmDialog.Open("Log out?", "Are you sure?", "logout") }, "Log out?"},
+		{"font test", func(x *m) { x.fontTestOpen = true }, "Nerd Font glyph"},
+	}
+	for _, c := range popups {
+		x := reactModel(reactMsg("r1", "m1", "fire", "1", 101))
+		x.w, x.h = 120, 80
+		c.open(&x)
+
+		out := x.renderRightMain(w, h)
+		plain := ansiStripRe.ReplaceAllString(out, "")
+		if !strings.Contains(plain, c.title) {
+			t.Errorf("%s: popup title %q missing:\n%s", c.name, c.title, plain)
+		}
+		if !strings.Contains(plain, "lunch?") {
+			t.Errorf("%s: the chat is not visible behind the popup:\n%s", c.name, plain)
+		}
+		lines := strings.Split(out, "\n")
+		if len(lines) != h {
+			t.Errorf("%s: pane height = %d, want %d", c.name, len(lines), h)
+		}
+		for i, l := range lines {
+			if lw := ansi.StringWidth(l); lw != w {
+				t.Errorf("%s: row %d width = %d, want %d", c.name, i, lw, w)
+				break
+			}
+		}
+	}
+}
+
+func TestEmojiPickerLeavesChatVisibleBehindIt(t *testing.T) {
+	useTokyoNight(t)
+	x := reactModel(reactMsg("r1", "m1", "fire", "1", 101))
+	x.w, x.h = 120, 80
+	x.openEmojiPicker()
+	out := x.renderRightMain(100, 60)
+	if !strings.Contains(ansiStripRe.ReplaceAllString(out, ""), "lunch?") {
+		t.Fatalf("the chat should stay visible behind the emoji picker:\n%s", ansiStripRe.ReplaceAllString(out, ""))
+	}
+	if len(strings.Split(out, "\n")) != 60 {
+		t.Fatalf("pane height changed: %d", len(strings.Split(out, "\n")))
+	}
+}
+
+func TestFileBrowserStillFillsThePane(t *testing.T) {
+	useTokyoNight(t)
+	x := reactModel()
+	x.w, x.h = 120, 40
+	x.fileBrowserOpen = true
+	if box := x.floatingPanel(100, 40); box != "" {
+		t.Fatalf("the file browser is a full screen and must not float, got a panel")
 	}
 }

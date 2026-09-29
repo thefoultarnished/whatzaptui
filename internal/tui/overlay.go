@@ -60,3 +60,57 @@ func overlayCenter(base, box string, w, h int) string {
 	}
 	return strings.Join(baseLines, "\n")
 }
+
+// floatingPanel returns the box of whichever popup is drawn over the chat, or
+// "" when none is open. Popups keep the chat visible around them. The file
+// browser is a full working screen and still replaces the pane.
+func (x m) floatingPanel(w, h int) string {
+	ps := pickerStyle()
+	switch {
+	case x.reactionPicker.IsOpen:
+		return x.reactionPicker.RenderReactionsBox(ps, w, h)
+	case x.themePicker.IsOpen:
+		return x.themePicker.RenderThemeBox(ps, w, h)
+	case x.pointerPicker.IsOpen:
+		return x.pointerPicker.RenderBox(ps, w, h)
+	case x.typingAnimationPicker.IsOpen:
+		return x.typingAnimationPicker.RenderTypingAnimationBox(ps, w, h, x.shineFrame)
+	case x.mediaIconPicker.IsOpen:
+		return x.mediaIconPicker.RenderBox(ps, w, h)
+	case x.mediaViewPicker.IsOpen:
+		return x.mediaViewPicker.RenderBox(ps, w, h)
+	case x.userlistIconPicker.IsOpen:
+		return x.userlistIconPicker.RenderBox(ps, w, h)
+	case x.splashSpeedPicker.IsOpen:
+		return x.splashSpeedPicker.RenderBox(ps, w, h)
+	case x.helpPicker.IsOpen:
+		return x.helpPicker.RenderHelpBox(ps, w, h)
+	case x.settingsPicker.IsOpen:
+		return x.settingsPicker.RenderSettingsBox(ps, w, h)
+	case x.confirmDialog.open:
+		return x.confirmDialog.RenderBox(w, h)
+	case x.fontTestOpen:
+		return fontTestBox(w, h)
+	case x.emojiPickerOpen && !x.fileBrowserOpen:
+		return x.renderEmojiPicker()
+	}
+	return ""
+}
+
+// closeFloatingPanels marks every floating popup closed on this copy of the
+// model, so the chat underneath can be rendered on its own.
+func (x *m) closeFloatingPanels() {
+	x.reactionPicker.IsOpen = false
+	x.themePicker.IsOpen = false
+	x.pointerPicker.IsOpen = false
+	x.typingAnimationPicker.IsOpen = false
+	x.mediaIconPicker.IsOpen = false
+	x.mediaViewPicker.IsOpen = false
+	x.userlistIconPicker.IsOpen = false
+	x.splashSpeedPicker.IsOpen = false
+	x.helpPicker.IsOpen = false
+	x.settingsPicker.IsOpen = false
+	x.confirmDialog.open = false
+	x.fontTestOpen = false
+	x.emojiPickerOpen = false
+}

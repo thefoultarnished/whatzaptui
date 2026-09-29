@@ -111,9 +111,10 @@ func groupHeader(s Style, bg func(lipgloss.Style) lipgloss.Style, ln func(string
 	}
 }
 
-// RenderTheme renders a 2-column grouped palette for the theme picker,
-// using the same raised-surface depth effect as the help picker.
-func (p *Picker) RenderTheme(s Style, w, h int) string {
+// RenderThemeBox renders a 2-column grouped palette for the theme picker,
+// using the same raised-surface depth effect as the help picker. It returns
+// just the box, so the caller can draw it over the chat.
+func (p *Picker) RenderThemeBox(s Style, w, h int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 60)
@@ -193,13 +194,13 @@ func (p *Picker) RenderTheme(s Style, w, h int) string {
 
 	hint := ln(s.hintRow(bg, "↑→↓←", "navigate", "Enter", "apply", "Esc", "close"))
 	lines = append(lines, ln(""), divLine, hint)
-	return s.placePanel(lines, pickerW, padH, w, h)
+	return s.panelBox(lines, pickerW, padH, w, h)
 }
 
 // RenderHelp renders a 3-column grouped command palette for the help picker.
 // Depth is achieved via a raised surface colour applied to every style - no
 // border characters, so the panel floats cleanly.
-func (p *Picker) RenderHelp(s Style, w, h int) string {
+func (p *Picker) RenderHelpBox(s Style, w, h int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 100)
@@ -267,5 +268,5 @@ func (p *Picker) RenderHelp(s Style, w, h int) string {
 
 	hint := ln(s.hintRow(bg, "↑→↓←", "navigate", "Enter", "run", "Esc", "close"))
 	lines = append(lines, ln(""), divLine, hint)
-	return s.placePanel(lines, pickerW, padH, w, h)
+	return s.panelBox(lines, pickerW, padH, w, h)
 }

@@ -64,7 +64,16 @@ func (d *confirmDialog) Handle(k tea.KeyMsg) (action string, done bool) {
 	return "", false
 }
 
+// Render draws the dialog filling a w x h pane.
 func (d *confirmDialog) Render(w, h int) string {
+	return lipgloss.NewStyle().
+		Width(w).Height(max(1, h)).
+		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, d.RenderBox(w, h)))
+}
+
+// RenderBox draws just the dialog box, sized for a w x h pane, so it can be
+// drawn over the chat.
+func (d *confirmDialog) RenderBox(w, h int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 64)
@@ -154,7 +163,5 @@ func (d *confirmDialog) Render(w, h int) string {
 		Render(strings.Join(lines, "\n"))
 	box = withPanelOutline(box, w, h)
 
-	return lipgloss.NewStyle().
-		Width(w).Height(max(1, h)).
-		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
+	return box
 }

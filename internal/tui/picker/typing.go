@@ -101,7 +101,7 @@ func typingItemCell(s Style, item Item, isSelected bool, shineFrame int, cs typi
 	return cs.colFill.Render(prefix + cs.name.Render(fmt.Sprintf("%s  %s", item.Icons[0], item.Name)))
 }
 
-func (p *Picker) RenderTypingAnimation(s Style, w, h, shineFrame int) string {
+func (p *Picker) RenderTypingAnimationBox(s Style, w, h, shineFrame int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 80)
@@ -166,5 +166,5 @@ func (p *Picker) RenderTypingAnimation(s Style, w, h, shineFrame int) string {
 	lines = append(lines, ln(""))
 	lines = append(lines, ln(divLine))
 	lines = append(lines, ln(s.hintRow(bg, "↑→↓←", "navigate", "Enter", "confirm", "Esc", "cancel")))
-	return s.placePanel(lines, pickerW, padH, w, h)
+	return s.panelBox(lines, pickerW, padH, w, h)
 }

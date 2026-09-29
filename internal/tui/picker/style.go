@@ -82,15 +82,6 @@ func (s Style) panelBox(lines []string, pickerW, padH, w, h int) string {
 	return s.outline(box, w, h)
 }
 
-// placePanel wraps lines in the raised panel, adds the outline and centres
-// it in the w×h pane.
-func (s Style) placePanel(lines []string, pickerW, padH, w, h int) string {
-	box := s.panelBox(lines, pickerW, padH, w, h)
-	return lipgloss.NewStyle().
-		Width(w).Height(max(1, h)).
-		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
-}
-
 // hintRow renders the key-legend footer, e.g. "↑→↓← navigate  Enter apply".
 func (s Style) hintRow(bg func(lipgloss.Style) lipgloss.Style, pairs ...string) string {
 	keySt := bg(lipgloss.NewStyle().Foreground(s.Accent).Bold(true))

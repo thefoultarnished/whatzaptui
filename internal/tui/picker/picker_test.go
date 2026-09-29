@@ -119,7 +119,7 @@ func TestRenderWithZeroStyle(t *testing.T) {
 
 	for name, out := range map[string]string{
 		"plain":    func() string { p := New("Plain", items("a", "b")); return p.Render(s, 80, 20) }(),
-		"theme":    grouped.RenderTheme(s, 80, 30),
+		"theme":    grouped.RenderThemeBox(s, 80, 30),
 		"help":     grouped.RenderHelp(s, 100, 30),
 		"typing":   typing.RenderTypingAnimation(s, 80, 20, 1),
 		"settings": settings.RenderSettings(s, 100, 30),
@@ -128,7 +128,7 @@ func TestRenderWithZeroStyle(t *testing.T) {
 			t.Errorf("%s: empty render", name)
 		}
 	}
-	if out := grouped.RenderTheme(s, 80, 30); !strings.Contains(out, "Grouped") {
+	if out := grouped.RenderThemeBox(s, 80, 30); !strings.Contains(out, "Grouped") {
 		t.Error("theme render missing title")
 	}
 }

@@ -14,7 +14,15 @@ var fontTestKinds = []string{
 	"sticker", "contact", "poll", "location", "anomaly",
 }
 
+// renderFontTest draws the Nerd Font test filling a w x h pane.
 func renderFontTest(w, h int) string {
+	return lipgloss.NewStyle().
+		Width(w).Height(max(1, h)).
+		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, fontTestBox(w, h)))
+}
+
+// fontTestBox draws just the test panel, so it can be drawn over the chat.
+func fontTestBox(w, h int) string {
 	const padH = 3
 
 	panelW := min(w-4, 78)
@@ -104,7 +112,5 @@ func renderFontTest(w, h int) string {
 		Render(strings.Join(lines, "\n"))
 	box = withPanelOutline(box, w, h)
 
-	return lipgloss.NewStyle().
-		Width(w).Height(max(1, h)).
-		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
+	return box
 }

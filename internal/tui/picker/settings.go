@@ -96,7 +96,7 @@ func (p *Picker) HandleSettings(k tea.KeyMsg) (action string, done bool) {
 	return "", false
 }
 
-func (p *Picker) RenderSettings(s Style, w, h int) string {
+func (p *Picker) RenderSettingsBox(s Style, w, h int) string {
 	const padH = 3
 
 	pickerW := min(w-4, 84)
@@ -227,5 +227,5 @@ func (p *Picker) RenderSettings(s Style, w, h int) string {
 	lines = append(lines, ln(""))
 	lines = append(lines, ln(divLine))
 	lines = append(lines, ln(s.hintRow(bg, "↑↓", "navigate", "Enter", "toggle/open", "Esc", "close")))
-	return s.placePanel(lines, pickerW, padH, w, h)
+	return s.panelBox(lines, pickerW, padH, w, h)
 }
