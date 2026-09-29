@@ -53,7 +53,7 @@ func TestRenderReactionsShowsEntriesAndWraps(t *testing.T) {
 		{Key: "heart 1", Desc: "Fay"},
 	})
 	p.Open("")
-	out := ansi.ReplaceAllString(p.RenderReactions(Style{}, 80, 30), "")
+	out := ansi.ReplaceAllString(p.RenderReactionsBox(Style{}, 80, 30), "")
 	for _, want := range []string{"Reactions", "fire 4", "Ann Lee,", "Eve Rose", "heart 1", "Fay", "Esc"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("panel missing %q:\n%s", want, out)
@@ -71,12 +71,12 @@ func TestRenderReactionsScrollHints(t *testing.T) {
 	}
 	p := New("Reactions", items)
 	p.Open("")
-	top := ansi.ReplaceAllString(p.RenderReactions(Style{}, 80, 16), "")
+	top := ansi.ReplaceAllString(p.RenderReactionsBox(Style{}, 80, 16), "")
 	if !strings.Contains(top, "more below") || strings.Contains(top, "more above") {
 		t.Fatalf("top of a long list should hint only below:\n%s", top)
 	}
 	p.Idx = 3
-	mid := ansi.ReplaceAllString(p.RenderReactions(Style{}, 80, 16), "")
+	mid := ansi.ReplaceAllString(p.RenderReactionsBox(Style{}, 80, 16), "")
 	if !strings.Contains(mid, "more above") || strings.Contains(mid, "PersonA") {
 		t.Fatalf("scrolled list should hint above and drop the first entry:\n%s", mid)
 	}

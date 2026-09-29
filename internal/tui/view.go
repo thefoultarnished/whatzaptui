@@ -149,6 +149,12 @@ func (x m) chatPaneGeometry() chatPaneGeom {
 }
 
 func (x m) renderRightMain(rightW, mainH int) string {
+	if x.reactionPicker.IsOpen {
+		// Draw the list over the chat instead of replacing it.
+		under := x
+		under.reactionPicker.IsOpen = false
+		return overlayCenter(under.renderRightMain(rightW, mainH), x.reactionPicker.RenderReactionsBox(pickerStyle(), rightW, mainH), rightW, mainH)
+	}
 	hasFlash := false
 	now := time.Now()
 	for _, until := range x.flashUntil {
@@ -180,9 +186,6 @@ func (x m) renderRightMain(rightW, mainH int) string {
 	}
 	if x.helpPicker.IsOpen {
 		return x.helpPicker.RenderHelp(pickerStyle(), rightW, mainH)
-	}
-	if x.reactionPicker.IsOpen {
-		return x.reactionPicker.RenderReactions(pickerStyle(), rightW, mainH)
 	}
 	if x.settingsPicker.IsOpen {
 		return x.settingsPicker.RenderSettings(pickerStyle(), rightW, mainH)
