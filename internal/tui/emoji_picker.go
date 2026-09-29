@@ -263,14 +263,6 @@ func (x m) renderEmojiPicker() string {
 		Render(strings.Join(body, "\n"))
 }
 
-func (x m) renderEmojiPickerPane(width, height int) string {
-	panel := x.renderEmojiPicker()
-	return lipgloss.NewStyle().
-		Width(width).
-		Height(max(1, height)).
-		Render(lipgloss.Place(width, max(1, height), lipgloss.Center, lipgloss.Center, panel))
-}
-
 func renderPickerQuery(query string, cursorOn bool) string {
 	if query == "" {
 		if cursorOn {

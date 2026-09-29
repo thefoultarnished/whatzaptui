@@ -149,11 +149,11 @@ func (x m) chatPaneGeometry() chatPaneGeom {
 }
 
 func (x m) renderRightMain(rightW, mainH int) string {
-	if x.reactionPicker.IsOpen {
-		// Draw the list over the chat instead of replacing it.
+	if box := x.floatingPanel(rightW, mainH); box != "" {
+		// Draw the panel over the chat instead of replacing it.
 		under := x
-		under.reactionPicker.IsOpen = false
-		return overlayCenter(under.renderRightMain(rightW, mainH), x.reactionPicker.RenderReactionsBox(pickerStyle(), rightW, mainH), rightW, mainH)
+		under.closeFloatingPanels()
+		return overlayCenter(under.renderRightMain(rightW, mainH), box, rightW, mainH)
 	}
 	hasFlash := false
 	now := time.Now()
@@ -163,44 +163,8 @@ func (x m) renderRightMain(rightW, mainH int) string {
 			break
 		}
 	}
-	if x.themePicker.IsOpen {
-		return x.themePicker.RenderTheme(pickerStyle(), rightW, mainH)
-	}
-	if x.pointerPicker.IsOpen {
-		return x.pointerPicker.Render(pickerStyle(), rightW, mainH)
-	}
-	if x.typingAnimationPicker.IsOpen {
-		return x.typingAnimationPicker.RenderTypingAnimation(pickerStyle(), rightW, mainH, x.shineFrame)
-	}
-	if x.mediaIconPicker.IsOpen {
-		return x.mediaIconPicker.Render(pickerStyle(), rightW, mainH)
-	}
-	if x.mediaViewPicker.IsOpen {
-		return x.mediaViewPicker.Render(pickerStyle(), rightW, mainH)
-	}
-	if x.userlistIconPicker.IsOpen {
-		return x.userlistIconPicker.Render(pickerStyle(), rightW, mainH)
-	}
-	if x.splashSpeedPicker.IsOpen {
-		return x.splashSpeedPicker.Render(pickerStyle(), rightW, mainH)
-	}
-	if x.helpPicker.IsOpen {
-		return x.helpPicker.RenderHelp(pickerStyle(), rightW, mainH)
-	}
-	if x.settingsPicker.IsOpen {
-		return x.settingsPicker.RenderSettings(pickerStyle(), rightW, mainH)
-	}
-	if x.confirmDialog.open {
-		return x.confirmDialog.Render(rightW, mainH)
-	}
-	if x.fontTestOpen {
-		return renderFontTest(rightW, mainH)
-	}
 	if x.fileBrowserOpen {
 		return x.renderFileBrowser(rightW, mainH)
-	}
-	if x.emojiPickerOpen {
-		return x.renderEmojiPickerPane(rightW, mainH)
 	}
 	if !hasFlash && x.mainCache != nil {
 		if cached, ok := x.mainCache.get(x.revision, rightW, mainH); ok {

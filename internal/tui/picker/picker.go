@@ -192,7 +192,7 @@ func activeCell(s Style, st lipgloss.Style, label string) string {
 	return st.Render(fmt.Sprintf("▶ %s", label))
 }
 
-func (p *Picker) Render(s Style, w, h int) string {
+func (p *Picker) RenderBox(s Style, w, h int) string {
 	titleStyle := lipgloss.NewStyle().Foreground(s.pick(s.Text, s.Accent)).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(s.Muted)
 	activeStyle := lipgloss.NewStyle().Foreground(s.pick(s.Text, s.Brand)).Bold(true)
@@ -238,10 +238,7 @@ func (p *Picker) Render(s Style, w, h int) string {
 			Width(pickerW).
 			Render(strings.Join(lines, "\n"))
 
-		return lipgloss.NewStyle().
-			Width(w).
-			Height(max(1, h)).
-			Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
+		return box
 	}
 
 	pickerW := min(54, max(44, w/2))
@@ -293,8 +290,5 @@ func (p *Picker) Render(s Style, w, h int) string {
 		Width(pickerW).
 		Render(strings.Join(lines, "\n"))
 
-	return lipgloss.NewStyle().
-		Width(w).
-		Height(max(1, h)).
-		Render(lipgloss.Place(w, max(1, h), lipgloss.Center, lipgloss.Center, box))
+	return box
 }
