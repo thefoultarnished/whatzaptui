@@ -82,14 +82,22 @@ func (a *App) handleChats(w http.ResponseWriter, r *http.Request) {
 		mergedByID[c.ID] = mergeChat(mergedByID[c.ID], c)
 	}
 
+	pinned := a.pinnedChats()
+	archived := a.archivedChats()
 	chats := make([]Chat, 0, len(mergedByID))
 	for _, c := range mergedByID {
 		if c.ConversationTimestamp == 0 && c.UnreadCount == 0 {
 			continue
 		}
+		c.Archived = archived[c.ID]
+		c.Pinned = pinned[c.ID] && !c.Archived
 		chats = append(chats, c)
 	}
+	// Pinned chats first, each group newest message first.
 	sort.Slice(chats, func(i, j int) bool {
+		if chats[i].Pinned != chats[j].Pinned {
+			return chats[i].Pinned
+		}
 		return chats[i].ConversationTimestamp > chats[j].ConversationTimestamp
 	})
 	named := 0

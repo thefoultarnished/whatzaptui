@@ -98,6 +98,7 @@ type Config struct {
 	SoundProfile         int    `json:"sound_profile"`
 	PointerIcon          string `json:"pointer_icon,omitempty"`
 	SendTypingIndicator  bool   `json:"send_typing_indicator"`
+	ShowOnline           bool   `json:"show_online"`
 	FlashTaskbar         bool   `json:"flash_taskbar"`
 	NotificationsEnabled bool   `json:"notifications_enabled"`
 	TypingAnimationStyle string `json:"typing_animation_style,omitempty"`
@@ -146,6 +147,8 @@ type chat struct {
 	Subject               string `json:"subject"`
 	ConversationTimestamp int64  `json:"conversationTimestamp"`
 	UnreadCount           int    `json:"unreadCount"`
+	Pinned                bool   `json:"pinned,omitempty"`
+	Archived              bool   `json:"archived,omitempty"`
 }
 
 // UnmarshalJSON sanitizes wire-derived display text (Name, Subject) to strip
@@ -274,6 +277,7 @@ type m struct {
 	// Navigation & Input
 	active, mode, search, searchInput, input string
 	sidebarTab                               string
+	archivedView                             bool // Chats tab lists archived chats instead of the normal ones
 	sel, scroll, sideScroll                  int
 	sidebarFocused                           bool
 	leftInput                                string
@@ -361,6 +365,7 @@ type m struct {
 	bootAt, msgActivityUntil                                     time.Time
 	msgActivityType                                              string // "sent" or "received"
 	flashUntil, typingChats, lastNotifyAt                        map[string]time.Time
+	presence                                                     map[string]presenceInfo
 	lastNotifyGlobal, lastTypeTime, lastPasteLikeAt              time.Time
 	lastClickY                                                   int
 	lastClickTime                                                time.Time

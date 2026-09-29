@@ -148,6 +148,14 @@ func (s *Store) migrate() error {
 			tokenize = 'porter unicode61'
 		);
 
+		CREATE TABLE IF NOT EXISTS chat_pins (
+			chat_id TEXT PRIMARY KEY
+		);
+
+		CREATE TABLE IF NOT EXISTS chat_archives (
+			chat_id TEXT PRIMARY KEY
+		);
+
 		CREATE TABLE IF NOT EXISTS fts_backfill_meta(
 			key TEXT PRIMARY KEY,
 			val INTEGER NOT NULL DEFAULT 0

@@ -716,7 +716,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 // of waiting for more round trips. Safe pre-login: the backend serves
 // whatever is cached (possibly empty) without requiring a session.
 func (x m) prefetchOnWSOpen() tea.Cmd {
-	return tea.Batch(getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL))
+	return tea.Batch(getChats(x.reqCtx(), x.client, x.baseURL), getContacts(x.reqCtx(), x.client, x.baseURL), x.presenceSyncCmd())
 }
 
 // maybeFinishSplash checks whether all startup stages (authentication, chats, contacts)

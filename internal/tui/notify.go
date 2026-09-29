@@ -115,7 +115,7 @@ func (x *m) refreshWindowTitleCmd() tea.Cmd {
 func (x *m) unreadNamedChatCount() int {
 	count := 0
 	for _, ch := range x.chats {
-		if ch.UnreadCount > 0 {
+		if ch.UnreadCount > 0 && !ch.Archived {
 			count++
 		}
 	}
@@ -137,7 +137,7 @@ func (x *m) unreadTitleNames(limit int) []string {
 	out := make([]string, 0, limit)
 	seen := map[string]struct{}{}
 	for _, ch := range x.chats {
-		if ch.UnreadCount <= 0 {
+		if ch.UnreadCount <= 0 || ch.Archived {
 			continue
 		}
 		n := firstNameForTitle(x.nameFor(ch.ID))

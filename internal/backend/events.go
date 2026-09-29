@@ -22,6 +22,9 @@ func (a *App) bindEvents() {
 	if client == nil {
 		return
 	}
+	// Full app state syncs replay every stored action as an event. Pins need
+	// that to learn what is already pinned on the phone.
+	client.EmitAppStateEventsOnFullSync = true
 	client.AddEventHandler(func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Connected:
@@ -32,9 +35,7 @@ func (a *App) bindEvents() {
 			a.mu.Unlock()
 			a.actionLog.Event("client.connected", nil)
 			go func() {
-				presCtx, presCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer presCancel()
-				if err := client.SendPresence(presCtx, types.PresenceAvailable); err != nil {
+				if err := a.sendOwnPresence(client); err != nil {
 					a.actionLog.Event("client.presence.error", map[string]string{
 						"err": truncateErr(err),
 					})
@@ -47,6 +48,7 @@ func (a *App) bindEvents() {
 				go a.bootstrapFromStore()
 			}
 			go a.refreshGroupMetadata()
+			go a.resyncChatFlagsOnce(client)
 			a.broadcast(EventEnvelope{Type: "ready"})
 			a.broadcast(EventEnvelope{Type: "chats:loaded"})
 		case *events.Disconnected:
@@ -160,7 +162,8 @@ func (a *App) bindEvents() {
 				}
 			}
 		case *events.MarkChatAsRead:
-			if v == nil {
+			// Full syncs replay old read state; only live changes matter here.
+			if v == nil || v.FromFullSync {
 				return
 			}
 			chatID := a.canonicalizeChatID(v.JID.String())
@@ -187,6 +190,20 @@ func (a *App) bindEvents() {
 			ev := a.toWireCallEvent("ended", v.BasicCallMeta, "")
 			ev.Reason = strings.TrimSpace(v.Reason)
 			a.broadcast(EventEnvelope{Type: "call", Payload: ev})
+		case *events.Pin:
+			if v != nil {
+				a.applyPin(v.JID, v.Action.GetPinned(), v.FromFullSync)
+			}
+		case *events.Archive:
+			if v != nil {
+				a.applyArchive(v.JID, v.Action.GetArchived(), v.FromFullSync)
+			}
+		case *events.Presence:
+			if v != nil {
+				if p := a.wirePresence(v); p["chatId"] != "" {
+					a.broadcast(EventEnvelope{Type: "presence", Payload: p})
+				}
+			}
 		case *events.ChatPresence:
 			chatID := a.canonicalizeChatID(v.Chat.String())
 			senderID := a.canonicalizeChatID(v.Sender.String())

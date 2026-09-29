@@ -37,6 +37,11 @@ func (x *m) materializePendingSendAsNewline() {
 
 func (x m) handleNavKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
+	case "?":
+		// Same screen as /help. Nav mode types nothing, so this key is free here.
+		x.helpPicker.Open("")
+		x.invalidate()
+		return x, nil
 	case "/":
 		x.mode, x.search, x.searchInput, x.sel = "search", "", "", 0
 		x.sidebarFocused = true
@@ -187,7 +192,7 @@ func (x m) handleMsgSearchKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.msgSearchSel = 0
 		x.msgSearchErr = ""
 		x.invalidate()
-		return x, getMsgsAround(x.reqCtx(), x.client, x.baseURL, hit.ChatID, hit.MessageID, 100)
+		return x, tea.Batch(getMsgsAround(x.reqCtx(), x.client, x.baseURL, hit.ChatID, hit.MessageID, 100), x.subscribePresenceCmd())
 	default:
 		if len(k.Runes) > 0 {
 			x.msgSearchInput += string(k.Runes)

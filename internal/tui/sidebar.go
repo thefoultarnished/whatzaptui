@@ -58,6 +58,9 @@ func (x m) sidebarItems() []chat {
 		if ch.ID == "" || ch.ID == "status@broadcast" {
 			continue
 		}
+		if ch.Archived != x.archivedView {
+			continue
+		}
 		out = append(out, ch)
 	}
 	return out
@@ -81,26 +84,35 @@ func contactSortKey(name string) (class int, key string) {
 }
 
 // selectedChatID returns the ID of the chat currently highlighted in the
-// sidebar (x.sel into x.chats), or "" if there's no valid selection. Used to
-// re-anchor x.sel to the same chat after x.chats is re-sorted.
+// sidebar (x.sel into the visible list), or "" if there's no valid selection.
+// Used to re-anchor x.sel to the same chat after x.chats is re-sorted.
 func (x m) selectedChatID() string {
-	if x.sidebarTab == "contacts" || x.sel < 0 || x.sel >= len(x.chats) {
+	if x.sidebarTab == "contacts" {
 		return ""
 	}
-	return x.chats[x.sel].ID
+	if items := x.filtered(); x.sel >= 0 && x.sel < len(items) {
+		return items[x.sel].ID
+	}
+	return ""
 }
 
-// resortChats re-sorts x.chats by ConversationTimestamp (most recent first)
+// resortChats re-sorts x.chats: pinned chats first, then by ConversationTimestamp (most recent first)
 // and, if selectedID is non-empty, moves x.sel so it keeps pointing at that
 // chat - otherwise the sidebar highlight (and anything that targets it, like
 // Alt+B/Alt+W) would silently jump to whatever chat ends up at the old index
 // when an incoming message reorders the list.
 func (x *m) resortChats(selectedID string) {
-	sort.Slice(x.chats, func(i, j int) bool { return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp })
+	sort.Slice(x.chats, func(i, j int) bool {
+		if x.chats[i].Pinned != x.chats[j].Pinned {
+			return x.chats[i].Pinned
+		}
+		return x.chats[i].ConversationTimestamp > x.chats[j].ConversationTimestamp
+	})
 	if selectedID == "" {
 		return
 	}
-	for i, c := range x.chats {
+	// x.sel indexes the visible list (archived chats are hidden from it).
+	for i, c := range x.filtered() {
 		if c.ID == selectedID {
 			x.sel = i
 			return
@@ -335,6 +347,7 @@ func (x m) openSelectedChat() (tea.Model, tea.Cmd) {
 	// but only dispatch to the network if the WhatsApp session is already ready.
 	batch := []tea.Cmd{
 		getMsgs(x.reqCtx(), x.client, x.baseURL, x.active, 120),
+		x.subscribePresenceCmd(),
 	}
 	if x.status == "ready" {
 		batch = append(batch, postJSON(x.reqCtx(), x.client, x.baseURL+"/messages/read", map[string]string{"chatId": x.active}, func([]byte) tea.Msg { return dataErr{} }))
