@@ -715,8 +715,8 @@ func (x m) handleLeftInput(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return x, x.setTopBar("unknown command: " + txt)
 	case tea.KeyTab:
-		if best := commandBestMatch(x.leftInput); best != "" {
-			x.leftInput = best
+		if step := commandStep(x.leftInput); step != "" {
+			x.leftInput = step
 		} else {
 			x.leftInputFocused = false
 		}
