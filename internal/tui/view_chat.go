@@ -303,11 +303,12 @@ func (x m) chatMessageBlocks(w, h int) ([][]string, []int64, []string) {
 		reactionLine := ""
 		reactionMerged := false
 		if rxns, ok := reactionsFor[msg.Key.ID]; ok && len(rxns) > 0 {
-			// Split into known contacts vs others.
+			// The first maxNamedReactions known reactors are shown by name;
+			// everyone else is grouped into per-emoji counts.
 			var contactRxns []reactionRender
 			otherEmojis := map[string]int{}
 			for _, rxn := range rxns {
-				if rxn.isContact {
+				if rxn.isContact && len(contactRxns) < maxNamedReactions {
 					contactRxns = append(contactRxns, rxn)
 				} else {
 					otherEmojis[rxn.emoji]++
@@ -753,6 +754,21 @@ func (x m) chatMessageBlocks(w, h int) ([][]string, []int64, []string) {
 	return msgBlocks, msgTimestamps, msgIDs
 }
 
+const maxNamedReactions = 2
+
+// reactorShortName keeps only the first word of a name to save space, with ".."
+// marking that more of the name was cut ("Nav Ray" -> "Nav..").
+func reactorShortName(full string) string {
+	words := strings.Fields(full)
+	if len(words) == 0 {
+		return ""
+	}
+	if len(words) == 1 {
+		return truncate(words[0], 10)
+	}
+	return truncate(words[0], 10) + ".."
+}
+
 type reactionRender struct {
 	emoji     string
 	name      string
@@ -774,7 +790,7 @@ func (x m) collectReactions(items []wireMsg) map[string][]reactionRender {
 				senderNum := num(sid)
 				isKnown := rIsMe || strings.TrimSpace(fullName) != "" || x.names[senderNum] != "" || x.whitelist[senderNum] != ""
 				if !msg.Key.FromMe {
-					rSender = truncate(fullName, 10)
+					rSender = reactorShortName(fullName)
 				}
 				reactionsFor[targetID] = append(reactionsFor[targetID], reactionRender{
 					emoji:     emoji,

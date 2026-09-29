@@ -27,7 +27,7 @@ func TestStoreOpenAndMigrate(t *testing.T) {
 		t.Fatal("expected non-nil DB handle")
 	}
 
-	tables := []string{"chat_permissions", "whitelist_default", "messages", "chats", "contacts", "messages_fts", "fts_backfill_meta"}
+	tables := []string{"chat_permissions", "whitelist_default", "messages", "chats", "chat_pins", "chat_archives", "contacts", "messages_fts", "fts_backfill_meta"}
 	for _, tbl := range tables {
 		var name string
 		err := s.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type IN ('table', 'shadow') AND name = ?`, tbl).Scan(&name)

@@ -152,6 +152,9 @@ var helpCommands = []struct {
 	{"/mouseon", "Enable mouse"},
 	{"/mouseoff", "Disable mouse"},
 	// Contacts
+	{"/pin", "Pin or unpin a chat (synced with phone)"},
+	{"/archive", "Archive or unarchive a chat (synced with phone)"},
+	{"/archived", "Show archived chats, again to go back"},
 	{"/rename", "Rename a contact"},
 	{"/whitelist", "Allow a contact"},
 	{"/whitelistall", "Allow all"},
@@ -313,6 +316,7 @@ var settingsDefs = []struct {
 	getStr     func() string
 }{
 	{"Send typing status", false, func() bool { return currentConfig.SendTypingIndicator }, func(v bool) { currentConfig.SendTypingIndicator = v }, nil},
+	{"Show online status", false, func() bool { return currentConfig.ShowOnline }, func(v bool) { currentConfig.ShowOnline = v }, nil},
 	{"Message sounds", false, func() bool { return currentConfig.SoundEnabled }, func(v bool) { currentConfig.SoundEnabled = v }, nil},
 	{"Mouse support", false, func() bool { return currentConfig.MouseEnabled }, func(v bool) { currentConfig.MouseEnabled = v }, nil},
 	{"Flash taskbar", false, func() bool { return currentConfig.FlashTaskbar }, func(v bool) { currentConfig.FlashTaskbar = v }, nil},

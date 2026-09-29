@@ -57,13 +57,46 @@ func TestActiveChatSuppressesUnreadDot(t *testing.T) {
 		t.Fatalf("expected 2 lines, got %d", len(lines))
 	}
 
-	// Active chat should NOT contain unread dot
-	if strings.Contains(lines[0], "\u25cf") {
-		t.Fatalf("active chat should not display unread dot, got: %q", lines[0])
+	// Active chat should NOT show an unread count
+	if strings.HasSuffix(strings.TrimRight(ansiStripRe.ReplaceAllString(lines[0], ""), " "), "3") {
+		t.Fatalf("active chat should not display unread count, got: %q", lines[0])
 	}
 
-	// Inactive chat with unread count SHOULD contain unread dot
-	if !strings.Contains(lines[1], "\u25cf") {
-		t.Fatalf("inactive chat should display unread dot, got: %q", lines[1])
+	// Inactive chat with unread count SHOULD show it at the end of the row
+	if !strings.HasSuffix(ansiStripRe.ReplaceAllString(lines[1], ""), "5 ") {
+		t.Fatalf("inactive chat should display unread count, got: %q", lines[1])
+	}
+}
+
+func TestUnreadBadgeText(t *testing.T) {
+	cases := map[int]string{1: "1", 9: "9", 10: "10", 99: "99", 100: "99+", 5000: "99+"}
+	for n, want := range cases {
+		if got := unreadBadgeText(n); got != want {
+			t.Errorf("unreadBadgeText(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+// Rows must keep the same width whatever the badge width, and long names
+// must still truncate around the badge.
+func TestUnreadBadgeKeepsRowWidth(t *testing.T) {
+	x := m{sel: 5, mode: "nav"}
+	chats := []chat{
+		{ID: "1@g.us", Name: "Read Chat"},
+		{ID: "2@g.us", Name: "One", UnreadCount: 7},
+		{ID: "3@g.us", Name: "Two", UnreadCount: 42},
+		{ID: "4@g.us", Name: "Three", UnreadCount: 250},
+		{ID: "5@g.us", Name: "A very long chat name that must be cut off somewhere", UnreadCount: 250},
+	}
+	lines := x.renderUserList(chats, 0, len(chats), 30)
+	wants := []string{"", "7", "42", "99+", "99+"}
+	for i, l := range lines {
+		vis := ansiStripRe.ReplaceAllString(l, "")
+		if w := runeDisplayWidth(vis); w != 30 {
+			t.Errorf("row %d width = %d, want 30: %q", i, w, vis)
+		}
+		if wants[i] != "" && !strings.HasSuffix(vis, wants[i]+" ") {
+			t.Errorf("row %d should end with %q and one space: %q", i, wants[i], vis)
+		}
 	}
 }

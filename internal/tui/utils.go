@@ -131,6 +131,7 @@ func loadConfig() {
 		SoundEnabled:         true,
 		SoundProfile:         2,
 		SendTypingIndicator:  true,
+		ShowOnline:           true,
 		FlashTaskbar:         true,
 		NotificationsEnabled: true,
 		SplashStageSpeed:     "normal",

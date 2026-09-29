@@ -184,6 +184,8 @@ func (x *m) runGlobalCommand(txt string) (tea.Cmd, bool) {
 		}
 		x.syncingHistory = true
 		return tea.Batch(x.setTopBar("Syncing history..."), syncHistory(x.reqCtx(), x.client, x.baseURL)), true
+	case "/archived":
+		return x.toggleArchivedView(), true
 	case "/allcontacts":
 		currentConfig.ShowAllContacts = !currentConfig.ShowAllContacts
 		saveConfig()
@@ -279,6 +281,10 @@ func (x *m) runPermissionCommand(txt string, includeGlobal bool) (tea.Cmd, bool)
 			blockContact(x.reqCtx(), x.client, x.baseURL, x.active),
 			setWhitelistEntry(x.reqCtx(), x.client, x.baseURL, n, "", 0),
 		), true
+	case txt == "/pin":
+		return x.togglePin(includeGlobal), true
+	case txt == "/archive":
+		return x.toggleArchive(includeGlobal), true
 	case strings.HasPrefix(txt, "/rename "):
 		name := strings.TrimSpace(strings.TrimPrefix(txt, "/rename "))
 		if name == "" {

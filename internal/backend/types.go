@@ -54,6 +54,11 @@ type Chat struct {
 	Subject               string `json:"subject,omitempty"`
 	ConversationTimestamp int64  `json:"conversationTimestamp"`
 	UnreadCount           int    `json:"unreadCount"`
+	// Pinned is filled in when chats are served (see handleChats); it is not
+	// part of the persisted chat state.
+	Pinned bool `json:"pinned,omitempty"`
+	// Archived is filled in the same way as Pinned.
+	Archived bool `json:"archived,omitempty"`
 }
 
 type Contact struct {
@@ -206,6 +211,11 @@ type App struct {
 	wsClients map[*websocket.Conn]*wsClient
 
 	needsBootstrapSync bool
+	showOnline         bool // guarded by mu; see setShowOnline
+	flagsResynced      bool // guarded by mu; see resyncChatFlagsOnce
+	flagSeenMu         sync.Mutex
+	pinSeen            map[string]bool // pins seen during resyncChatFlags; nil otherwise
+	archiveSeen        map[string]bool // archives seen during resyncChatFlags; nil otherwise
 	historySyncing     bool
 	shuttingDown       bool
 	dbLifecycleMu      sync.RWMutex

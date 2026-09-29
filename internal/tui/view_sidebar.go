@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -46,7 +47,11 @@ func (x m) renderSide(w, h int) string {
 	}
 
 	var chatsTab, contactsTab string
-	if x.sidebarTab == "chats" {
+	if x.sidebarTab == "chats" && x.archivedView {
+		// No room for the shortcut hint beside the longer label.
+		chatsTab = chatsActiveStyle.Render("Archived")
+		contactsTab = peopleInactiveStyle.Render(labelStyle.Render("People") + " " + shortcutStyle.Render("alt+p"))
+	} else if x.sidebarTab == "chats" {
 		chatsTab = chatsActiveStyle.Render("Chats " + activeShortcutStyle.Render("alt+c"))
 		contactsTab = peopleInactiveStyle.Render(labelStyle.Render("People") + " " + shortcutStyle.Render("alt+p"))
 	} else {
@@ -189,8 +194,16 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 
 		_, typing := x.typingChats[c.ID]
 		adjustW := 0
+		badge := ""
 		if typing {
 			adjustW = 2
+		} else if hasUnread {
+			badge = unreadBadgeText(c.UnreadCount)
+			adjustW = len(badge)
+		}
+		// A pinned row keeps one more cell for the space after the pin mark.
+		if c.Pinned && !typing {
+			adjustW++
 		}
 
 		if isMarqueeRow && graphemeCount(nameText) > nameWidth-adjustW {
@@ -263,10 +276,15 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 			dots := frames[(x.shineFrame/3)%len(frames)]
 			content += unreadStyle.Foreground(accent).Bold(true).Render(dots)
 		} else {
+			// Pin mark plus one space after it; typing dots take this spot instead.
+			tail := unreadStyle.Render(" ")
+			if c.Pinned {
+				tail = unreadStyle.Foreground(muted).Render(pinMark()) + unreadStyle.Render(" ")
+			}
 			if hasUnread {
-				content += unreadStyle.Foreground(accent).Render("\u25cf")
+				content += unreadStyle.Foreground(accent).Render(badge) + tail
 			} else {
-				content += unreadStyle.Render(" ")
+				content += tail
 			}
 		}
 		leftPad := " "
@@ -279,6 +297,15 @@ func (x m) renderUserList(f []chat, start, end, w int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// unreadBadgeText is the unread count drawn at the end of a chat row. It is
+// 1 to 3 cells wide ("7", "42", "99+") so the name column can reserve room.
+func unreadBadgeText(n int) string {
+	if n > 99 {
+		return "99+"
+	}
+	return strconv.Itoa(n)
 }
 
 type sidebarRowState struct {

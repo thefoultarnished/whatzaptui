@@ -13,7 +13,9 @@ import (
 func (x m) renderHeaderContainer(contentW, leftW int) string {
 	totalUnread := 0
 	for _, c := range x.chats {
-		totalUnread += c.UnreadCount
+		if !c.Archived {
+			totalUnread += c.UnreadCount
+		}
 	}
 
 	logo := " " + logoStyle.Render("WhatZap")
@@ -80,6 +82,16 @@ func (x m) renderHeaderContainer(contentW, leftW int) string {
 		}
 		if time.Now().Before(x.msgActivityUntil) && x.msgActivityType == "sent" {
 			centerContent += accentStyle.Copy().Bold(false).Render("  " + spinnerFrames[x.spinnerFrame] + " message sent")
+		}
+		if label, online := x.presenceLabel(x.active); label != "" {
+			dot, color := "○ ", muted
+			if online {
+				dot, color = "● ", v2Color(statusSuccess, brand)
+			}
+			text := "  " + dot + label
+			if lipgloss.Width(centerContent)+lipgloss.Width(text) <= centerW {
+				centerContent += lipgloss.NewStyle().Foreground(color).Render(text)
+			}
 		}
 		if strings.HasSuffix(x.active, "@g.us") {
 			if gp, ok := x.groupPreviews[x.active]; ok && len(gp.members) > 0 {

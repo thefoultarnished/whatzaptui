@@ -743,6 +743,80 @@ func TestRenderMainGroupReactionShowsReactorName(t *testing.T) {
 	}
 }
 
+func TestReactorShortName(t *testing.T) {
+	cases := map[string]string{
+		"Nav Ray":            "Nav..",
+		"Roy taylor jones":   "Roy..",
+		"Casey":              "Casey",
+		"  Ann  ":            "Ann",
+		"":                   "",
+		"Bartholomewwwwww":   "Barthol...",
+		"Bartholomewwwwww X": "Barthol.....",
+	}
+	for in, want := range cases {
+		if got := reactorShortName(in); got != want {
+			t.Errorf("reactorShortName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRenderMainGroupReactionsNameFirstTwoThenCount(t *testing.T) {
+	setTestTheme(t, Monokai)
+
+	groupID := "120363@g.us"
+	msg := wireMsg{
+		Message:          map[string]any{"conversation": "lunch?"},
+		MessageTimestamp: 1710000100,
+	}
+	msg.Key.ID = "m9"
+	msg.Key.RemoteJID = groupID
+
+	msgs := []wireMsg{msg}
+	contacts := map[string]contact{}
+	byNumber := map[string]contact{}
+	people := []struct{ num, name, emoji string }{
+		{"15550000001", "Ann", "fire"},
+		{"15550000002", "Bob", "fire"},
+		{"15550000003", "Cat", "fire"},
+		{"15550000004", "Dan", "fire"},
+		{"15550000005", "Eve", "heart"},
+	}
+	for i, p := range people {
+		jid := p.num + "@s.whatsapp.net"
+		contacts[jid] = contact{ID: jid, Notify: p.name}
+		byNumber[p.num] = contact{ID: jid, Notify: p.name}
+		r := wireMsg{
+			Message: map[string]any{
+				"reactionMessage": map[string]any{"targetMsgID": "m9", "emoji": p.emoji},
+			},
+			MessageTimestamp: int64(1710000101 + i),
+		}
+		r.Key.ID = "r" + p.name
+		r.Key.RemoteJID = groupID
+		r.Key.Participant = jid
+		msgs = append(msgs, r)
+	}
+
+	model := m{
+		active:           groupID,
+		msgs:             map[string][]wireMsg{groupID: msgs},
+		contacts:         contacts,
+		contactsByNumber: byNumber,
+	}
+
+	rendered := model.renderMain(100, 8)
+	for _, want := range []string{"fire Ann", "fire Bob", "fire 2", "heart 1"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %q in: %q", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Cat", "Dan", "Eve"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("%q should be folded into a count, got: %q", unwanted, rendered)
+		}
+	}
+}
+
 func TestRenderUserListHighlightedNameUsesMarqueeOffset(t *testing.T) {
 	setTestTheme(t, Monokai)
 

@@ -18,6 +18,12 @@ func mouseModeCmd(enabled bool) tea.Cmd {
 }
 
 func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Ctrl+L repaints a garbled terminal (after a resize, or another program
+	// writing over the screen). Handled first so it works in every mode.
+	if k.Type == tea.KeyCtrlL {
+		x.invalidate()
+		return x, tea.ClearScreen
+	}
 	if x.fileBrowserOpen {
 		return x.handleFileBrowser(k)
 	}
@@ -63,6 +69,7 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		x.selectedMsgID = ""
 		x.scroll = 0
 		x.sidebarTab = "chats"
+		x.archivedView = false
 		x.sidebarFocused = true
 		x.leftInputFocused = false
 		if x.mode == "chat" || x.mode == "search" {
@@ -316,6 +323,9 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					x.mouseEnabled = currentConfig.MouseEnabled
 					cmd = mouseModeCmd(x.mouseEnabled)
 					return x, tea.Batch(x.setTopBar(msg), cmd)
+				}
+				if i := x.settingsPicker.Idx; i >= 0 && i < len(settingsDefs) && settingsDefs[i].name == "Show online status" {
+					return x, tea.Batch(x.setTopBar(msg), x.sendShowOnlineCmd())
 				}
 				return x, x.setTopBar(msg)
 			} else if action == "selector" {

@@ -64,6 +64,7 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 			getChats(x.reqCtx(), x.client, x.baseURL),
 			getContacts(x.reqCtx(), x.client, x.baseURL),
 			getWhitelist(x.reqCtx(), x.client, x.baseURL),
+			x.presenceSyncCmd(),
 		)
 		if splashHoldDuration > 0 {
 			cmds = append(cmds, tea.Tick(splashHoldDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }))
@@ -183,7 +184,7 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 			}
 			if notify {
 				soundCmd := tea.Cmd(nil)
-				if x.soundEnabled {
+				if currentConfig.SoundEnabled {
 					soundCmd = playSoundProfileCmd(x.soundProfile)
 				}
 				notifyCmds := []tea.Cmd{
@@ -270,6 +271,8 @@ func (x m) handleWSEvent(v wsEvtMsg) (tea.Model, tea.Cmd) {
 		} else {
 			log.Printf("ws typing unmarshal: %v", err)
 		}
+	case "presence":
+		x.applyPresence(v.evt.Payload)
 	case "call":
 		var cm callMsg
 		if err := json.Unmarshal(v.evt.Payload, &cm); err == nil {

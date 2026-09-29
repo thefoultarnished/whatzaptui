@@ -135,12 +135,12 @@ func TestSettingsNavigationAcrossSections(t *testing.T) {
 	p.Open("")
 	press := func(k tea.KeyType) { p.HandleSettings(tea.KeyMsg{Type: k}) }
 
-	// Down from the lone last toggle (odd count leaves it alone in col 0)
-	// enters OPTIONS at col 0.
+	// Down from the last toggle row (col 1 with an even count) enters OPTIONS
+	// in the same column.
 	p.Idx = settingsIndex(t, "Show phone number")
 	press(tea.KeyDown)
-	if got := settingsDefs[p.Idx].name; got != "Typing style" {
-		t.Fatalf("Down from last toggle row = %q, want Typing style", got)
+	if got := settingsDefs[p.Idx].name; got != "Media icon style" {
+		t.Fatalf("Down from last toggle row = %q, want Media icon style", got)
 	}
 	// Down into the last row lands in the same column.
 	p.Idx = settingsIndex(t, "Chat list icons")
@@ -162,8 +162,8 @@ func TestSettingsNavigationAcrossSections(t *testing.T) {
 	// Up from OPTIONS returns to the last toggle row.
 	p.Idx = settingsIndex(t, "Typing style")
 	press(tea.KeyUp)
-	if got := settingsDefs[p.Idx].name; got != "Show phone number" {
-		t.Fatalf("Up from first option = %q, want Show phone number", got)
+	if got := settingsDefs[p.Idx].name; got != "Menu borders" {
+		t.Fatalf("Up from first option = %q, want Menu borders", got)
 	}
 }
 
@@ -202,7 +202,7 @@ func TestSettingsTogglesShowStatusDot(t *testing.T) {
 func TestSettingsOptionsStartNewRowAfterOddToggles(t *testing.T) {
 	orig := settingsDefs
 	defer func() { settingsDefs = orig }()
-	settingsDefs = append(append(orig[:0:0], orig[:6]...), orig[8:]...) // drop two toggles → 7
+	settingsDefs = append(append(orig[:0:0], orig[:5]...), orig[8:]...) // drop three toggles → 7
 
 	p := newSettingsPicker()
 	firstOpt := 0
@@ -219,7 +219,7 @@ func TestSettingsOptionsStartNewRowAfterOddToggles(t *testing.T) {
 	}
 
 	p.Open("")
-	p.Idx = settingsIndex(t, "Mouse support") // row 1, col 0 above the lone toggle
+	p.Idx = settingsIndex(t, "Mouse support") // row 1, above the lone toggle
 	p.HandleSettings(tea.KeyMsg{Type: tea.KeyDown})
 	p.HandleSettings(tea.KeyMsg{Type: tea.KeyDown})
 	p.HandleSettings(tea.KeyMsg{Type: tea.KeyDown})
