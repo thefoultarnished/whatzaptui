@@ -233,7 +233,9 @@ func newPointerPicker() picker.Picker {
 	for i, p := range pointerList {
 		items[i] = picker.Item{Key: p.icon, Label: fmt.Sprintf("%s  %s", p.icon, p.displayName)}
 	}
-	return picker.New("Select Pointer Icon", items)
+	p := picker.New("Select Pointer Icon", items)
+	p.Panel = true
+	return p
 }
 
 // --- Typing animation ---

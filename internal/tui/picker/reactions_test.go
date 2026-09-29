@@ -81,3 +81,26 @@ func TestRenderReactionsScrollHints(t *testing.T) {
 		t.Fatalf("scrolled list should hint above and drop the first entry:\n%s", mid)
 	}
 }
+
+func TestPanelPickerRendersWithZeroStyleInOneAndTwoColumns(t *testing.T) {
+	var s Style
+	short := New("Short", []Item{{Key: "a", Label: "alpha"}, {Key: "b", Label: "beta"}})
+	short.Panel = true
+	long := New("Long", make([]Item, 9))
+	for i := range long.Items {
+		long.Items[i] = Item{Key: string(rune('a' + i)), Label: "a fairly long label number " + string(rune('a'+i))}
+	}
+	long.Panel = true
+	for name, p := range map[string]*Picker{"short": &short, "long": &long} {
+		out := ansi.ReplaceAllString(p.RenderBox(s, 80, 30), "")
+		if !strings.Contains(out, p.Title) || !strings.Contains(out, "Enter") {
+			t.Errorf("%s: panel missing title or hint:\n%s", name, out)
+		}
+	}
+	if long.isSingleCol() {
+		t.Error("a long panel list must use two columns even with wide labels")
+	}
+	if !short.isSingleCol() {
+		t.Error("a short panel list stays one column")
+	}
+}

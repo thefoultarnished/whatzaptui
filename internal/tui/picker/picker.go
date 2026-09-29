@@ -47,11 +47,14 @@ type Group struct {
 type Picker struct {
 	IsOpen    bool
 	SingleCol bool
-	Idx       int
-	Title     string
-	Items     []Item
-	Groups    []Group
-	original  string
+	// Panel draws the list as a raised panel like the theme and help pickers,
+	// and lets a long list use two columns however wide its labels are.
+	Panel    bool
+	Idx      int
+	Title    string
+	Items    []Item
+	Groups   []Group
+	original string
 }
 
 func New(title string, items []Item) Picker {
@@ -59,6 +62,9 @@ func New(title string, items []Item) Picker {
 }
 
 func (p *Picker) isSingleCol() bool {
+	if p.Panel {
+		return p.SingleCol || len(p.Items) <= 4
+	}
 	if p.SingleCol || len(p.Items) <= 4 {
 		return true
 	}
@@ -121,6 +127,13 @@ func (p *Picker) rightColLen() int {
 // Handle processes a key event. Returns ("confirm", true), ("cancel", true),
 // or ("", false) if the picker just moved.
 func (p *Picker) Handle(k tea.KeyMsg) (action string, done bool) {
+	if p.Panel && !p.isSingleCol() {
+		// Two-column panels move exactly like the theme picker.
+		if len(p.Groups) == 0 {
+			p.Groups = []Group{{Count: len(p.Items)}}
+		}
+		return p.handleGrouped(k, themeCols)
+	}
 	if p.isSingleCol() {
 		switch k.Type {
 		case tea.KeyUp, tea.KeyLeft:
@@ -193,6 +206,9 @@ func activeCell(s Style, st lipgloss.Style, label string) string {
 }
 
 func (p *Picker) RenderBox(s Style, w, h int) string {
+	if p.Panel {
+		return p.renderPanelBox(s, w, h)
+	}
 	titleStyle := lipgloss.NewStyle().Foreground(s.pick(s.Text, s.Accent)).Bold(true)
 	hintStyle := lipgloss.NewStyle().Foreground(s.Muted)
 	activeStyle := lipgloss.NewStyle().Foreground(s.pick(s.Text, s.Brand)).Bold(true)
