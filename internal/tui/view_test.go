@@ -226,8 +226,14 @@ func TestCommandBoxTopBorderUsesCrossJunction(t *testing.T) {
 	if runes[0] != '├' {
 		t.Errorf("command box divider left border = %q, want '├'", string(runes[0]))
 	}
-	if runes[len(runes)-1] != '┤' {
-		t.Errorf("command box divider right border = %q, want '┤'", string(runes[len(runes)-1]))
+	// With the shortcuts showing, the raised part ends at the frame wall ('│')
+	// and the roof row above it is what joins the frame ('┤').
+	if runes[len(runes)-1] != '│' {
+		t.Errorf("command box divider right border = %q, want '│' (the raised part meets the frame wall)", string(runes[len(runes)-1]))
+	}
+	roofRunes := []rune(ansiStripRe.ReplaceAllString(lines[len(lines)-4], ""))
+	if roofRunes[len(roofRunes)-1] != '┤' {
+		t.Errorf("roof row right border = %q, want '┤'", string(roofRunes[len(roofRunes)-1]))
 	}
 	if !strings.Contains(cmdDividerLine, "┼") {
 		t.Errorf("command box divider missing '┼' cross junction: %q", cmdDividerLine)
@@ -356,8 +362,12 @@ func TestInputDividerColorUniformOnFocus(t *testing.T) {
 	divRight := linesRight[len(linesRight)-3]
 	plainRight := ansiStripRe.ReplaceAllString(divRight, "")
 	rRight := []rune(plainRight)
-	if !strings.Contains(plainRight, "┼") || rRight[0] != '├' || rRight[len(rRight)-1] != '┤' {
-		t.Errorf("right focused divider missing proper junctions: %q", plainRight)
+	if !strings.Contains(plainRight, "┼") || rRight[0] != '├' || rRight[len(rRight)-1] != '│' {
+		t.Errorf("right focused divider should join the sidebar on the left and end at the frame wall: %q", plainRight)
+	}
+	roofRight := []rune(ansiStripRe.ReplaceAllString(linesRight[len(linesRight)-4], ""))
+	if roofRight[len(roofRight)-1] != '┤' {
+		t.Errorf("right focused roof row should join the frame with '┤': %q", string(roofRight))
 	}
 }
 
