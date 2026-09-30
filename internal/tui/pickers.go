@@ -138,64 +138,104 @@ func newThemePicker() picker.Picker {
 
 // --- Help ---
 
-var helpCommands = []struct {
-	cmd  string
-	desc string
-}{
-	// Interface
-	{"/help", "Show commands"},
-	{"/theme", "Change color theme"},
-	{"/pointer", "Change message icon"},
-	{"/settings", "Open settings panel"},
-	{"/fonttest", "Show Nerd Font icon test"},
-	{"/emoji", "Open emoji picker"},
-	{"/mouseon", "Enable mouse"},
-	{"/mouseoff", "Disable mouse"},
-	// Contacts
-	{"/pin", "Pin or unpin a chat (synced with phone)"},
-	{"/archive", "Archive a chat (synced with phone)"},
-	{"/unarchive", "Unarchive a chat (synced with phone)"},
-	{"/rename", "Rename a contact"},
-	{"/whitelist", "Allow a contact"},
-	{"/whitelistall", "Allow all"},
-	{"/blacklist", "Block a contact"},
-	{"/blacklistall", "Block all"},
-	{"/block", "Block on WhatsApp"},
-	{"/synccontacts", "Sync contacts"},
-	{"/syncgroups", "Sync groups"},
-	{"/synchistory", "Sync chat history"},
-	{"/allcontacts", "Toggle stored-only People"},
-	{"Alt+B / Alt+W", "Toggle whitelist for selected contact"},
-	{"Alt+D", "Archived chats, again to go back"},
-	{"Alt+G", "Who reacted to the selected message"},
-	// Sounds
-	{"/soundon", "Enable sounds"},
-	{"/soundoff", "Disable sounds"},
-	{"/sound1", "Sound profile 1"},
-	{"/sound2", "Sound profile 2"},
-	{"/sound3", "Sound profile 3"},
-	{"/sound4", "Sound profile 4"},
-	{"/sound5", "Sound profile 5"},
-	// Session
-	{"/logout", "Log out"},
-	{"/restart", "Restart app"},
-	{"/exit", "Exit"},
+// helpEntry is one line of the help screen. key is what is shown ("/pin",
+// "Alt+D"); run is the text Enter puts in the command box, or "" for keyboard
+// shortcuts and anything that is not a command.
+type helpEntry struct {
+	key, desc, run string
 }
 
-var helpGroupDefs = []picker.Group{
-	{Name: "Interface", Count: 8},
-	{Name: "Contacts", Count: 16},
-	{Name: "Sounds", Count: 7},
-	{Name: "Session", Count: 3},
+type helpSection struct {
+	name    string
+	entries []helpEntry
+}
+
+func cmdEntry(cmd, desc string) helpEntry { return helpEntry{cmd, desc, cmd} }
+
+// helpSections is the whole help screen. Each section owns its entries, so the
+// groups drawn by the picker can never drift from the list.
+var helpSections = []helpSection{
+	{"Chats", []helpEntry{
+		cmdEntry("/pin", "Pin or unpin chat"),
+		cmdEntry("/archive", "Archive chat"),
+		cmdEntry("/unarchive", "Unarchive chat"),
+		cmdEntry("/rename", "Rename a contact"),
+		cmdEntry("/block", "Block on WhatsApp"),
+	}},
+	{"Access", []helpEntry{
+		cmdEntry("/whitelist", "Allow a contact"),
+		cmdEntry("/whitelistall", "Allow everyone"),
+		cmdEntry("/blacklist", "Disallow a contact"),
+		cmdEntry("/blacklistall", "Disallow everyone"),
+	}},
+	{"Sync", []helpEntry{
+		cmdEntry("/synccontacts", "Sync contacts"),
+		cmdEntry("/syncgroups", "Sync groups"),
+		cmdEntry("/synchistory", "Sync chat history"),
+		cmdEntry("/allcontacts", "Stored-only People"),
+	}},
+	{"Messages", []helpEntry{
+		cmdEntry("/emoji", "Emoji picker"),
+		{"/send", "Send a file", "/send "},
+	}},
+	{"Look and sound", []helpEntry{
+		cmdEntry("/theme", "Change color theme"),
+		cmdEntry("/pointer", "Change message icon"),
+		cmdEntry("/typinganimation", "Change typing style"),
+		cmdEntry("/splashspeed", "Startup speed"),
+		cmdEntry("/fonttest", "Nerd Font test"),
+		cmdEntry("/mouseon", "Enable mouse"),
+		cmdEntry("/mouseoff", "Disable mouse"),
+		cmdEntry("/soundon", "Enable sounds"),
+		cmdEntry("/soundoff", "Disable sounds"),
+		{"/sound1 to 5", "Pick a sound profile", "/sound"},
+	}},
+	{"App", []helpEntry{
+		cmdEntry("/settings", "Open settings"),
+		cmdEntry("/help", "Show this help"),
+		cmdEntry("/logout", "Log out"),
+		cmdEntry("/restart", "Restart the app"),
+		cmdEntry("/exit", "Exit"),
+	}},
+	{"Shortcuts: navigate", []helpEntry{
+		{"Ctrl+K", "Open the command box", ""},
+		{"Alt+C", "Chats tab", ""},
+		{"Alt+P", "People tab", ""},
+		{"Alt+S", "Search chats", ""},
+		{"Alt+D", "Archived chats", ""},
+		{"Ctrl+F", "Search messages", ""},
+		{"Alt+Up/Down", "Switch chat", ""},
+		{"?", "Open help", ""},
+	}},
+	{"Shortcuts: messages", []helpEntry{
+		{"Alt+R", "Reply to a message", ""},
+		{"Alt+A", "Edit last message", ""},
+		{"Alt+G", "Who reacted", ""},
+		{"Alt+E", "Emoji picker", ""},
+		{"Alt+F", "Attach a file", ""},
+		{"Alt+V", "Paste from clipboard", ""},
+		{"Alt+O", "Open latest media", ""},
+		{"Ctrl+J", "New line", ""},
+	}},
+	{"Shortcuts: other", []helpEntry{
+		{"Alt+B / Alt+W", "Toggle whitelist", ""},
+		{"Alt+M", "Mouse on or off", ""},
+		{"Ctrl+L", "Redraw the screen", ""},
+		{"Ctrl+C", "Quit", ""},
+	}},
 }
 
 func newHelpPicker() picker.Picker {
-	items := make([]picker.Item, len(helpCommands))
-	for i, c := range helpCommands {
-		items[i] = picker.Item{Key: c.cmd, Label: c.cmd + "  " + c.desc, Desc: c.desc}
+	var items []picker.Item
+	var groups []picker.Group
+	for _, sec := range helpSections {
+		for _, e := range sec.entries {
+			items = append(items, picker.Item{Key: e.key, Label: e.key + "  " + e.desc, Desc: e.desc, Value: e.run})
+		}
+		groups = append(groups, picker.Group{Name: sec.name, Count: len(sec.entries)})
 	}
-	p := picker.New("Commands", items)
-	p.Groups = helpGroupDefs
+	p := picker.New("Help", items)
+	p.Groups = groups
 	return p
 }
 

@@ -326,9 +326,19 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x, nil
 	}
 	if x.helpPicker.IsOpen {
-		_, done := x.helpPicker.HandleHelp(k)
+		action, done := x.helpPicker.HandleHelp(k)
 		if done {
+			// Enter on a command puts it in the command box, ready to run or finish.
+			run := ""
+			if action == "confirm" && x.helpPicker.Idx >= 0 && x.helpPicker.Idx < len(x.helpPicker.Items) {
+				run = x.helpPicker.Items[x.helpPicker.Idx].Value
+			}
 			x.helpPicker.Close(false)
+			if run != "" {
+				x.leftInput = run
+				x.leftInputFocused = true
+				x.sidebarFocused = false
+			}
 			x.invalidate()
 		}
 		return x, nil

@@ -88,7 +88,7 @@ func (p *Picker) handleGrouped(k tea.KeyMsg, cols int) (action string, done bool
 
 const (
 	themeCols = 2
-	helpCols  = 3
+	helpCols  = 2
 )
 
 // HandleTheme navigates the 2-column grouped theme grid.
@@ -197,9 +197,11 @@ func (p *Picker) RenderThemeBox(s Style, w, h int) string {
 	return s.panelBox(lines, pickerW, padH, w, h)
 }
 
-// RenderHelp renders a 3-column grouped command palette for the help picker.
-// Depth is achieved via a raised surface colour applied to every style - no
-// border characters, so the panel floats cleanly.
+// RenderHelpBox renders the grouped help palette: titled sections in two
+// columns, keys lined up so the descriptions read as a column. Depth comes from
+// a raised surface colour applied to every style, no border characters. When
+// the sections are taller than the pane, only the part around the selected
+// entry is drawn, with "more above / below" markers.
 func (p *Picker) RenderHelpBox(s Style, w, h int) string {
 	const padH = 3
 
@@ -215,17 +217,25 @@ func (p *Picker) RenderHelpBox(s Style, w, h int) string {
 	descSt := bg(lipgloss.NewStyle().Foreground(s.pick(s.TextSecondary, s.Muted)))
 	activeCmdSt := bg(lipgloss.NewStyle().Foreground(s.Accent).Bold(true).Underline(true))
 	activeDescSt := bg(lipgloss.NewStyle().Foreground(s.Text))
+	moreSt := bg(lipgloss.NewStyle().Foreground(s.Muted))
 	colFill := bg(lipgloss.NewStyle().Width(colW))
-
-	lines := []string{titleRow, divLine, ln("")}
 
 	// sp and indent are background-safe: plain spaces would bleed terminal black.
 	sp := bg(lipgloss.NewStyle()).Render(" ")
 	indent := bg(lipgloss.NewStyle()).Render("  ")
 
+	// Keys are padded to the widest one (within reason) so descriptions line up.
+	keyW := 0
+	for _, it := range p.Items {
+		keyW = max(keyW, Width(it.Key))
+	}
+	keyW = min(keyW, colW/2)
+
+	var body []string
+	selLine := 0
 	itemOffset := 0
 	for gi, g := range p.Groups {
-		lines = append(lines, groupHeader(s, bg, ln, g.Name)...)
+		body = append(body, groupHeader(s, bg, ln, g.Name)...)
 
 		rows := (g.Count + helpCols - 1) / helpCols
 		for r := range rows {
@@ -238,35 +248,56 @@ func (p *Picker) RenderHelpBox(s Style, w, h int) string {
 				}
 				fi := itemOffset + localIdx
 				item := p.Items[fi]
-				desc := item.Desc
-
-				maxDesc := max(0, colW-len([]rune(item.Key))-4)
-				if len([]rune(desc)) > maxDesc {
-					desc = string([]rune(desc)[:maxDesc])
+				if fi == p.Idx {
+					selLine = len(body)
 				}
+
+				key := Truncate(item.Key, keyW)
+				keyPad := strings.Repeat(" ", max(0, keyW-Width(key)))
+				desc := Truncate(item.Desc, max(0, colW-keyW-4))
 
 				var cell string
 				if fi == p.Idx && s.V2 {
 					// Shared selection style: marker + BgSelected + TextPrimary.
 					selSt := lipgloss.NewStyle().Background(s.BgSelected)
 					cell = selSt.Width(colW).Render(s.marker(s.BgSelected) + selSt.Render(" ") +
-						selSt.Foreground(s.Text).Bold(true).Render(item.Key) + selSt.Render(" ") + selSt.Foreground(s.Text).Render(desc))
+						selSt.Foreground(s.Text).Bold(true).Render(key) + selSt.Render(keyPad+" ") + selSt.Foreground(s.Text).Render(desc))
 				} else if fi == p.Idx {
-					cell = colFill.Render(indent + activeCmdSt.Render(item.Key) + sp + activeDescSt.Render(desc))
+					cell = colFill.Render(indent + activeCmdSt.Render(key) + bg(lipgloss.NewStyle()).Render(keyPad) + sp + activeDescSt.Render(desc))
 				} else {
-					cell = colFill.Render(indent + cmdSt.Render(item.Key) + sp + descSt.Render(desc))
+					cell = colFill.Render(indent + cmdSt.Render(key) + bg(lipgloss.NewStyle()).Render(keyPad) + sp + descSt.Render(desc))
 				}
 				row.WriteString(cell)
 			}
-			lines = append(lines, ln(row.String()))
+			body = append(body, ln(row.String()))
 		}
 		itemOffset += g.Count
 		if gi < len(p.Groups)-1 {
-			lines = append(lines, ln(""))
+			body = append(body, ln(""))
 		}
 	}
 
-	hint := ln(s.hintRow(bg, "↑→↓←", "navigate", "Enter", "run", "Esc", "close"))
+	// Rows left for the sections: the pane minus the title, two dividers, the
+	// hint, blank lines, the panel padding, the outline, and one spare row above
+	// and below so the chat still shows around the panel.
+	const chrome = 6 + 2 + 2 + 2
+	maxBody := max(6, h-chrome)
+	if len(body) > maxBody {
+		start := min(max(selLine-maxBody/2, 0), len(body)-maxBody)
+		end := start + maxBody
+		window := append([]string(nil), body[start:end]...)
+		if start > 0 {
+			window[0] = ln(moreSt.Render("▲ more above"))
+		}
+		if end < len(body) {
+			window[len(window)-1] = ln(moreSt.Render("▼ more below"))
+		}
+		body = window
+	}
+
+	lines := []string{titleRow, divLine, ln("")}
+	lines = append(lines, body...)
+	hint := ln(s.hintRow(bg, "↑→↓←", "navigate", "Enter", "use", "Esc", "close"))
 	lines = append(lines, ln(""), divLine, hint)
 	return s.panelBox(lines, pickerW, padH, w, h)
 }

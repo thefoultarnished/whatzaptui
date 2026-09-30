@@ -192,25 +192,30 @@ func TestEveryPopupLeavesChatVisibleBehindIt(t *testing.T) {
 		name  string
 		open  func(x *m)
 		title string
+		tall  bool // the popup is long, so give it a taller pane to leave room for the chat
 	}{
-		{"theme", func(x *m) { x.themePicker = newThemePicker(); x.themePicker.Open("tokyonight") }, "Select Theme"},
-		{"pointer", func(x *m) { x.pointerPicker = newPointerPicker(); x.pointerPicker.Open("") }, newPointerPicker().Title},
-		{"typing style", func(x *m) { x.typingAnimationPicker = newTypingAnimationPicker(); x.typingAnimationPicker.Open("") }, newTypingAnimationPicker().Title},
-		{"media icons", func(x *m) { x.mediaIconPicker = newMediaIconPicker(); x.mediaIconPicker.Open("") }, newMediaIconPicker().Title},
-		{"media preview", func(x *m) { x.mediaViewPicker = newMediaViewPicker(); x.mediaViewPicker.Open("") }, newMediaViewPicker().Title},
-		{"chat list icons", func(x *m) { x.userlistIconPicker = newUserlistIconPicker(); x.userlistIconPicker.Open("") }, newUserlistIconPicker().Title},
-		{"startup speed", func(x *m) { x.splashSpeedPicker = newSplashSpeedPicker(); x.splashSpeedPicker.Open("") }, newSplashSpeedPicker().Title},
-		{"help", func(x *m) { x.helpPicker = newHelpPicker(); x.helpPicker.Open("") }, "Commands"},
-		{"settings", func(x *m) { x.settingsPicker = newSettingsPicker(); x.settingsPicker.Open("") }, "Settings"},
-		{"confirm", func(x *m) { x.confirmDialog.Open("Log out?", "Are you sure?", "logout") }, "Log out?"},
-		{"font test", func(x *m) { x.fontTestOpen = true }, "Nerd Font glyph"},
+		{"theme", func(x *m) { x.themePicker = newThemePicker(); x.themePicker.Open("tokyonight") }, "Select Theme", false},
+		{"pointer", func(x *m) { x.pointerPicker = newPointerPicker(); x.pointerPicker.Open("") }, newPointerPicker().Title, false},
+		{"typing style", func(x *m) { x.typingAnimationPicker = newTypingAnimationPicker(); x.typingAnimationPicker.Open("") }, newTypingAnimationPicker().Title, false},
+		{"media icons", func(x *m) { x.mediaIconPicker = newMediaIconPicker(); x.mediaIconPicker.Open("") }, newMediaIconPicker().Title, false},
+		{"media preview", func(x *m) { x.mediaViewPicker = newMediaViewPicker(); x.mediaViewPicker.Open("") }, newMediaViewPicker().Title, false},
+		{"chat list icons", func(x *m) { x.userlistIconPicker = newUserlistIconPicker(); x.userlistIconPicker.Open("") }, newUserlistIconPicker().Title, false},
+		{"startup speed", func(x *m) { x.splashSpeedPicker = newSplashSpeedPicker(); x.splashSpeedPicker.Open("") }, newSplashSpeedPicker().Title, false},
+		{"help", func(x *m) { x.helpPicker = newHelpPicker(); x.helpPicker.Open("") }, "Help", true},
+		{"settings", func(x *m) { x.settingsPicker = newSettingsPicker(); x.settingsPicker.Open("") }, "Settings", false},
+		{"confirm", func(x *m) { x.confirmDialog.Open("Log out?", "Are you sure?", "logout") }, "Log out?", false},
+		{"font test", func(x *m) { x.fontTestOpen = true }, "Nerd Font glyph", false},
 	}
 	for _, c := range popups {
+		paneH := h
+		if c.tall {
+			paneH = 100
+		}
 		x := reactModel(reactMsg("r1", "m1", "fire", "1", 101))
-		x.w, x.h = 120, 80
+		x.w, x.h = 120, 120
 		c.open(&x)
 
-		out := x.renderRightMain(w, h)
+		out := x.renderRightMain(w, paneH)
 		plain := ansiStripRe.ReplaceAllString(out, "")
 		if !strings.Contains(plain, c.title) {
 			t.Errorf("%s: popup title %q missing:\n%s", c.name, c.title, plain)
@@ -219,8 +224,8 @@ func TestEveryPopupLeavesChatVisibleBehindIt(t *testing.T) {
 			t.Errorf("%s: the chat is not visible behind the popup:\n%s", c.name, plain)
 		}
 		lines := strings.Split(out, "\n")
-		if len(lines) != h {
-			t.Errorf("%s: pane height = %d, want %d", c.name, len(lines), h)
+		if len(lines) != paneH {
+			t.Errorf("%s: pane height = %d, want %d", c.name, len(lines), paneH)
 		}
 		for i, l := range lines {
 			if lw := ansi.StringWidth(l); lw != w {
