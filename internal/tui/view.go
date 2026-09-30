@@ -137,8 +137,10 @@ func (x m) chatPaneGeometry() chatPaneGeom {
 	extraInputH := max(0, draftLineCount(typedInput, inputTextAreaW)-1)
 
 	// Main pane shrinks to accommodate multiline input. The 4 rows are the
-	// two-line header plus the chat input box.
-	mainH := max(1, outerH-4-replyBarH-attachmentBarH-extraInputH-mentionPopupH)
+	// two-line header plus the chat input box, and roofH is the row above the
+	// message box that holds the roof over its shortcuts.
+	roofH := x.composerRoofRows(rightW)
+	mainH := max(1, outerH-4-roofH-replyBarH-attachmentBarH-extraInputH-mentionPopupH)
 	return chatPaneGeom{
 		leftW:  leftW,
 		rightW: rightW,

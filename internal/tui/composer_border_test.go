@@ -50,9 +50,10 @@ func TestRenderComposerTopBorderResponsiveTiers(t *testing.T) {
 
 	// Wide (105): contains all 4 shortcuts in label [key] order
 	wide := stripGraphicsSeqs(model.renderComposerTopBorder(105, true, false))
-	// With room to spare the shortcuts start 20 cells further right.
-	if !strings.HasPrefix(wide, strings.Repeat("─", 27)+" emoji") {
-		t.Fatalf("wide width should start with 27 dashes then the first shortcut: %q", wide)
+	// The shortcuts are pushed all the way right: a rule, the wall, then the
+	// shortcuts ending one cell short of the frame.
+	if !strings.Contains(wide, "─╯ emoji") || !strings.HasSuffix(wide, "edit [alt+a] ") {
+		t.Fatalf("wide width should be a rule, the wall, the shortcuts and one space: %q", wide)
 	}
 	if !strings.Contains(wide, "emoji [alt+e]") || !strings.Contains(wide, "file [alt+f]") ||
 		!strings.Contains(wide, "reply [alt+r]") || !strings.Contains(wide, "edit [alt+a]") {
@@ -148,54 +149,73 @@ func TestRenderComposerTopBorderItalics(t *testing.T) {
 	}
 }
 
-func headerIndent(border string) int {
-	n := 0
-	for _, r := range border {
-		if r != '─' {
-			break
-		}
-		n++
-	}
-	return n
-}
-
-func TestComposerHeaderShiftsRightOnlyAsFarAsThereIsRoom(t *testing.T) {
+func TestComposerHeaderIsPushedAllTheWayRight(t *testing.T) {
 	model := m{mode: "chat", active: "12345@s.whatsapp.net"}
-	// All four shortcuts need 65 cells, plus the 8 cell rule before them and 3
-	// after. The spare room beyond 76 cells becomes the shift, up to 20.
-	for _, w := range []int{30, 55, 60, 76, 77, 80, 90, 96, 105, 140} {
-		shift := min(20, max(0, w-76))
-		border := stripGraphicsSeqs(model.renderComposerTopBorder(w, true, false))
-		if got, want := headerIndent(border), 7+shift; got != want {
-			t.Errorf("width %d: %d leading dashes, want %d (shift %d): %q", w, got, want, shift, border)
+	shortcutsW := runeDisplayWidth("emoji [alt+e]  ·  file [alt+f]  ·  reply [alt+r]  ·  edit [alt+a]")
+	for w := 74; w <= 160; w++ {
+		line := stripGraphicsSeqs(model.renderComposerTopBorder(w, true, false))
+		if runeDisplayWidth(line) != w {
+			t.Fatalf("width %d: header is %d cells wide: %q", w, runeDisplayWidth(line), line)
 		}
-		if runeDisplayWidth(border) != w {
-			t.Errorf("width %d: header is %d cells wide", w, runeDisplayWidth(border))
+		// All four shortcuts fit from 74 cells, and the row ends with them plus
+		// one space, so the raised part reaches the right side.
+		if !strings.HasSuffix(line, "edit [alt+a] ") {
+			t.Fatalf("width %d: shortcuts are not at the right end: %q", w, line)
+		}
+		wall := runeIndex(line, '╯')
+		if want := w - shortcutsW - 3; wall != want {
+			t.Fatalf("width %d: wall at column %d, want %d: %q", w, wall, want, line)
+		}
+		if strings.ContainsRune(line, '╰') {
+			t.Fatalf("width %d: the raised part must not drop back down on the right: %q", w, line)
 		}
 	}
 }
 
-func TestComposerHeaderShiftNeverHidesAShortcut(t *testing.T) {
+func TestComposerHeaderShowsAsManyShortcutsAsFit(t *testing.T) {
 	model := m{mode: "chat", active: "12345@s.whatsapp.net"}
+	all := []string{"emoji [alt+e]", "file [alt+f]", "reply [alt+r]", "edit [alt+a]"}
+	prev := 0
 	for w := 24; w <= 140; w++ {
-		border := stripGraphicsSeqs(model.renderComposerTopBorder(w, true, false))
-		if runeDisplayWidth(border) != w {
-			t.Fatalf("width %d: header is %d cells wide: %q", w, runeDisplayWidth(border), border)
+		line := stripGraphicsSeqs(model.renderComposerTopBorder(w, true, false))
+		if runeDisplayWidth(line) != w {
+			t.Fatalf("width %d: header is %d cells wide: %q", w, runeDisplayWidth(line), line)
 		}
-		if w >= 76 {
-			for _, want := range []string{"emoji [alt+e]", "file [alt+f]", "reply [alt+r]", "edit [alt+a]"} {
-				if !strings.Contains(border, want) {
-					t.Fatalf("width %d: %q is missing (the shift must not push shortcuts out): %q", w, want, border)
-				}
+		count := 0
+		for _, sc := range all {
+			if strings.Contains(line, sc) {
+				count++
 			}
 		}
+		if count < prev {
+			t.Fatalf("width %d: %d shortcuts, fewer than at a narrower width (%d)", w, count, prev)
+		}
+		prev = count
+		// Shortcuts are dropped from the end, never from the start.
+		for i := 0; i < count; i++ {
+			if !strings.Contains(line, all[i]) {
+				t.Fatalf("width %d: %q is missing while a later shortcut shows: %q", w, all[i], line)
+			}
+		}
+		if w >= 74 && count != 4 {
+			t.Fatalf("width %d: only %d shortcuts, all four fit from 74 cells", w, count)
+		}
 	}
 }
 
-func TestComposerHeaderModesAlsoShift(t *testing.T) {
+func TestComposerModeHeadersAreRightAlignedToo(t *testing.T) {
 	edit := m{mode: "chat", active: "12345@s.whatsapp.net", editPickMode: true}
 	border := stripGraphicsSeqs(edit.renderComposerTopBorder(105, true, false))
-	if headerIndent(border) != 27 || !strings.Contains(border, "edit") {
-		t.Fatalf("the edit header should start 20 cells further right too: %q", border)
+	if !strings.HasSuffix(border, "cancel [esc] ") || !strings.Contains(border, "─╯ edit") {
+		t.Fatalf("the edit header should end at the right side: %q", border)
 	}
+}
+
+func runeIndex(s string, r rune) int {
+	for i, c := range []rune(s) {
+		if c == r {
+			return i
+		}
+	}
+	return -1
 }
