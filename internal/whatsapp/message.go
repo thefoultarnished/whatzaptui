@@ -275,3 +275,17 @@ func ExtractSearchableText(msg map[string]any) string {
 	}
 	return b.String()
 }
+
+// BuildForwardedTextMessage builds a text message that WhatsApp shows with its
+// "Forwarded" label.
+func BuildForwardedTextMessage(text string) *waE2E.Message {
+	return &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(text),
+			ContextInfo: &waE2E.ContextInfo{
+				IsForwarded:     proto.Bool(true),
+				ForwardingScore: proto.Uint32(1),
+			},
+		},
+	}
+}

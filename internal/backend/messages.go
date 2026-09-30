@@ -1702,6 +1702,9 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 		text := ext.GetText()
 		entry := map[string]any{"text": text}
 		if ctx := ext.GetContextInfo(); ctx != nil {
+			if ctx.GetIsForwarded() {
+				entry["forwarded"] = true
+			}
 			if len(ctx.GetMentionedJID()) > 0 {
 				var resolvedMentions []string
 				for _, m := range ctx.GetMentionedJID() {

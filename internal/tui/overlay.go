@@ -69,6 +69,8 @@ func (x m) floatingPanel(w, h int) string {
 	switch {
 	case x.reactionPicker.IsOpen:
 		return x.reactionPicker.RenderReactionsBox(ps, w, h)
+	case x.forwardPicker.IsOpen:
+		return x.forwardPicker.RenderFilterListBox(ps, w, h)
 	case x.themePicker.IsOpen:
 		return x.themePicker.RenderThemeBox(ps, w, h)
 	case x.pointerPicker.IsOpen:
@@ -101,6 +103,7 @@ func (x m) floatingPanel(w, h int) string {
 // model, so the chat underneath can be rendered on its own.
 func (x *m) closeFloatingPanels() {
 	x.reactionPicker.IsOpen = false
+	x.forwardPicker.IsOpen = false
 	x.themePicker.IsOpen = false
 	x.pointerPicker.IsOpen = false
 	x.typingAnimationPicker.IsOpen = false

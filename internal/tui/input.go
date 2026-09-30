@@ -170,6 +170,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			x.openEmojiPicker()
 		}
 		return x, nil
+	case "alt+t":
+		if x.status == "ready" && x.mode == "chat" && x.active != "" {
+			cmd := x.openForwardPicker()
+			return x, cmd
+		}
+		return x, nil
 	case "alt+g":
 		if x.status == "ready" && x.mode == "chat" && x.active != "" {
 			cmd := x.openReactionList()
@@ -315,6 +321,19 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			receivedMsgIcon = x.pointerPicker.Close(false)
 			x.invalidate()
 		}
+		return x, nil
+	}
+	if x.forwardPicker.IsOpen {
+		action, done := x.forwardPicker.HandleFilterList(k)
+		if !done {
+			x.invalidate()
+			return x, nil
+		}
+		if action == "confirm" {
+			cmd := x.finishForwardPicker()
+			return x, cmd
+		}
+		x.closeForwardPicker()
 		return x, nil
 	}
 	if x.reactionPicker.IsOpen {

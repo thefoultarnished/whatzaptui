@@ -320,6 +320,9 @@ type m struct {
 	pointerPicker         picker.Picker
 	helpPicker            picker.Picker
 	reactionPicker        picker.Picker // who reacted to the selected message
+	forwardPicker         picker.Picker // chats to forward the selected message to
+	forwardMsgID          string
+	forwardFromChat       string
 	settingsPicker        picker.Picker
 	typingAnimationPicker picker.Picker
 	mediaIconPicker       picker.Picker

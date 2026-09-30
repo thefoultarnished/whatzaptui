@@ -105,6 +105,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("/sync/history", a.handleSyncHistory)
 	mux.HandleFunc("/messages", a.handleMessages)
 	mux.HandleFunc("/messages/send", a.handleSendMessage)
+	mux.HandleFunc("/messages/forward", a.handleForwardMessage)
 	mux.HandleFunc("/messages/send-file", a.handleSendFile)
 	mux.HandleFunc("/messages/read", a.handleMarkRead)
 	mux.HandleFunc("/profile-picture", a.handleProfilePicture)

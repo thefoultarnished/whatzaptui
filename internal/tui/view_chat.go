@@ -105,6 +105,9 @@ func (x m) chatMessageBlocks(w, h int) ([][]string, []int64, []string) {
 	for i := len(items) - 1; i >= 0; i-- {
 		msg := items[i]
 		msgBody := renderMessageBody(msg.Message)
+		if isForwarded(msg.Message) {
+			msgBody = forwardedLabel + "\n" + msgBody
+		}
 		if msgBody == "" {
 			msgBody = "[media]"
 		}
