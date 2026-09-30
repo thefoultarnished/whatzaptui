@@ -28,6 +28,10 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return x.handleFileBrowser(k)
 	}
 
+	if x.poll.open {
+		return x.handlePollKey(k)
+	}
+
 	if x.confirmDialog.open {
 		action, done := x.confirmDialog.Handle(k)
 		if !done {

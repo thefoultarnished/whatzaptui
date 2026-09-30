@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -20,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
 	waWeb "go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
@@ -1491,16 +1493,101 @@ func (a *App) toWireMessage(evt *events.Message) WireMessage {
 	}
 }
 
+// decryptPollVote decrypts an incoming poll vote. WhatsApp can address the same
+// chat by phone number or by LID, and the poll's secret is stored under one of
+// them, so when the first try finds no secret the other form of the chat is tried.
+func (a *App) decryptPollVote(client *whatsmeow.Client, evt *events.Message) (*waE2E.PollVoteMessage, error) {
+	ctx := context.Background()
+	vote, err := client.DecryptPollVote(ctx, evt)
+	if !errors.Is(err, whatsmeow.ErrOriginalMessageSecretNotFound) {
+		return vote, err
+	}
+	alt := *evt
+	switch evt.Info.Chat.Server {
+	case types.HiddenUserServer:
+		pn, perr := a.getPNForLID(evt.Info.Chat)
+		if perr != nil || pn.User == "" {
+			return nil, err
+		}
+		alt.Info.Chat = pn
+	case types.DefaultUserServer:
+		lid, lerr := client.Store.LIDs.GetLIDForPN(ctx, evt.Info.Chat)
+		if lerr != nil || lid.User == "" {
+			return nil, err
+		}
+		alt.Info.Chat = lid
+	default:
+		return nil, err
+	}
+	return client.DecryptPollVote(ctx, &alt)
+}
+
+// pollVoteError names why a vote could not be read, without any chat or phone
+// details, so it is safe to write to the action log.
+func pollVoteError(err error) string {
+	switch {
+	case errors.Is(err, whatsmeow.ErrOriginalMessageSecretNotFound):
+		return "secret-not-found"
+	case strings.Contains(err.Error(), "message authentication failed"):
+		return "auth-failed"
+	case strings.Contains(err.Error(), "original message secret key"):
+		return "secret-lookup"
+	}
+	return "other"
+}
+
+// pollOptionsForVote finds the option list of the poll a vote is for. A poll is
+// stored under the chat it lives in, which is the chat the vote arrived in. The
+// key inside the vote names the chat as the voter sees it, which in a one to one
+// chat is our own number, so it is only a fallback.
+func (a *App) pollOptionsForVote(voteChat types.JID, key *waCommon.MessageKey) []string {
+	pollMsgID := key.GetID()
+	candidates := []string{voteChat.String()}
+	if remote := key.GetRemoteJID(); remote != "" {
+		candidates = append(candidates, remote)
+	}
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		chatID := a.canonicalizeChatID(c)
+		if chatID == "" || seen[chatID] {
+			continue
+		}
+		seen[chatID] = true
+		if options := a.pollOptionNames(chatID, pollMsgID); options != nil {
+			return options
+		}
+	}
+	return nil
+}
+
+// selectedPollOptions matches the option hashes of a vote against the poll's
+// option names.
+func selectedPollOptions(options []string, hashes [][]byte) []string {
+	var selected []string
+	for _, optHash := range hashes {
+		for _, name := range options {
+			if bytes.Equal(sha256OfString(name), optHash) {
+				selected = append(selected, name)
+			}
+		}
+	}
+	return selected
+}
+
 // decryptPollVoteOptions decrypts an incoming poll vote and returns the
 // selected option name(s) by matching SHA-256 hashes against the original
-// poll's option list (fetched from our message DB).
+// poll's option list (fetched from our message DB). An empty, non-nil result
+// is a removed vote and nil means the vote could not be read.
 func (a *App) decryptPollVoteOptions(evt *events.Message) []string {
 	client := a.getClient()
 	if client == nil {
 		return nil
 	}
-	vote, err := client.DecryptPollVote(context.Background(), evt)
+	vote, err := a.decryptPollVote(client.Client, evt)
 	if err != nil || vote == nil {
+		if err != nil {
+			a.actionLog.Event("poll.vote.unreadable", map[string]string{"why": pollVoteError(err)})
+		}
 		return nil
 	}
 	if len(vote.GetSelectedOptions()) == 0 {
@@ -1510,33 +1597,14 @@ func (a *App) decryptPollVoteOptions(evt *events.Message) []string {
 	if pu == nil {
 		return nil
 	}
-	pollMsgID := pu.GetPollCreationMessageKey().GetID()
-	pollChatID := pu.GetPollCreationMessageKey().GetRemoteJID()
-	if pollChatID == "" {
-		pollChatID = evt.Info.Chat.String()
-	}
-	pollChatID = a.canonicalizeChatID(pollChatID)
-	options := a.pollOptionNames(pollChatID, pollMsgID)
+	options := a.pollOptionsForVote(evt.Info.Chat, pu.GetPollCreationMessageKey())
 	if options == nil {
+		a.actionLog.Event("poll.vote.unreadable", map[string]string{"why": "poll-not-stored"})
 		return nil
 	}
-	var selected []string
-	for _, optHash := range vote.GetSelectedOptions() {
-		for _, name := range options {
-			h := sha256OfString(name)
-			if len(h) == len(optHash) {
-				match := true
-				for i := range h {
-					if h[i] != optHash[i] {
-						match = false
-						break
-					}
-				}
-				if match {
-					selected = append(selected, name)
-				}
-			}
-		}
+	selected := selectedPollOptions(options, vote.GetSelectedOptions())
+	if len(selected) == 0 {
+		a.actionLog.Event("poll.vote.unreadable", map[string]string{"why": "no-option-matched"})
 	}
 	return selected
 }

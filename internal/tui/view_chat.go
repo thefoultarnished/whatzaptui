@@ -98,6 +98,7 @@ func (x m) renderMain(w, h int) string {
 func (x m) chatMessageBlocks(w, h int) ([][]string, []int64, []string) {
 	items := x.msgs[x.active]
 	reactionsFor := x.collectReactions(items)
+	pollVotesFor := x.collectPollVotes(items)
 	needed := h + x.scroll
 	msgBlocks := [][]string{}
 	msgTimestamps := []int64{}
@@ -105,6 +106,12 @@ func (x m) chatMessageBlocks(w, h int) ([][]string, []int64, []string) {
 	for i := len(items) - 1; i >= 0; i-- {
 		msg := items[i]
 		msgBody := renderMessageBody(msg.Message)
+		if poll, ok := msg.Message["pollCreationMessage"].(map[string]any); ok {
+			msgBody = renderPollCard(poll, pollVotesFor[msg.Key.ID])
+		}
+		if _, ok := msg.Message["pollUpdateMessage"].(map[string]any); ok {
+			msgBody = x.pollVoteLine(msg)
+		}
 		if isForwarded(msg.Message) {
 			msgBody = forwardedLabel + "\n" + msgBody
 		}

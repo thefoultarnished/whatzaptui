@@ -16,7 +16,7 @@ func (x *m) toggleWhitelistForSelection() tea.Cmd {
 	if x.leftInputFocused {
 		return x.setTopBar("Finish the /command first (Esc)")
 	}
-	if x.themePicker.IsOpen || x.pointerPicker.IsOpen || x.helpPicker.IsOpen || x.reactionPicker.IsOpen || x.forwardPicker.IsOpen || x.settingsPicker.IsOpen || x.typingAnimationPicker.IsOpen || x.mediaIconPicker.IsOpen || x.mediaViewPicker.IsOpen || x.userlistIconPicker.IsOpen || x.splashSpeedPicker.IsOpen || x.fontTestOpen {
+	if x.themePicker.IsOpen || x.pointerPicker.IsOpen || x.helpPicker.IsOpen || x.reactionPicker.IsOpen || x.forwardPicker.IsOpen || x.settingsPicker.IsOpen || x.typingAnimationPicker.IsOpen || x.mediaIconPicker.IsOpen || x.mediaViewPicker.IsOpen || x.userlistIconPicker.IsOpen || x.splashSpeedPicker.IsOpen || x.fontTestOpen || x.poll.open {
 		return x.setTopBar("Close the picker first (Esc)")
 	}
 	if x.fileBrowserOpen {
@@ -146,6 +146,9 @@ func (x *m) runCommand(txt string, includeGlobal bool) (tea.Cmd, bool) {
 		return cmd, true
 	}
 	if cmd, handled := x.runMediaSendCommand(txt, includeGlobal); handled {
+		return cmd, true
+	}
+	if cmd, handled := x.runPollCommand(txt); handled {
 		return cmd, true
 	}
 	if cmd, handled := x.runUICommand(txt); handled {

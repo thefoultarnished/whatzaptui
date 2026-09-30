@@ -334,6 +334,7 @@ type m struct {
 	confirmDialog         confirmDialog
 	fontTestOpen          bool
 	emojiPickerOpen       bool
+	poll                  pollForm
 	emojiQuery            string
 	emojiSel, emojiScroll int
 	emojiResultsCache     []emojiItem
