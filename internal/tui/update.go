@@ -373,6 +373,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return x, nil
 		}
 		return x, listenFileProgress(ch)
+	case forwardedMsg:
+		return x, tea.Batch(x.setTopBar("Forwarded to "+v.to), getChats(x.reqCtx(), x.client, x.baseURL))
 	case sentMsg:
 		failedText, hadText := x.pendingSendText[v.pendingID]
 		if v.pendingID != "" {

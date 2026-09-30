@@ -79,7 +79,7 @@ func (x m) composerBorderShortcuts(inputLocked bool) ([]composerShortcut, string
 	}
 	if x.editPickMode {
 		return []composerShortcut{
-			{icon: editIcon, label: "edit message", key: ""},
+			{icon: editIcon, label: "edit", key: ""},
 			{icon: "", label: "select", key: "[enter]"},
 			{icon: "", label: "cancel", key: "[esc]"},
 		}, "mode"
@@ -93,11 +93,41 @@ func (x m) composerBorderShortcuts(inputLocked bool) ([]composerShortcut, string
 	}
 
 	return []composerShortcut{
-		{icon: emojiIcon, label: "send emoji", key: "[alt+e]"},
-		{icon: fileIcon, label: "attach file", key: "[alt+f]"},
+		{icon: emojiIcon, label: "emoji", key: "[alt+e]"},
+		{icon: fileIcon, label: "file", key: "[alt+f]"},
 		{icon: replyIcon, label: "reply", key: "[alt+r]"},
-		{icon: editIcon, label: "edit message", key: "[alt+a]"},
+		{icon: editIcon, label: "edit", key: "[alt+a]"},
 	}, "normal"
+}
+
+// composerHeaderPrefix is the rule drawn before the shortcuts in the message
+// box header, and composerHeaderShift how many cells further right they start
+// when there is room for it.
+const (
+	composerHeaderPrefix = "─────── "
+	composerHeaderShift  = 20
+)
+
+// composerChipWidth is the width of one shortcut in the header, including the
+// "  ·  " separator that goes before every shortcut but the first.
+func composerChipWidth(sc composerShortcut, withSep bool) int {
+	w := 0
+	if withSep {
+		w += runeDisplayWidth("  ·  ")
+	}
+	if sc.icon != "" {
+		w += runeDisplayWidth(sc.icon) + 1
+	}
+	if sc.label != "" {
+		w += runeDisplayWidth(sc.label)
+		if sc.key != "" {
+			w++
+		}
+	}
+	if sc.key != "" {
+		w += runeDisplayWidth(sc.key)
+	}
+	return w
 }
 
 func (x m) renderComposerTopBorder(borderW int, rightFocused, inputLocked bool) string {
@@ -126,7 +156,14 @@ func (x m) renderComposerTopBorder(borderW int, rightFocused, inputLocked bool) 
 	dotStyle := lipgloss.NewStyle().Foreground(borderCol)
 
 	shortcuts, modeType := x.composerBorderShortcuts(inputLocked)
-	prefix := "─────── "
+	// The shortcuts start composerHeaderShift cells further right, but only as
+	// far as the spare room allows, so a shortcut that used to fit never drops.
+	need := 0
+	for i, sc := range shortcuts {
+		need += composerChipWidth(sc, i > 0)
+	}
+	shift := min(composerHeaderShift, max(0, borderW-(runeDisplayWidth(composerHeaderPrefix)+need+3)))
+	prefix := strings.Repeat("─", len([]rune(composerHeaderPrefix))-1+shift) + " "
 	curW := runeDisplayWidth(prefix)
 	var sb strings.Builder
 	sb.WriteString(ruleStyle.Render(prefix))
@@ -142,19 +179,7 @@ func (x m) renderComposerTopBorder(borderW int, rightFocused, inputLocked bool) 
 		labelText := sc.label
 		keyText := sc.key
 
-		chipW := runeDisplayWidth(sep)
-		if iconText != "" {
-			chipW += runeDisplayWidth(iconText) + 1
-		}
-		if labelText != "" {
-			chipW += runeDisplayWidth(labelText)
-			if keyText != "" {
-				chipW += 1
-			}
-		}
-		if keyText != "" {
-			chipW += runeDisplayWidth(keyText)
-		}
+		chipW := composerChipWidth(sc, added > 0)
 
 		// Reserve at least 3 chars for trailing rule " ──"
 		if curW+chipW+3 > borderW {

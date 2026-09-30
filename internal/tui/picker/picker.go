@@ -29,6 +29,7 @@ type Item struct {
 	Desc string // help: command description
 
 	Selector bool   // settings: opens a sub-picker instead of toggling
+	Dim      bool   // filter list: drawn muted (for example a chat that is not allowed)
 	Value    string // settings: "ON"/"OFF" or the selector's current choice
 
 	Name  string   // typing style: display name
@@ -49,7 +50,9 @@ type Picker struct {
 	SingleCol bool
 	// Panel draws the list as a raised panel like the theme and help pickers,
 	// and lets a long list use two columns however wide its labels are.
-	Panel    bool
+	Panel bool
+	// Query is what has been typed to narrow a filter list.
+	Query    string
 	Idx      int
 	Title    string
 	Items    []Item

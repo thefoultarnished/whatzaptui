@@ -211,6 +211,7 @@ var helpSections = []helpSection{
 		{"Alt+R", "Reply to a message", ""},
 		{"Alt+A", "Edit last message", ""},
 		{"Alt+G", "Who reacted", ""},
+	{"Alt+T", "Forward a message", ""},
 		{"Alt+E", "Emoji picker", ""},
 		{"Alt+F", "Attach a file", ""},
 		{"Alt+V", "Paste from clipboard", ""},
