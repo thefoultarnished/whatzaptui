@@ -11,8 +11,7 @@ import (
 // forwardedMsg is sent when the backend has delivered a forwarded message.
 type forwardedMsg struct{ to string }
 
-// forwardText returns the text of a message that can be forwarded, or false.
-// Only text messages can be forwarded for now.
+// forwardText returns the text of a text message, or false when it has none.
 func forwardText(msg wireMsg) (string, bool) {
 	if t, ok := msg.Message["conversation"].(string); ok {
 		return t, strings.TrimSpace(t) != ""
@@ -25,14 +24,35 @@ func forwardText(msg wireMsg) (string, bool) {
 	return "", false
 }
 
+// forwardMediaKinds are the media kinds that can be forwarded.
+var forwardMediaKinds = []string{"imageMessage", "videoMessage", "documentMessage", "audioMessage"}
+
+// canForward reports whether a message can be forwarded: text, or an image,
+// video, file or audio.
+func canForward(msg wireMsg) bool {
+	if _, ok := forwardText(msg); ok {
+		return true
+	}
+	for _, kind := range forwardMediaKinds {
+		if _, ok := msg.Message[kind].(map[string]any); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // isForwarded reports whether a message carries WhatsApp's "Forwarded" mark.
 func isForwarded(msg map[string]any) bool {
-	ext, ok := msg["extendedTextMessage"].(map[string]any)
-	if !ok {
-		return false
+	for _, kind := range append([]string{"extendedTextMessage"}, forwardMediaKinds...) {
+		entry, ok := msg[kind].(map[string]any)
+		if !ok {
+			continue
+		}
+		if f, _ := entry["forwarded"].(bool); f {
+			return true
+		}
 	}
-	f, _ := ext["forwarded"].(bool)
-	return f
+	return false
 }
 
 // forwardedLabel is drawn above the text of a forwarded message.
@@ -54,8 +74,8 @@ func (x *m) openForwardPicker() tea.Cmd {
 	if src == nil {
 		return x.setTopBar("Select a message first (Alt+R or click), then Alt+T")
 	}
-	if _, ok := forwardText(*src); !ok {
-		return x.setTopBar("Only text messages can be forwarded for now")
+	if !canForward(*src) {
+		return x.setTopBar("Only text, image, video, file and audio messages can be forwarded")
 	}
 	var items []picker.Item
 	for _, c := range x.chats {

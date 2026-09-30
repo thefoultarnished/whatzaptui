@@ -50,17 +50,22 @@ func forwardTestApp(t *testing.T) *App {
 		Message:          map[string]any{"imageMessage": map[string]any{"caption": "a photo"}},
 		MessageTimestamp: 101,
 	})
+	app.upsertMessage("15550000001@s.whatsapp.net", WireMessage{
+		Key:              WireKey{ID: "rxn1", RemoteJID: "15550000001@s.whatsapp.net"},
+		Message:          map[string]any{"reactionMessage": map[string]any{"emoji": "fire"}},
+		MessageTimestamp: 102,
+	})
 	return app
 }
 
 func TestResolveForwardReturnsTheStoredText(t *testing.T) {
 	app := forwardTestApp(t)
-	text, to, jid, status, msg := app.resolveForward("15550000001@s.whatsapp.net", "text1", "15550000002@s.whatsapp.net")
+	plan, status, msg := app.resolveForward("15550000001@s.whatsapp.net", "text1", "15550000002@s.whatsapp.net")
 	if status != 0 || msg != "" {
 		t.Fatalf("status=%d msg=%q, want success", status, msg)
 	}
-	if text != "lunch at noon?" || to != "15550000002@s.whatsapp.net" || jid.User != "15550000002" {
-		t.Fatalf("got text=%q to=%q jid=%v", text, to, jid)
+	if plan.text != "lunch at noon?" || plan.to != "15550000002@s.whatsapp.net" || plan.toJID.User != "15550000002" || plan.media != nil {
+		t.Fatalf("got %+v", plan)
 	}
 }
 
@@ -74,19 +79,20 @@ func TestResolveForwardRefusals(t *testing.T) {
 		{"target not whitelisted", "15550000001@s.whatsapp.net", "text1", "15550000003@s.whatsapp.net", http.StatusForbidden},
 		{"message not found", "15550000001@s.whatsapp.net", "nope", "15550000002@s.whatsapp.net", http.StatusNotFound},
 		{"wrong source chat", "15550000009@s.whatsapp.net", "text1", "15550000002@s.whatsapp.net", http.StatusNotFound},
-		{"not a text message", "15550000001@s.whatsapp.net", "img1", "15550000002@s.whatsapp.net", http.StatusBadRequest},
+		{"media without stored details", "15550000001@s.whatsapp.net", "img1", "15550000002@s.whatsapp.net", http.StatusNotFound},
+		{"reaction", "15550000001@s.whatsapp.net", "rxn1", "15550000002@s.whatsapp.net", http.StatusBadRequest},
 		{"missing target", "15550000001@s.whatsapp.net", "text1", "", http.StatusBadRequest},
 		{"missing message id", "15550000001@s.whatsapp.net", "", "15550000002@s.whatsapp.net", http.StatusBadRequest},
 		{"missing source", "", "text1", "15550000002@s.whatsapp.net", http.StatusBadRequest},
 		{"status broadcast", "15550000001@s.whatsapp.net", "text1", "status@broadcast", http.StatusBadRequest},
 	}
 	for _, c := range cases {
-		text, _, _, status, msg := app.resolveForward(c.from, c.id, c.to)
+		plan, status, msg := app.resolveForward(c.from, c.id, c.to)
 		if status != c.wantStatus {
 			t.Errorf("%s: status = %d (%q), want %d", c.name, status, msg, c.wantStatus)
 		}
-		if text != "" {
-			t.Errorf("%s: nothing must be forwarded on failure, got %q", c.name, text)
+		if plan.text != "" || plan.media != nil {
+			t.Errorf("%s: nothing must be forwarded on failure, got %+v", c.name, plan)
 		}
 	}
 }

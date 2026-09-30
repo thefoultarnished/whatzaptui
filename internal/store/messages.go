@@ -370,6 +370,19 @@ func (s *Store) GetMediaProto(chatID, msgID string) (string, error) {
 	return mediaProto, err
 }
 
+// GetMessageTimestamp returns the unix time of a stored message.
+func (s *Store) GetMessageTimestamp(chatID, msgID string) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	var ts int64
+	err := s.db.QueryRow(
+		`SELECT ts FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
+		chatID, msgID,
+	).Scan(&ts)
+	return ts, err
+}
+
 // GetMessageJSON retrieves the message_json payload for a message.
 func (s *Store) GetMessageJSON(chatID, msgID string) (string, error) {
 	if s == nil || s.db == nil {
