@@ -176,6 +176,7 @@ var helpSections = []helpSection{
 	}},
 	{"Messages", []helpEntry{
 		cmdEntry("/emoji", "Emoji picker"),
+		cmdEntry("/poll", "Create a poll"),
 		{"/send", "Send a file", "/send "},
 	}},
 	{"Look and sound", []helpEntry{

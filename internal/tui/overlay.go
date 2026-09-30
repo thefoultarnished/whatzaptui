@@ -95,6 +95,8 @@ func (x m) floatingPanel(w, h int) string {
 		return fontTestBox(w, h)
 	case x.emojiPickerOpen && !x.fileBrowserOpen:
 		return x.renderEmojiPicker()
+	case x.poll.open:
+		return x.renderPollForm(w, h)
 	}
 	return ""
 }
@@ -116,4 +118,5 @@ func (x *m) closeFloatingPanels() {
 	x.confirmDialog.open = false
 	x.fontTestOpen = false
 	x.emojiPickerOpen = false
+	x.poll.open = false
 }
