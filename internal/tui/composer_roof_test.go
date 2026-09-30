@@ -24,97 +24,116 @@ func roofModel() m {
 	}
 }
 
-// The roof starts exactly above the wall where the rule rises and runs all the
-// way to the right side, ending in a rule character so the frame draws a
-// junction there.
-func TestComposerRoofSitsOverTheShortcuts(t *testing.T) {
+// raisedRows returns the three rows of the raised part with colours stripped:
+// the roof edge, the row of shortcuts under it, and the rule at the base.
+func raisedRows(model m, w int, focused, locked bool) (edge, text, base string) {
+	rows := strings.Split(model.renderComposerRoof(w, focused, locked), "\n")
+	return stripGraphicsSeqs(rows[0]), stripGraphicsSeqs(rows[1]), stripGraphicsSeqs(model.renderComposerTopBorder(w, focused, locked))
+}
+
+// The roof edge, the wall on the shortcut row and the corner where the rule
+// rises are all in one column. The edge runs to the right side and ends in a
+// rule character so the frame draws a junction there.
+func TestRaisedPartWallsLineUpAtEveryWidth(t *testing.T) {
 	setTestTheme(t, TokyoNight)
 	model := roofModel()
 	for w := 40; w <= 140; w++ {
-		line := stripGraphicsSeqs(model.renderComposerTopBorder(w, true, false))
-		roof := stripGraphicsSeqs(model.renderComposerRoof(w, true, false))
-		if runeDisplayWidth(roof) != w || runeDisplayWidth(line) != w {
-			t.Fatalf("width %d: roof is %d cells and rule %d cells wide", w, runeDisplayWidth(roof), runeDisplayWidth(line))
+		edge, text, base := raisedRows(model, w, true, false)
+		for name, row := range map[string]string{"edge": edge, "text": text, "base": base} {
+			if runeDisplayWidth(row) != w {
+				t.Fatalf("width %d: the %s row is %d cells wide", w, name, runeDisplayWidth(row))
+			}
 		}
-		wall := runeIndex(line, '╯')
-		if wall < 0 {
-			t.Fatalf("width %d: rule has no wall: %q", w, line)
+		corner, wall, rise := runeIndex(edge, '╭'), runeIndex(text, '│'), runeIndex(base, '╯')
+		if corner < 0 || corner != wall || wall != rise {
+			t.Fatalf("width %d: roof corner %d, wall %d and rule corner %d do not line up:\n%s\n%s\n%s", w, corner, wall, rise, edge, text, base)
 		}
-		if runeIndex(roof, '╭') != wall {
-			t.Fatalf("width %d: the roof corner is not over the wall (%d vs %d):\n%s\n%s", w, runeIndex(roof, '╭'), wall, roof, line)
+		if !strings.HasSuffix(edge, "─") {
+			t.Fatalf("width %d: the roof edge must end in a rule so the frame connects: %q", w, edge)
 		}
-		if !strings.HasSuffix(roof, "─") {
-			t.Fatalf("width %d: the roof must end in a rule so the frame connects: %q", w, roof)
+		if strings.Trim(edge, " ╭─") != "" {
+			t.Fatalf("width %d: the roof edge is only spaces, a corner and a rule: %q", w, edge)
 		}
-		if strings.Trim(roof, " ╭─") != "" {
-			t.Fatalf("width %d: the roof is only spaces, a corner and a rule: %q", w, roof)
+		if !strings.HasSuffix(text, " ") || !strings.HasSuffix(base, " ") {
+			t.Fatalf("width %d: the text and base rows are open on the right, so the frame draws a wall", w)
 		}
-		inside := string([]rune(line)[wall+1:])
-		if !strings.Contains(inside, "emoji") {
-			t.Fatalf("width %d: shortcuts are not under the roof: %q", w, line)
+		if !strings.Contains(string([]rune(text)[wall+1:]), "emoji") {
+			t.Fatalf("width %d: shortcuts are not inside the raised part: %q", w, text)
 		}
 	}
 }
 
-func TestComposerRaisedPartSpansFromTheWallToTheFrame(t *testing.T) {
+// The shortcuts have a row of their own, between the roof edge and the rule.
+func TestShortcutsSitOnTheirOwnRow(t *testing.T) {
 	setTestTheme(t, TokyoNight)
-	model := roofModel()
+	edge, text, base := raisedRows(roofModel(), 120, true, false)
+	if strings.Contains(edge, "emoji") || strings.Contains(base, "emoji") {
+		t.Fatalf("the shortcuts must not share a row with the roof edge or the rule:\n%s\n%s\n%s", edge, text, base)
+	}
+	if !strings.Contains(text, "emoji [alt+e]") || !strings.Contains(text, "edit [alt+a]") {
+		t.Fatalf("the shortcut row is missing shortcuts: %q", text)
+	}
+}
+
+func TestRaisedPartSpansFromTheWallToTheFrame(t *testing.T) {
+	setTestTheme(t, TokyoNight)
 	const w = 120
-	line := stripGraphicsSeqs(model.renderComposerTopBorder(w, true, false))
-	roof := stripGraphicsSeqs(model.renderComposerRoof(w, true, false))
+	edge, text, _ := raisedRows(roofModel(), w, true, false)
 	shortcuts := "emoji [alt+e]  ·  file [alt+f]  ·  reply [alt+r]  ·  edit [alt+a]"
 	// Wall, a space, the shortcuts and a space: that is the raised part.
 	want := runeDisplayWidth(shortcuts) + 3
-	if got := w - runeIndex(roof, '╭'); got != want {
-		t.Fatalf("the raised part is %d wide, want %d:\n%s\n%s", got, want, roof, line)
+	if got := w - runeIndex(edge, '╭'); got != want {
+		t.Fatalf("the raised part is %d wide, want %d:\n%s\n%s", got, want, edge, text)
 	}
 }
 
-func TestComposerRoofIsBlankWithoutShortcuts(t *testing.T) {
+func TestRoofIsBlankWithoutShortcuts(t *testing.T) {
 	setTestTheme(t, TokyoNight)
 	model := roofModel()
-	cases := map[string]string{
-		"sidebar focused": stripGraphicsSeqs(model.renderComposerRoof(80, false, false)),
-		"too narrow":      stripGraphicsSeqs(model.renderComposerRoof(20, true, false)),
-	}
-	for name, roof := range cases {
-		if strings.TrimSpace(roof) != "" {
-			t.Errorf("%s: the roof should be blank, got %q", name, roof)
-		}
-	}
-	if w := runeDisplayWidth(cases["sidebar focused"]); w != 80 {
-		t.Errorf("a blank roof keeps the width: %d", w)
-	}
 	noChat := roofModel()
 	noChat.active = ""
-	if strings.TrimSpace(stripGraphicsSeqs(noChat.renderComposerRoof(80, true, false))) != "" {
-		t.Error("no chat open: the roof should be blank")
+	cases := map[string][2]string{}
+	edge, text, _ := raisedRows(model, 80, false, false)
+	cases["sidebar focused"] = [2]string{edge, text}
+	edge, text, _ = raisedRows(model, 20, true, false)
+	cases["too narrow"] = [2]string{edge, text}
+	edge, text, _ = raisedRows(noChat, 80, true, false)
+	cases["no chat"] = [2]string{edge, text}
+	for name, rows := range cases {
+		for i, row := range rows {
+			if strings.TrimSpace(row) != "" {
+				t.Errorf("%s: roof row %d should be blank, got %q", name, i, row)
+			}
+		}
+	}
+	edge, text, _ = raisedRows(model, 80, false, false)
+	if runeDisplayWidth(edge) != 80 || runeDisplayWidth(text) != 80 {
+		t.Errorf("blank roof rows keep the width: %d and %d", runeDisplayWidth(edge), runeDisplayWidth(text))
 	}
 }
 
-func TestComposerRoofRowsOnlyWithAnOpenChatAndRoom(t *testing.T) {
+func TestRoofRowsOnlyWithAnOpenChatAndRoom(t *testing.T) {
 	model := roofModel()
-	if model.composerRoofRows(60) != 1 {
-		t.Error("an open chat with room should reserve the roof row")
+	if model.composerRoofRows(60) != composerRoofHeight || composerRoofHeight != 2 {
+		t.Errorf("an open chat with room reserves %d rows, want the 2 of the roof", model.composerRoofRows(60))
 	}
 	if model.composerRoofRows(24) != 0 {
-		t.Error("a box too narrow for shortcuts reserves no row")
+		t.Error("a box too narrow for shortcuts reserves no rows")
 	}
 	model.active = ""
 	if model.composerRoofRows(60) != 0 {
-		t.Error("no open chat reserves no row")
+		t.Error("no open chat reserves no rows")
 	}
 }
 
-func TestComposerRoofDoesNotChangeTheTotalHeight(t *testing.T) {
+func TestRoofDoesNotChangeTheTotalHeight(t *testing.T) {
 	setTestTheme(t, TokyoNight)
 	for _, size := range [][2]int{{80, 20}, {100, 30}, {120, 40}, {160, 50}} {
 		for _, focused := range []bool{true, false} {
 			model := roofModel()
 			model.w, model.h = size[0], size[1]
 			model.sidebarFocused = !focused
-			view := model.View()
-			lines := strings.Split(view, "\n")
+			lines := strings.Split(model.View(), "\n")
 			if len(lines) != model.h {
 				t.Fatalf("%dx%d focused=%v: view is %d lines, want %d", size[0], size[1], focused, len(lines), model.h)
 			}
@@ -122,70 +141,68 @@ func TestComposerRoofDoesNotChangeTheTotalHeight(t *testing.T) {
 	}
 }
 
-func TestComposerRoofTakesOneRowFromTheMessagePane(t *testing.T) {
+func TestRoofTakesTwoRowsFromTheMessagePane(t *testing.T) {
 	model := roofModel()
 	with := model.chatPaneGeometry().mainH
 	model.active = ""
 	without := model.chatPaneGeometry().mainH
-	if with != without-1 {
-		t.Fatalf("message pane is %d rows with a chat open and %d without: the roof should cost exactly one", with, without)
+	if with != without-2 {
+		t.Fatalf("message pane is %d rows with a chat open and %d without: the roof should cost exactly two", with, without)
 	}
 }
 
-// In the whole view the roof runs to the right frame and joins it, and the
-// text row under it ends at the frame wall.
-func TestComposerRoofIsDrawnJustAboveTheRuleAndJoinsTheFrame(t *testing.T) {
+// In the whole view the roof edge runs to the right frame and joins it, and the
+// rows under it end at the frame wall.
+func TestRoofJoinsTheFrameInTheWholeView(t *testing.T) {
 	setTestTheme(t, TokyoNight)
-	model := roofModel()
-	lines := strings.Split(ansiStripRe.ReplaceAllString(model.View(), ""), "\n")
-	rule := -1
+	lines := strings.Split(ansiStripRe.ReplaceAllString(roofModel().View(), ""), "\n")
+	text := -1
 	for i, l := range lines {
-		if strings.Contains(l, "╯ emoji") {
-			rule = i
+		if strings.Contains(l, "│ emoji") {
+			text = i
 		}
 	}
-	if rule < 1 {
-		t.Fatalf("no shortcut rule found in the view:\n%s", strings.Join(lines, "\n"))
+	if text < 1 || text+1 >= len(lines) {
+		t.Fatalf("no shortcut row found in the view:\n%s", strings.Join(lines, "\n"))
 	}
-	roofRow := strings.TrimRight(lines[rule-1], " ")
-	if !strings.Contains(roofRow, "╭") || !strings.HasSuffix(roofRow, "┤") {
-		t.Fatalf("the roof should run to the right frame and connect with a junction: %q", lines[rule-1])
+	edge, base := lines[text-1], lines[text+1]
+	if !strings.Contains(edge, "╭") || !strings.HasSuffix(strings.TrimRight(edge, " "), "┤") {
+		t.Fatalf("the roof edge should run to the right frame and connect with a junction: %q", edge)
 	}
-	if !strings.HasSuffix(strings.TrimRight(lines[rule], " "), "│") {
-		t.Fatalf("the raised part should end at the frame wall: %q", lines[rule])
+	if !strings.HasSuffix(strings.TrimRight(lines[text], " "), "│") {
+		t.Fatalf("the shortcut row should end at the frame wall: %q", lines[text])
 	}
-	// The rule is on the same row as the left divider (the cross junction).
-	if !strings.Contains(lines[rule], "┼") {
-		t.Fatalf("the rule should sit on the sidebar divider row: %q", lines[rule])
+	if !strings.Contains(base, "┼") || !strings.HasSuffix(strings.TrimRight(base, " "), "│") {
+		t.Fatalf("the rule row sits on the sidebar divider and ends at the frame wall: %q", base)
 	}
 	// The left column keeps its own layout: no roof characters there.
-	left := []rune(lines[rule-1])[:30]
-	if strings.ContainsRune(string(left), '╭') {
-		t.Fatalf("the roof must stay in the right column: %q", string(left))
+	for _, l := range lines[text-1 : text+2] {
+		if strings.ContainsAny(string([]rune(l)[:30]), "╭") {
+			t.Fatalf("the roof must stay in the right column: %q", l)
+		}
 	}
 }
 
-func TestComposerModeHeadersGetARoofToo(t *testing.T) {
+func TestModeHeadersGetTheSameRaisedPart(t *testing.T) {
 	setTestTheme(t, TokyoNight)
 	for name, model := range map[string]m{
 		"edit":       func() m { x := roofModel(); x.editPickMode = true; return x }(),
 		"reply":      func() m { x := roofModel(); x.replyPickMode = true; return x }(),
 		"attachment": func() m { x := roofModel(); x.pendingAttachmentPath = "photo.png"; return x }(),
 	} {
-		line := stripGraphicsSeqs(model.renderComposerTopBorder(90, true, false))
-		roof := stripGraphicsSeqs(model.renderComposerRoof(90, true, false))
-		if runeIndex(roof, '╭') != runeIndex(line, '╯') || runeIndex(roof, '╭') < 0 {
-			t.Errorf("%s: roof does not start over the header:\n%s\n%s", name, roof, line)
+		edge, text, base := raisedRows(model, 90, true, false)
+		corner := runeIndex(edge, '╭')
+		if corner < 0 || corner != runeIndex(text, '│') || corner != runeIndex(base, '╯') {
+			t.Errorf("%s: the raised part does not line up:\n%s\n%s\n%s", name, edge, text, base)
 		}
 	}
 }
 
-func TestBlacklistedNoticeGetsARoofToo(t *testing.T) {
+func TestBlacklistedNoticeGetsTheSameRaisedPart(t *testing.T) {
 	setTestTheme(t, TokyoNight)
-	model := roofModel()
-	line := stripGraphicsSeqs(model.renderComposerTopBorder(90, true, true))
-	roof := stripGraphicsSeqs(model.renderComposerRoof(90, true, true))
-	if !strings.Contains(line, "blacklisted") || runeIndex(roof, '╭') != runeIndex(line, '╯') {
-		t.Fatalf("the blacklisted notice should sit under a roof:\n%s\n%s", roof, line)
+	edge, text, base := raisedRows(roofModel(), 90, true, true)
+	corner := runeIndex(edge, '╭')
+	if !strings.Contains(text, "blacklisted") || corner < 0 || corner != runeIndex(text, '│') || corner != runeIndex(base, '╯') {
+		t.Fatalf("the blacklisted notice should sit in the raised part:\n%s\n%s\n%s", edge, text, base)
 	}
 }

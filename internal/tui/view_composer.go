@@ -137,49 +137,61 @@ func composerBorderColor(rightFocused bool) lipgloss.Color {
 	return borderSubtle
 }
 
-// composerRoofRows is the number of rows above the message box's top rule that
-// hold the roof over the shortcuts: one whenever a chat is open and the box is
-// wide enough for shortcuts (blank while they are hidden), so the message pane
-// keeps a steady height. chatPaneGeometry and renderChatInput both use it.
+// composerRoofHeight is the number of rows in the raised part above the message
+// box's top rule: the roof edge and, under it, the row the shortcuts sit on.
+const composerRoofHeight = 2
+
+// composerRoofRows is the number of rows reserved above the message box's top
+// rule for the raised part: composerRoofHeight whenever a chat is open and the
+// box is wide enough for shortcuts (blank while they are hidden), so the
+// message pane keeps a steady height. chatPaneGeometry and renderChatInput both
+// use it.
 func (x m) composerRoofRows(rightW int) int {
 	if x.active != "" && rightW-1 >= 24 {
-		return 1
+		return composerRoofHeight
 	}
 	return 0
 }
 
-// renderComposerTopBorder is the rule above the message box, with the
-// shortcuts sitting in a raised part of it at the right-hand end.
+// renderComposerTopBorder is the rule at the base of the message box. When the
+// shortcuts show, it rises into the raised part at a wall and the right-hand
+// end is open, up to the frame.
 func (x m) renderComposerTopBorder(borderW int, rightFocused, inputLocked bool) string {
-	line, _ := x.composerTopBorder(borderW, rightFocused, inputLocked)
-	return line
+	base, _, _ := x.composerHeader(borderW, rightFocused, inputLocked)
+	return base
 }
 
-// renderComposerRoof is the row above the rule: the roof of the raised part,
-// which runs from the wall all the way to the right frame, or blank when there
-// are no shortcuts. It ends in a rule character, so the frame draws a junction
-// there and the raised part connects to the right side.
+// renderComposerRoof is the raised part above the rule: the roof edge, which
+// runs from the wall all the way to the right frame, and under it the row the
+// shortcuts sit on. Both are blank when there are no shortcuts. The edge ends in
+// a rule character, so the frame draws a junction there and the raised part
+// connects to the right side.
 func (x m) renderComposerRoof(borderW int, rightFocused, inputLocked bool) string {
 	if borderW <= 0 {
 		return ""
 	}
-	_, left := x.composerTopBorder(borderW, rightFocused, inputLocked)
+	_, text, left := x.composerHeader(borderW, rightFocused, inputLocked)
+	blank := strings.Repeat(" ", borderW)
 	if left < 0 || left >= borderW-1 {
-		return strings.Repeat(" ", borderW)
+		return blank + "\n" + blank
 	}
-	roof := lipgloss.NewStyle().Foreground(composerBorderColor(rightFocused)).Render("╭" + strings.Repeat("─", borderW-left-1))
-	return strings.Repeat(" ", left) + roof
+	edge := lipgloss.NewStyle().Foreground(composerBorderColor(rightFocused)).Render("╭" + strings.Repeat("─", borderW-left-1))
+	return strings.Repeat(" ", left) + edge + "\n" + text
 }
 
-// composerTopBorder draws the rule and returns the column of the wall where it
-// rises into the raised part, or -1 when it is a plain rule. The shortcuts are
-// pushed all the way right, so the raised part ends at the right frame:
+// composerHeader draws the raised part of the message box's top edge and
+// returns its rows. The shortcuts are pushed all the way right, so the raised
+// part ends at the right frame:
 //
-//	                          ╭─────────────────────────────────────┤   <- roof (the frame adds the ┤)
-//	──────────────────────────╯ emoji [alt+e]  ·  file [alt+f]      │
-func (x m) composerTopBorder(borderW int, rightFocused, inputLocked bool) (line string, wallLeft int) {
+//	                          ╭─────────────────────────────────────┤   <- edge (roof)
+//	                          │ emoji [alt+e]  ·  file [alt+f]      │   <- text row
+//	──────────────────────────╯                                     │   <- base (rule)
+//
+// base is the rule row and text the row of shortcuts; wallLeft is the column of
+// the wall, or -1 (with a plain rule and no text) when the shortcuts are hidden.
+func (x m) composerHeader(borderW int, rightFocused, inputLocked bool) (base, text string, wallLeft int) {
 	if borderW <= 0 {
-		return "", -1
+		return "", "", -1
 	}
 
 	borderCol := composerBorderColor(rightFocused)
@@ -189,7 +201,7 @@ func (x m) composerTopBorder(borderW int, rightFocused, inputLocked bool) (line 
 	// When unfocused (e.g. sidebar navigation or no chat opened) or narrow (< 24),
 	// render a plain horizontal rule like before.
 	if !rightFocused || x.active == "" || borderW < 24 {
-		return ruleStyle.Render(strings.Repeat("─", borderW)), -1
+		return ruleStyle.Render(strings.Repeat("─", borderW)), "", -1
 	}
 
 	keyStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
@@ -213,15 +225,21 @@ func (x m) composerTopBorder(borderW int, rightFocused, inputLocked bool) (line 
 	}
 	if n == 0 {
 		// Nothing fits: a plain rule, no raised part.
-		return ruleStyle.Render(strings.Repeat("─", borderW)), -1
+		return ruleStyle.Render(strings.Repeat("─", borderW)), "", -1
 	}
 
-	// Rule, wall, space, shortcuts, space: the shortcuts end one cell short of
-	// the frame, and the rule takes up whatever is left on the left.
+	// Wall, space, shortcuts, space: the shortcuts end one cell short of the
+	// frame, and the rule takes up whatever is left on the left.
 	wallLeft = borderW - used - 3
-	var sb strings.Builder
-	sb.WriteString(ruleStyle.Render(strings.Repeat("─", wallLeft) + "╯ "))
 
+	// The rule rises at the wall; the right-hand end is open, so the row ends
+	// in a space and the frame draws a plain wall there.
+	base = ruleStyle.Render(strings.Repeat("─", wallLeft)+"╯") + strings.Repeat(" ", borderW-wallLeft-1)
+
+	var sb strings.Builder
+	sb.WriteString(strings.Repeat(" ", wallLeft))
+	sb.WriteString(ruleStyle.Render("│"))
+	sb.WriteString(" ")
 	for i, sc := range shortcuts[:n] {
 		if i > 0 {
 			sb.WriteString(dotStyle.Render("  ·  "))
@@ -249,7 +267,7 @@ func (x m) composerTopBorder(borderW int, rightFocused, inputLocked bool) (line 
 		}
 	}
 	sb.WriteString(" ")
-	return sb.String(), wallLeft
+	return base, sb.String(), wallLeft
 }
 
 func (x m) renderChatInput(rightW int, typedInput string) string {
@@ -360,7 +378,7 @@ func (x m) renderChatInput(rightW int, typedInput string) string {
 	borderW := max(1, rightW-1)
 	topBorder := x.renderComposerTopBorder(borderW, rightFocused, inputLocked)
 	content := lipgloss.NewStyle().Foreground(text).Render(rightContent)
-	if x.composerRoofRows(rightW) == 1 {
+	if x.composerRoofRows(rightW) > 0 {
 		return x.renderComposerRoof(borderW, rightFocused, inputLocked) + "\n" + topBorder + "\n" + content
 	}
 	return topBorder + "\n" + content

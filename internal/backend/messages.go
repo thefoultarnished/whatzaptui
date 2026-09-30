@@ -1759,16 +1759,16 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 		msg["extendedTextMessage"] = entry
 	}
 	if img := effective.GetImageMessage(); img != nil {
-		msg["imageMessage"] = map[string]any{"caption": img.GetCaption(), "mimetype": img.GetMimetype()}
+		msg["imageMessage"] = withForwardedMark(map[string]any{"caption": img.GetCaption(), "mimetype": img.GetMimetype()}, img.GetContextInfo())
 	}
 	if vid := effective.GetVideoMessage(); vid != nil {
-		msg["videoMessage"] = map[string]any{"caption": vid.GetCaption(), "mimetype": vid.GetMimetype()}
+		msg["videoMessage"] = withForwardedMark(map[string]any{"caption": vid.GetCaption(), "mimetype": vid.GetMimetype()}, vid.GetContextInfo())
 	}
 	if doc := effective.GetDocumentMessage(); doc != nil {
-		msg["documentMessage"] = map[string]any{"caption": doc.GetCaption(), "fileName": doc.GetFileName(), "mimetype": doc.GetMimetype()}
+		msg["documentMessage"] = withForwardedMark(map[string]any{"caption": doc.GetCaption(), "fileName": doc.GetFileName(), "mimetype": doc.GetMimetype()}, doc.GetContextInfo())
 	}
 	if aud := effective.GetAudioMessage(); aud != nil {
-		msg["audioMessage"] = map[string]any{"ptt": aud.GetPTT(), "mimetype": aud.GetMimetype(), "seconds": aud.GetSeconds()}
+		msg["audioMessage"] = withForwardedMark(map[string]any{"ptt": aud.GetPTT(), "mimetype": aud.GetMimetype(), "seconds": aud.GetSeconds()}, aud.GetContextInfo())
 	}
 	if stk := effective.GetStickerMessage(); stk != nil {
 		msg["stickerMessage"] = map[string]any{"mimetype": stk.GetMimetype()}

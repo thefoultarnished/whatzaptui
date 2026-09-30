@@ -71,7 +71,7 @@ func TestForwardTextAndForwardedMark(t *testing.T) {
 	}
 }
 
-func TestOpenForwardPickerNeedsATextMessage(t *testing.T) {
+func TestOpenForwardPickerNeedsAForwardableMessage(t *testing.T) {
 	x := fwdModel()
 	if cmd := x.openForwardPicker(); cmd == nil || x.forwardPicker.IsOpen {
 		t.Fatal("no selection: expected a message and no list")
@@ -80,10 +80,22 @@ func TestOpenForwardPickerNeedsATextMessage(t *testing.T) {
 	if cmd := x.openForwardPicker(); cmd == nil || x.forwardPicker.IsOpen {
 		t.Fatal("unknown message: expected a message and no list")
 	}
-	x.selectedMsgID = "i1"
+	sticker := wireMsg{Message: map[string]any{"stickerMessage": map[string]any{}}, MessageTimestamp: 102}
+	sticker.Key.ID = "s1"
+	sticker.Key.RemoteJID = fwdHere
+	x.msgs[fwdHere] = append(x.msgs[fwdHere], sticker)
+	x.selectedMsgID = "s1"
 	if cmd := x.openForwardPicker(); cmd == nil || x.forwardPicker.IsOpen {
-		t.Fatal("an image cannot be forwarded yet: expected a message and no list")
+		t.Fatal("a sticker cannot be forwarded: expected a message and no list")
 	}
+	if !strings.Contains(x.topBarMsg, "text, image, video, file and audio") {
+		t.Fatalf("the refusal should list what can be forwarded, got %q", x.topBarMsg)
+	}
+	x.selectedMsgID = "i1"
+	if cmd := x.openForwardPicker(); cmd != nil || !x.forwardPicker.IsOpen {
+		t.Fatal("an image can be forwarded: the list should open silently")
+	}
+	x.closeForwardPicker()
 	x.selectedMsgID = "t1"
 	x.replyPickMode = true
 	if cmd := x.openForwardPicker(); cmd != nil || !x.forwardPicker.IsOpen || x.replyPickMode {
@@ -348,5 +360,83 @@ func TestForwardIsOnTheHelpScreen(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("Alt+T is missing from the help shortcuts")
+	}
+}
+
+func TestCanForward(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  map[string]any
+		want bool
+	}{
+		{"plain text", map[string]any{"conversation": "hi"}, true},
+		{"extended text", map[string]any{"extendedTextMessage": map[string]any{"text": "hi"}}, true},
+		{"image", map[string]any{"imageMessage": map[string]any{"caption": "pic"}}, true},
+		{"video", map[string]any{"videoMessage": map[string]any{}}, true},
+		{"file", map[string]any{"documentMessage": map[string]any{"fileName": "a.pdf"}}, true},
+		{"voice note", map[string]any{"audioMessage": map[string]any{"ptt": true}}, true},
+		{"blank text", map[string]any{"conversation": "   "}, false},
+		{"sticker", map[string]any{"stickerMessage": map[string]any{}}, false},
+		{"reaction", map[string]any{"reactionMessage": map[string]any{"emoji": "fire"}}, false},
+		{"poll", map[string]any{"pollCreationMessage": map[string]any{"name": "q"}}, false},
+		{"image that is not an object", map[string]any{"imageMessage": "x"}, false},
+		{"empty", map[string]any{}, false},
+		{"nil", nil, false},
+	}
+	for _, c := range cases {
+		if got := canForward(wireMsg{Message: c.msg}); got != c.want {
+			t.Errorf("%s: canForward = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestIsForwardedRecognisesMedia(t *testing.T) {
+	for _, kind := range []string{"imageMessage", "videoMessage", "documentMessage", "audioMessage", "extendedTextMessage"} {
+		if !isForwarded(map[string]any{kind: map[string]any{"forwarded": true}}) {
+			t.Errorf("%s with forwarded=true must be recognised", kind)
+		}
+		if isForwarded(map[string]any{kind: map[string]any{"forwarded": false}}) || isForwarded(map[string]any{kind: map[string]any{}}) {
+			t.Errorf("%s without the mark must not be recognised", kind)
+		}
+	}
+	if isForwarded(nil) || isForwarded(map[string]any{"imageMessage": "x"}) || isForwarded(map[string]any{"stickerMessage": map[string]any{"forwarded": true}}) {
+		t.Error("nil, malformed and unsupported kinds are never forwarded")
+	}
+}
+
+func TestEnterForwardsAnImageToTheHighlightedAllowedChat(t *testing.T) {
+	var bodies []map[string]string
+	srv := fwdServer(t, &bodies)
+	defer srv.Close()
+
+	x := fwdModel()
+	x.client, x.baseURL = srv.Client(), srv.URL
+	x.selectedMsgID = "i1"
+	next, _ := x.key(altT())
+	x = next.(m)
+	if !x.forwardPicker.IsOpen {
+		t.Fatal("an image should open the forward list")
+	}
+	next, cmd := x.key(tea.KeyMsg{Type: tea.KeyEnter})
+	x = next.(m)
+	collectMsgs(cmd)
+	if len(bodies) != 1 || bodies[0]["messageId"] != "i1" || bodies[0]["fromChatId"] != fwdHere || bodies[0]["toChatId"] != fwdBob {
+		t.Fatalf("request bodies = %v, want one forward of image i1 from Alice to Bob", bodies)
+	}
+}
+
+func TestForwardedImageIsLabelledInTheChat(t *testing.T) {
+	setTestTheme(t, TokyoNight)
+	x := fwdModel()
+	fwd := wireMsg{Message: map[string]any{"imageMessage": map[string]any{"caption": "sunset", "forwarded": true}}, MessageTimestamp: 200}
+	fwd.Key.ID = "f2"
+	fwd.Key.RemoteJID = fwdHere
+	x.msgs[fwdHere] = append(x.msgs[fwdHere], fwd)
+	rendered := ansiStripRe.ReplaceAllString(x.renderMain(100, 14), "")
+	if !strings.Contains(rendered, forwardedLabel) || !strings.Contains(rendered, "sunset") {
+		t.Fatalf("a forwarded image should show its label and caption:\n%s", rendered)
+	}
+	if strings.Count(rendered, forwardedLabel) != 1 {
+		t.Fatalf("only the forwarded image gets the label:\n%s", rendered)
 	}
 }
