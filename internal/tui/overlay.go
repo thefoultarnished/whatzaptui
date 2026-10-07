@@ -97,6 +97,10 @@ func (x m) floatingPanel(w, h int) string {
 		return x.renderEmojiPicker()
 	case x.poll.open:
 		return x.renderPollForm(w, h)
+	case x.voteForm.open:
+		return x.renderVoteForm(w, h)
+	case x.pollListPicker.IsOpen:
+		return x.pollListPicker.RenderFilterListBox(ps, w, h)
 	}
 	return ""
 }
@@ -119,4 +123,6 @@ func (x *m) closeFloatingPanels() {
 	x.fontTestOpen = false
 	x.emojiPickerOpen = false
 	x.poll.open = false
+	x.voteForm.open = false
+	x.pollListPicker.IsOpen = false
 }

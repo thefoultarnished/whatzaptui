@@ -112,7 +112,8 @@ var (
 	systemCommands []string
 	chatCommands   = []string{
 		"/emoji",
-		"/poll",
+		"/createpoll",
+		"/polls",
 		"/send",
 	}
 	quadBlocks [16]string

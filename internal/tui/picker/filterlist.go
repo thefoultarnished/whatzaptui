@@ -100,7 +100,11 @@ func (p *Picker) RenderFilterListBox(s Style, w, h int) string {
 
 	var body []string
 	if len(items) == 0 {
-		body = append(body, ln(dimSt.Render("no matching chats")))
+		empty := "no matching chats"
+		if p.EmptyText != "" {
+			empty = p.EmptyText
+		}
+		body = append(body, ln(dimSt.Render(empty)))
 	}
 	for i := start; i < end; i++ {
 		it := items[i]
@@ -135,7 +139,11 @@ func (p *Picker) RenderFilterListBox(s Style, w, h int) string {
 
 	lines := []string{titleRow, divLine, ln(""), ln(search), ln("")}
 	lines = append(lines, body...)
-	hint := ln(s.hintRow(bg, "↑↓", "choose", "Enter", "send", "Esc", "cancel"))
+	enter := "send"
+	if p.EnterLabel != "" {
+		enter = p.EnterLabel
+	}
+	hint := ln(s.hintRow(bg, "↑↓", "choose", "Enter", enter, "Esc", "cancel"))
 	lines = append(lines, ln(""), divLine, hint)
 	return s.panelBox(lines, pickerW, padH, w, h)
 }

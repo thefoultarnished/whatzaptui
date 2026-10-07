@@ -19,8 +19,12 @@ func deferComposerSend(seq int) tea.Cmd {
 func (x m) replyPickCandidates() []wireMsg {
 	msgs := x.msgs[x.active]
 	out := make([]wireMsg, 0, len(msgs))
+	_, hiddenVotes := groupPollVotes(msgs)
 	for _, m := range msgs {
 		if _, ok := m.Message["reactionMessage"]; ok {
+			continue
+		}
+		if hiddenVotes[m.Key.ID] {
 			continue
 		}
 		if pm, ok := m.Message["protocolMessage"]; ok {

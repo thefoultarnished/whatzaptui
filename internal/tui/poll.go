@@ -13,6 +13,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"whatzap/internal/tui/picker"
 )
 
 // Poll limits. They repeat what the backend enforces (internal/whatsapp/poll.go),
@@ -112,11 +114,29 @@ func cleanPollDraft(question string, options []string) (string, []string, string
 	return question, cleaned, ""
 }
 
-// parseInlinePoll reads "/poll [-m] Question | option | option ...". The -m
-// flag allows several answers. ok is false when txt is not a /poll command with
-// arguments.
+// pollCommandWords are the names that create a poll. /poll is the older, shorter
+// name and still works.
+var pollCommandWords = []string{"/createpoll", "/poll"}
+
+// pollCommandArgs splits a create-poll command into its arguments. matched is
+// false when txt is some other command, and args is empty when there are none.
+func pollCommandArgs(txt string) (args string, matched bool) {
+	for _, word := range pollCommandWords {
+		if txt == word {
+			return "", true
+		}
+		if rest, ok := strings.CutPrefix(txt, word+" "); ok {
+			return rest, true
+		}
+	}
+	return "", false
+}
+
+// parseInlinePoll reads "/createpoll [-m] Question | option | option ...". The -m
+// flag allows several answers. ok is false when txt is not a create-poll command
+// with arguments.
 func parseInlinePoll(txt string) (question string, options []string, multiple, ok bool) {
-	rest, found := strings.CutPrefix(txt, "/poll ")
+	rest, found := pollCommandArgs(txt)
 	if !found {
 		return "", nil, false, false
 	}
@@ -279,81 +299,65 @@ func tailFit(s string, w int) string {
 	return "…" + string(r)
 }
 
-// renderPollForm draws the "New poll" panel.
+// renderPollForm draws the "New poll" panel in the same look as the pickers.
 func (x m) renderPollForm(w, h int) string {
 	f := x.poll
-	width := min(max(48, x.w-20), 64)
-	inner := width - 6
-
-	titleStyle := lipgloss.NewStyle().Foreground(v2Color(text, accent)).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(v2Color(purple, muted)).Bold(themeV2)
-	textStyle := lipgloss.NewStyle().Foreground(text)
-	cursor := lipgloss.NewStyle().Foreground(accent).Render("|")
+	p := pickerStyle().NewPanel("New poll", w, h, 60)
+	cursor := "|"
 	if !x.cursorOn {
 		cursor = " "
 	}
-	row := func(focused bool, prefix, value, ghost string) string {
-		mark := "  "
-		if focused {
-			mark = accentStyle.Render("> ")
+	// field is a text row: the value with the cursor when focused, or a quiet
+	// hint when it is empty and not focused.
+	field := func(focused bool, prefix, value, ghost string) picker.RowOpts {
+		room := max(4, p.InnerW-6-runeDisplayWidth(prefix))
+		label := prefix + tailFit(value, room)
+		dim := false
+		switch {
+		case value == "" && focused:
+			label = prefix + cursor + ghost
+		case value == "":
+			label, dim = prefix+ghost, true
+		case focused:
+			label += cursor
 		}
-		val := textStyle.Render(tailFit(value, inner-lipgloss.Width(prefix)-3))
-		if value == "" && !focused {
-			val = ghostStyle.Render(ghost)
-		}
-		if focused {
-			val += cursor
-		}
-		return mark + prefix + val
+		return picker.RowOpts{Label: label, Selected: focused, Dim: dim}
 	}
 
-	body := []string{
-		titleStyle.Render("New poll") + "  " + mutedStyle.Render("Esc cancel  Tab next  Alt+S send"),
-		"",
-		labelStyle.Render("Question"),
-		row(f.field == 0, "", f.question, "what do you want to ask?"),
-		"",
-		labelStyle.Render(fmt.Sprintf("Options (%d/%d)", len(f.options), maxPollOptions)),
-	}
+	p.Section("Question")
+	p.Row(field(f.field == 0, "", f.question, "what do you want to ask?"))
+	p.Blank()
+	p.Section(fmt.Sprintf("Options  %d/%d", len(f.options), maxPollOptions))
 
 	// Show a window of the option rows when the terminal is short.
-	visible := max(3, min(len(f.options), h-18))
+	visible := max(3, min(len(f.options), h-22))
 	start := 0
 	if f.field >= 1 && f.field <= len(f.options) {
 		start = max(0, min(f.field-1-visible/2, len(f.options)-visible))
 	}
 	if start > 0 {
-		body = append(body, mutedStyle.Render("  ..."))
+		p.Muted("  ▲ more above")
 	}
 	for i := start; i < min(len(f.options), start+visible); i++ {
-		body = append(body, row(f.field == i+1, fmt.Sprintf("%2d  ", i+1), f.options[i], "option"))
+		p.Row(field(f.field == i+1, fmt.Sprintf("%2d  ", i+1), f.options[i], "option"))
 	}
 	if start+visible < len(f.options) {
-		body = append(body, mutedStyle.Render("  ..."))
+		p.Muted("  ▼ more below")
 	}
 
+	p.Blank()
 	box := "[ ]"
 	if f.multiple {
 		box = "[x]"
 	}
-	multiMark := "  "
-	if f.field == f.multipleField() {
-		multiMark = accentStyle.Render("> ")
-	}
-	sendMark := "  "
-	sendLabel := mutedStyle.Render("[ Send poll ]")
-	if f.field == f.sendField() {
-		sendMark = accentStyle.Render("> ")
-		sendLabel = lipgloss.NewStyle().Foreground(buttonInk).Background(accent).Bold(true).Render(" Send poll ")
-	}
-	body = append(body, "", multiMark+textStyle.Render(box+" Allow several answers"), sendMark+sendLabel)
+	p.Row(picker.RowOpts{Label: box + " Allow several answers", Selected: f.field == f.multipleField()})
+	p.Row(picker.RowOpts{Label: "Send poll", Selected: f.field == f.sendField(), Color: accent, Bold: true})
 	if f.msg != "" {
-		body = append(body, "", lipgloss.NewStyle().Foreground(v2Color(amber, red)).Render(tailFit(f.msg, inner)))
+		p.Blank()
+		p.Note(f.msg, v2Color(amber, red))
 	}
-	return baseBoxStyle.Copy().
-		Align(lipgloss.Left, lipgloss.Top).
-		Width(width).
-		Render(strings.Join(body, "\n"))
+	p.Hint("Tab", "move", "Enter", "next", "Alt+S", "send", "Esc", "cancel")
+	return p.Render()
 }
 
 // handlePollKey routes a key to the open poll form and acts on the result.
@@ -414,10 +418,10 @@ func sendPoll(ctx context.Context, c *http.Client, base, chatID, question string
 }
 
 // runPollCommand handles /poll. Alone it opens the form. With arguments
-// ("/poll Lunch? | Pizza | Sushi", or "-m" first to allow several answers) it
+// ("/createpoll Lunch? | Pizza | Sushi", or "-m" first to allow several answers) it
 // sends straight away.
 func (x *m) runPollCommand(txt string) (tea.Cmd, bool) {
-	if txt != "/poll" && !strings.HasPrefix(txt, "/poll ") {
+	if _, matched := pollCommandArgs(txt); !matched {
 		return nil, false
 	}
 	if x.active == "" {
@@ -439,7 +443,7 @@ func (x *m) runPollCommand(txt string) (tea.Cmd, bool) {
 	}
 	question, options, problem := cleanPollDraft(question, options)
 	if problem != "" {
-		return x.setTopBar("Poll: " + problem + ". Usage: /poll [-m] question | option | option"), true
+		return x.setTopBar("Poll: " + problem + ". Usage: /createpoll [-m] question | option | option"), true
 	}
 	return x.sendPollCmd(question, options, multiple), true
 }

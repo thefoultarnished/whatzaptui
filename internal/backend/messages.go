@@ -1853,8 +1853,9 @@ func (a *App) wireMessagePayload(raw, effective *waE2E.Message, chatID string, i
 			opts = append(opts, o.GetOptionName())
 		}
 		msg["pollCreationMessage"] = map[string]any{
-			"name":    pc.GetName(),
-			"options": opts,
+			"name":            pc.GetName(),
+			"options":         opts,
+			"selectableCount": pc.GetSelectableOptionsCount(),
 		}
 	}
 	if pu := effective.GetPollUpdateMessage(); pu != nil {

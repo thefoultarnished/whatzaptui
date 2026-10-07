@@ -375,6 +375,8 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return x, listenFileProgress(ch)
 	case pollSentMsg:
 		return x, x.applyPollSent(v)
+	case pollVotedMsg:
+		return x, x.applyPollVoted(v)
 	case forwardedMsg:
 		return x, tea.Batch(x.setTopBar("Forwarded to "+v.to), getChats(x.reqCtx(), x.client, x.baseURL))
 	case sentMsg:
@@ -450,7 +452,7 @@ func (x m) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 		x.invalidate()
 		return x, tea.Batch(setTerminalTitleCmd("WhatZap"), x.setTopBar(v.msg), tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg { return tea.QuitMsg{} }))
 	case tea.MouseMsg:
-		if v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft && x.mode == "chat" && x.active != "" && !x.poll.open {
+		if v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft && x.mode == "chat" && x.active != "" && !x.poll.open && !x.voteForm.open && !x.pollListPicker.IsOpen {
 			g := x.chatPaneGeometry()
 			if v.X > g.paneX && v.Y >= g.paneY && v.Y < g.paneY+g.mainH {
 				lineIdx := v.Y - g.paneY

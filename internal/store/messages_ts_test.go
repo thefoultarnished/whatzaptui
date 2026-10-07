@@ -25,3 +25,26 @@ func TestGetMessageTimestamp(t *testing.T) {
 		t.Fatalf("nil store: ts=%d err=%v, want 0,nil", ts, err)
 	}
 }
+
+func TestGetMessageOrigin(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.InsertMessage(MessageRecord{ID: "mine", ChatID: "c1", FromMe: true, MessageJSON: "{}"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMessage(MessageRecord{ID: "theirs", ChatID: "g1", Participant: "1555@s.whatsapp.net", MessageJSON: "{}"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if fromMe, participant, err := s.GetMessageOrigin("c1", "mine"); err != nil || !fromMe || participant != "" {
+		t.Fatalf("own message: fromMe=%v participant=%q err=%v", fromMe, participant, err)
+	}
+	if fromMe, participant, err := s.GetMessageOrigin("g1", "theirs"); err != nil || fromMe || participant != "1555@s.whatsapp.net" {
+		t.Fatalf("group message: fromMe=%v participant=%q err=%v", fromMe, participant, err)
+	}
+	if _, _, err := s.GetMessageOrigin("c1", "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing message err = %v, want sql.ErrNoRows", err)
+	}
+	var nilStore *Store
+	if fromMe, participant, err := nilStore.GetMessageOrigin("c1", "mine"); fromMe || participant != "" || err != nil {
+		t.Fatal("a nil store finds nothing")
+	}
+}

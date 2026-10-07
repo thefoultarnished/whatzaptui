@@ -98,3 +98,39 @@ func BuildPollCreationMessage(question string, options []string, multiple bool) 
 		MessageContextInfo: &waE2E.MessageContextInfo{MessageSecret: secret},
 	}, nil
 }
+
+// ErrPollVoteUnknownOption is returned for a vote naming an option the poll does
+// not have.
+var ErrPollVoteUnknownOption = errors.New("that option is not in this poll")
+
+// ValidateVote checks the options someone wants to vote for against a poll and
+// returns them in the poll's own spelling. An empty choice is allowed, it
+// withdraws the vote. selectable is the poll's limit: 1 for a single choice, a
+// larger number for a cap, 0 for any number, and a negative number when the
+// poll's limit is not known, which allows any number.
+func ValidateVote(pollOptions []string, selectable int, chosen []string) ([]string, error) {
+	valid := make(map[string]string, len(pollOptions))
+	for _, o := range pollOptions {
+		valid[o] = o
+	}
+	seen := make(map[string]bool, len(chosen))
+	out := make([]string, 0, len(chosen))
+	for _, c := range chosen {
+		name, ok := valid[c]
+		if !ok {
+			return nil, ErrPollVoteUnknownOption
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("%q was chosen twice", name)
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if selectable > 0 && len(out) > selectable {
+		if selectable == 1 {
+			return nil, errors.New("this poll allows only one answer")
+		}
+		return nil, fmt.Errorf("this poll allows at most %d answers", selectable)
+	}
+	return out, nil
+}

@@ -52,12 +52,17 @@ type Picker struct {
 	// and lets a long list use two columns however wide its labels are.
 	Panel bool
 	// Query is what has been typed to narrow a filter list.
-	Query    string
-	Idx      int
-	Title    string
-	Items    []Item
-	Groups   []Group
-	original string
+	Query string
+	// EmptyText and EnterLabel word the filter list for what it lists: the note
+	// shown when nothing matches and the action Enter does. Empty means the
+	// chat list wording.
+	EmptyText  string
+	EnterLabel string
+	Idx        int
+	Title      string
+	Items      []Item
+	Groups     []Group
+	original   string
 }
 
 func New(title string, items []Item) Picker {

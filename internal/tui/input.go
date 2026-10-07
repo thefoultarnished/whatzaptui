@@ -31,6 +31,12 @@ func (x m) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if x.poll.open {
 		return x.handlePollKey(k)
 	}
+	if x.voteForm.open {
+		return x.handleVoteFormKey(k)
+	}
+	if x.pollListPicker.IsOpen {
+		return x.handlePollListKey(k)
+	}
 
 	if x.confirmDialog.open {
 		action, done := x.confirmDialog.Handle(k)

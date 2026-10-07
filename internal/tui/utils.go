@@ -731,7 +731,7 @@ func renderMessageBody(m map[string]any) string {
 		return "[reaction]"
 	}
 	if v, ok := m["pollCreationMessage"].(map[string]any); ok {
-		return renderPollCard(v, nil)
+		return renderPollCard(v, nil, nil, 0)
 	}
 	if v, ok := m["pollUpdateMessage"].(map[string]any); ok {
 		names, hasNames := v["selectedOptionNames"]

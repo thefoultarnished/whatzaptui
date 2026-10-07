@@ -383,6 +383,20 @@ func (s *Store) GetMessageTimestamp(chatID, msgID string) (int64, error) {
 	return ts, err
 }
 
+// GetMessageOrigin returns who sent a stored message: whether it was sent by
+// this account and, in a group, the participant's ID.
+func (s *Store) GetMessageOrigin(chatID, msgID string) (fromMe bool, participant string, err error) {
+	if s == nil || s.db == nil {
+		return false, "", nil
+	}
+	var mine int
+	err = s.db.QueryRow(
+		`SELECT from_me, participant FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
+		chatID, msgID,
+	).Scan(&mine, &participant)
+	return mine != 0, participant, err
+}
+
 // GetMessageJSON retrieves the message_json payload for a message.
 func (s *Store) GetMessageJSON(chatID, msgID string) (string, error) {
 	if s == nil || s.db == nil {

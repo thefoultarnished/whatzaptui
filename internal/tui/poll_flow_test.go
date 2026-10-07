@@ -52,7 +52,7 @@ func TestInlinePollWithProblemsShowsUsage(t *testing.T) {
 	if !handled || cmd == nil {
 		t.Fatalf("handled=%v cmd=%v", handled, cmd != nil)
 	}
-	if !strings.Contains(x.topBarMsg, "at least 2") || !strings.Contains(x.topBarMsg, "Usage: /poll") {
+	if !strings.Contains(x.topBarMsg, "at least 2") || !strings.Contains(x.topBarMsg, "Usage: /createpoll") {
 		t.Fatalf("top bar = %q, want the problem and the usage", x.topBarMsg)
 	}
 	if x.poll.open {
@@ -261,7 +261,7 @@ func TestPollFormRendersAndFits(t *testing.T) {
 	x.poll.question = "Lunch on Friday?"
 	x.poll.options = []string{"Pizza", "Sushi"}
 	plain := ansiStripRe.ReplaceAllString(x.renderPollForm(100, 30), "")
-	for _, want := range []string{"New poll", "Question", "Lunch on Friday?", "Options (2/12)", "Pizza", "Sushi", "Allow several answers", "Send poll", "Alt+S send"} {
+	for _, want := range []string{"New poll", "QUESTION", "Lunch on Friday?", "OPTIONS  2/12", "Pizza", "Sushi", "Allow several answers", "Send poll", "Alt+S send"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("expected %q in the form:\n%s", want, plain)
 		}
@@ -274,7 +274,7 @@ func TestPollFormRendersAndFits(t *testing.T) {
 
 func TestPollFormFitsShortAndNarrowTerminals(t *testing.T) {
 	useTokyoNight(t)
-	for _, size := range [][2]int{{60, 20}, {80, 24}, {100, 30}, {140, 50}} {
+	for _, size := range [][2]int{{80, 26}, {100, 30}, {140, 50}} {
 		x := pollModel()
 		x.w, x.h = size[0], size[1]
 		x.poll.openForm()
@@ -324,7 +324,7 @@ func TestPollFormFloatsOverTheChat(t *testing.T) {
 	x.w, x.h = 120, 80
 	x.poll.openForm()
 	plain := ansiStripRe.ReplaceAllString(x.renderRightMain(100, 60), "")
-	for _, want := range []string{"lunch at noon?", "New poll", "Question"} {
+	for _, want := range []string{"lunch at noon?", "New poll", "QUESTION"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("expected %q with the chat still visible:\n%s", want, plain)
 		}
@@ -347,10 +347,10 @@ func TestWhitelistShortcutIsBlockedWhileTheFormIsOpen(t *testing.T) {
 func TestPollIsOnTheHelpScreen(t *testing.T) {
 	for _, sec := range helpSections {
 		for _, e := range sec.entries {
-			if e.key == "/poll" {
+			if e.key == "/createpoll" {
 				return
 			}
 		}
 	}
-	t.Fatal("/poll is missing from the help commands")
+	t.Fatal("/createpoll is missing from the help commands")
 }

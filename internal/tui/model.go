@@ -335,6 +335,8 @@ type m struct {
 	fontTestOpen          bool
 	emojiPickerOpen       bool
 	poll                  pollForm
+	pollListPicker        picker.Picker
+	voteForm              pollVoteForm
 	emojiQuery            string
 	emojiSel, emojiScroll int
 	emojiResultsCache     []emojiItem

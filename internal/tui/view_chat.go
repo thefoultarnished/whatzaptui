@@ -99,15 +99,19 @@ func (x m) chatMessageBlocks(w, h int) ([][]string, []int64, []string) {
 	items := x.msgs[x.active]
 	reactionsFor := x.collectReactions(items)
 	pollVotesFor := x.collectPollVotes(items)
+	votesUnder, hiddenVotes := groupPollVotes(items)
 	needed := h + x.scroll
 	msgBlocks := [][]string{}
 	msgTimestamps := []int64{}
 	msgIDs := []string{}
 	for i := len(items) - 1; i >= 0; i-- {
 		msg := items[i]
+		if hiddenVotes[msg.Key.ID] {
+			continue
+		}
 		msgBody := renderMessageBody(msg.Message)
 		if poll, ok := msg.Message["pollCreationMessage"].(map[string]any); ok {
-			msgBody = renderPollCard(poll, pollVotesFor[msg.Key.ID])
+			msgBody = renderPollCard(poll, pollVotesFor[msg.Key.ID], x.pollVoteNotes(votesUnder[msg.Key.ID]), max(24, w-6))
 		}
 		if _, ok := msg.Message["pollUpdateMessage"].(map[string]any); ok {
 			msgBody = x.pollVoteLine(msg)

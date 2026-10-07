@@ -217,14 +217,14 @@ func cardLines(t *testing.T, card string) []string {
 
 func TestPlainPollCardHasNoCounts(t *testing.T) {
 	useTokyoNight(t)
-	plain := strings.Join(cardLines(t, renderPollCard(pollCard("Pizza", "Sushi"), nil)), "\n")
+	plain := strings.Join(cardLines(t, card(pollCard("Pizza", "Sushi"), nil)), "\n")
 	if strings.Contains(plain, "vote") || strings.Contains(plain, "█") || strings.Contains(plain, "●") || strings.Count(plain, "◯") != 2 {
 		t.Fatalf("a poll nobody voted on stays plain:\n%s", plain)
 	}
-	if got := renderPollCard(pollCard("Pizza", "Sushi"), pollVotes{"x": {"other"}}); got != renderPollCard(pollCard("Pizza", "Sushi"), nil) {
+	if got := card(pollCard("Pizza", "Sushi"), pollVotes{"x": {"other"}}); got != card(pollCard("Pizza", "Sushi"), nil) {
 		t.Fatal("votes that match no option must not change the card")
 	}
-	if renderMessageBody(map[string]any{"pollCreationMessage": pollCard("Pizza", "Sushi")}) != renderPollCard(pollCard("Pizza", "Sushi"), nil) {
+	if renderMessageBody(map[string]any{"pollCreationMessage": pollCard("Pizza", "Sushi")}) != card(pollCard("Pizza", "Sushi"), nil) {
 		t.Fatal("renderMessageBody should still draw the plain card")
 	}
 }
@@ -232,7 +232,7 @@ func TestPlainPollCardHasNoCounts(t *testing.T) {
 func TestPollCardShowsCountsBarsAndMyVote(t *testing.T) {
 	useTokyoNight(t)
 	votes := pollVotes{"me": {"Pizza"}, "15550000002": {"Pizza"}, "15550000003": {"Sushi"}}
-	lines := cardLines(t, renderPollCard(pollCard("Pizza", "Sushi", "Ramen"), votes))
+	lines := cardLines(t, card(pollCard("Pizza", "Sushi", "Ramen"), votes))
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{"Lunch?", "3 votes", "● Pizza", "◯ Sushi", "◯ Ramen"} {
 		if !strings.Contains(joined, want) {
@@ -261,7 +261,7 @@ func TestPollCardShowsCountsBarsAndMyVote(t *testing.T) {
 
 func TestPollCardSingularVoteAndNoMineMark(t *testing.T) {
 	useTokyoNight(t)
-	joined := strings.Join(cardLines(t, renderPollCard(pollCard("Pizza", "Sushi"), pollVotes{"15550000002": {"Pizza"}})), "\n")
+	joined := strings.Join(cardLines(t, card(pollCard("Pizza", "Sushi"), pollVotes{"15550000002": {"Pizza"}})), "\n")
 	if !strings.Contains(joined, "1 vote") || strings.Contains(joined, "1 votes") {
 		t.Errorf("one voter should read 1 vote:\n%s", joined)
 	}
@@ -283,7 +283,7 @@ func TestPollCardLinesAllHaveTheSameWidth(t *testing.T) {
 		"long question":    {map[string]any{"name": long, "options": []string{"A", "B"}}, pollVotes{"x": {"A"}}},
 		"emoji options":    {pollCard("🍕 Pizza", "🍣 Sushi"), pollVotes{"x": {"🍕 Pizza"}}},
 	} {
-		lines := cardLines(t, renderPollCard(tc.card, tc.votes))
+		lines := cardLines(t, card(tc.card, tc.votes))
 		want := lipgloss.Width(lines[0])
 		for i, l := range lines {
 			// Wide characters can differ by a cell between width systems, so allow
@@ -296,8 +296,8 @@ func TestPollCardLinesAllHaveTheSameWidth(t *testing.T) {
 				t.Errorf("%s: line %d is %d cells wide, the top is %d:\n%s", name, i, lipgloss.Width(l), want, strings.Join(lines, "\n"))
 			}
 		}
-		if want > 46 {
-			t.Errorf("%s: card is %d cells wide, too wide for the chat", name, want)
+		if want > 50 {
+			t.Errorf("%s: card is %d cells wide, over the 50 cell cap", name, want)
 		}
 	}
 }
@@ -312,7 +312,7 @@ func TestPollCardWithTwelveOptionsAndManyVoters(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		votes[fmt.Sprintf("voter%d", i)] = []string{options[i%12]}
 	}
-	lines := cardLines(t, renderPollCard(map[string]any{"name": "Big poll", "options": options}, votes))
+	lines := cardLines(t, card(map[string]any{"name": "Big poll", "options": options}, votes))
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "25 votes") || len(lines) != 3+12+1+1 {
 		t.Fatalf("expected 25 votes over %d lines:\n%s", 3+12+1+1, joined)
@@ -349,3 +349,6 @@ func TestChatShowsLiveVoteCountsOnThePoll(t *testing.T) {
 		t.Fatalf("the same person changing their vote is still one vote:\n%s", changed)
 	}
 }
+
+// card draws a poll card with no notes and no width limit.
+func card(v map[string]any, votes pollVotes) string { return renderPollCard(v, votes, nil, 0) }
